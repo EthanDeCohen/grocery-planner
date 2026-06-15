@@ -150,9 +150,6 @@ Private Function LoadCsvToSheet(ByVal csvPath As String, ByVal ws As Worksheet, 
     Dim queryTable As QueryTable
     Dim lastRow As Long
     Dim dataRows As Long
-    Dim colCount As Long
-    Dim i As Long
-
     ws.Range("A1").CurrentRegion.Clear
     ws.Range("A1").Value = "store"
     ws.Range("B1").Value = "row_type"
