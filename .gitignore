@@ -1,0 +1,19 @@
+# Local grocery price/deal data (never commit personal shopping data)
+data/
+
+# Your personal working copy of the planner workbook
+GroceryPlanner.xlsm
+GroceryPlanner.xlsx
+MyGroceryPlanner.xlsm
+MyGroceryPlanner.xlsx
+*.local.xlsm
+*.local.xlsx
+
+# Excel lock/temp files
+~$*
+*.tmp
+
+# OS noise
+Thumbs.db
+Desktop.ini
+.DS_Store

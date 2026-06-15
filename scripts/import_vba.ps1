@@ -1,0 +1,68 @@
+# Imports tracked VBA modules into the template workbook and saves a macro-enabled copy.
+# Requires Excel setting: File > Options > Trust Center > Trust Center Settings >
+# Macro Settings > check "Trust access to the VBA project object model"
+
+param(
+    [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$SourceWorkbook = (Join-Path $ProjectRoot "template\GroceryPlanner.template.xlsx"),
+    [string]$OutputWorkbook = (Join-Path $ProjectRoot "template\GroceryPlanner.template.xlsm")
+)
+
+$ErrorActionPreference = "Stop"
+
+function Read-VbaSource {
+    param([string]$Path)
+    $lines = Get-Content -Path $Path
+    if ($lines[0] -like "VERSION *") {
+        return ($lines | Select-Object -Skip 4) -join "`r`n"
+    }
+    return ($lines -join "`r`n")
+}
+
+if (-not (Test-Path $SourceWorkbook)) {
+    throw "Source workbook not found: $SourceWorkbook. Run scripts/create_template_workbook.py first."
+}
+
+$excel = New-Object -ComObject Excel.Application
+$excel.Visible = $false
+$excel.DisplayAlerts = $false
+
+try {
+    $wb = $excel.Workbooks.Open($SourceWorkbook)
+    $vbaProject = $wb.VBProject
+
+    $modules = @(
+        @{ Path = Join-Path $ProjectRoot "vba\GroceryStoreConfig.cls"; Type = 2; Name = "GroceryStoreConfig" },
+        @{ Path = Join-Path $ProjectRoot "vba\GroceryCsvImporter.cls"; Type = 2; Name = "GroceryCsvImporter" },
+        @{ Path = Join-Path $ProjectRoot "vba\GroceryPlannerModule.bas"; Type = 1; Name = "GroceryPlannerModule" }
+    )
+
+    foreach ($module in $modules) {
+        $source = Read-VbaSource -Path $module.Path
+        $component = $vbaProject.VBComponents.Add($module.Type)
+        $component.Name = $module.Name
+        $component.CodeModule.AddFromString($source)
+    }
+
+    if (Test-Path $OutputWorkbook) {
+        Remove-Item $OutputWorkbook -Force
+    }
+
+    $wb.SaveAs($OutputWorkbook, 52)
+    $wb.Close($false)
+    Write-Host "Created macro-enabled template: $OutputWorkbook"
+}
+catch {
+    Write-Error @"
+VBA import failed. Enable Excel trust for programmatic VBA access:
+File > Options > Trust Center > Trust Center Settings > Macro Settings >
+check 'Trust access to the VBA project object model', then rerun this script.
+
+Original error: $($_.Exception.Message)
+"@
+    exit 1
+}
+finally {
+    $excel.Quit() | Out-Null
+    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
+}
