@@ -1,14 +1,19 @@
-# Creates your gitignored personal workbook from the tracked template.
+# Creates your gitignored personal workbook from the macro-enabled template.
 param(
     [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$TemplateWorkbook = (Join-Path $ProjectRoot "template\GroceryPlanner.template.xlsm"),
     [string]$OutputWorkbook = (Join-Path $ProjectRoot "GroceryPlanner.xlsm")
 )
 
-$template = Join-Path $ProjectRoot "template\GroceryPlanner.template.xlsx"
-if (-not (Test-Path $template)) {
-    throw "Template not found. Run: python scripts/create_template_workbook.py"
+if (-not (Test-Path $TemplateWorkbook)) {
+    throw @"
+Macro-enabled template not found: $TemplateWorkbook
+Run:
+  python scripts/create_template_workbook.py
+  powershell -ExecutionPolicy Bypass -File scripts/import_vba.ps1
+"@
 }
 
-Copy-Item $template $OutputWorkbook -Force
+Copy-Item $TemplateWorkbook $OutputWorkbook -Force
 Write-Host "Created personal workbook: $OutputWorkbook"
-Write-Host "Next: open it in Excel, import vba\*.cls and vba\GroceryPlannerModule.bas, then Save As .xlsm if needed."
+Write-Host "Open it in Excel and run RefreshGroceryData (Alt+F8)."

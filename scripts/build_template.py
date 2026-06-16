@@ -35,9 +35,15 @@ SHEETS = [
 
 def read_vba_source(path: Path) -> str:
     lines = path.read_text(encoding="utf-8").splitlines()
-    if lines and lines[0].startswith("VERSION "):
-        lines = lines[4:]
-    return "\n".join(lines)
+    start = 4 if lines and lines[0].startswith("VERSION ") else 0
+    code: list[str] = []
+    for line in lines[start:]:
+        if line.strip().startswith("Attribute VB_"):
+            continue
+        code.append(line)
+    while code and not code[0].strip():
+        code.pop(0)
+    return "\n".join(code)
 
 
 def build_workbook(excel):

@@ -9,15 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-
-function Read-VbaSource {
-    param([string]$Path)
-    $lines = Get-Content -Path $Path
-    if ($lines[0] -like "VERSION *") {
-        return ($lines | Select-Object -Skip 4) -join "`r`n"
-    }
-    return ($lines -join "`r`n")
-}
+. (Join-Path $PSScriptRoot "vba_import_utils.ps1")
 
 if (-not (Test-Path $SourceWorkbook)) {
     throw "Source workbook not found: $SourceWorkbook. Run scripts/create_template_workbook.py first."
@@ -38,7 +30,7 @@ try {
     )
 
     foreach ($module in $modules) {
-        $source = Read-VbaSource -Path $module.Path
+        $source = Read-VbaImportSource -Path $module.Path
         $component = $vbaProject.VBComponents.Add($module.Type)
         $component.Name = $module.Name
         $component.CodeModule.AddFromString($source)

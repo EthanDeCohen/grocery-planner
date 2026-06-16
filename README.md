@@ -357,6 +357,7 @@ These are the gaps between the **target architecture** and **current state**:
 | "Could not locate the data folder" | Save `GroceryPlanner.xlsm` in the project root (same folder as `data/`). |
 | "No CSV found at …" | Create the missing file or check the store folder name matches (`foodlion`, not `food-lion`). |
 | VBA import script fails | Enable "Trust access to the VBA project object model" in Excel Trust Center. |
+| VBA syntax error on open | Rebuild: `powershell -File scripts/import_vba.ps1` then `powershell -File scripts/setup_personal_workbook.ps1`. Caused by `Attribute VB_*` lines incorrectly injected during import. |
 | Macro not visible | Open the `.xlsm` file, not `.xlsx`. Re-run `import_vba.ps1`. |
 | `create_template_workbook.py` errors | `pip install pandas openpyxl` |
 
