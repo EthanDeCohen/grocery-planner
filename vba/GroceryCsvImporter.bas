@@ -11,19 +11,23 @@ Public Function ResolveDataRoot(ByVal wb As Workbook) As String
     Dim searchPath As Variant
     Dim parentPath As String
     Dim candidate As String
-
-    If wb.Path = "" Then
-        ResolveDataRoot = ""
-        Exit Function
-    End If
+    Dim overridePath As String
 
     Set fso = CreateObject("Scripting.FileSystemObject")
-    Set searchPaths = BuildWorkbookSearchPaths(wb.Path, fso)
+    overridePath = InstructionsDataOverride(wb)
+    If overridePath <> "" Then
+        If fso.FolderExists(overridePath) Then
+            ResolveDataRoot = overridePath
+            Exit Function
+        End If
+    End If
+
+    Set searchPaths = BuildWorkbookSearchPaths(wb, fso)
 
     For Each searchPath In searchPaths
         Do
             candidate = fso.BuildPath(CStr(searchPath), DATA_FOLDER_NAME)
-            If fso.FolderExists(candidate) Then
+            If DataFolderExists(fso, candidate) Then
                 ResolveDataRoot = candidate
                 Exit Function
             End If
@@ -34,54 +38,145 @@ Public Function ResolveDataRoot(ByVal wb As Workbook) As String
         Loop
     Next searchPath
 
-    ResolveDataRoot = ""
+    ResolveDataRoot = FindKnownProjectDataFolder(fso)
 End Function
 
-Private Function BuildWorkbookSearchPaths(ByVal workbookPath As String, ByVal fso As Object) As Collection
+Private Function InstructionsDataOverride(ByVal wb As Workbook) As String
+    On Error Resume Next
+    InstructionsDataOverride = Trim$(CStr(wb.Worksheets("Instructions").Range("B6").Value))
+    On Error GoTo 0
+End Function
+
+Private Function BuildWorkbookSearchPaths(ByVal wb As Workbook, ByVal fso As Object) As Collection
     Dim paths As New Collection
-    Dim relPath As String
-    Dim oneDriveRoot As Variant
 
-    If LCase$(Left$(workbookPath, 4)) <> "http" Then
-        paths.Add workbookPath
-        Set BuildWorkbookSearchPaths = paths
-        Exit Function
-    End If
-
-    relPath = OneDriveRelativePathFromUrl(workbookPath)
-    If relPath <> "" Then
-        For Each oneDriveRoot In GetOneDriveRoots()
-            If fso.FolderExists(CStr(oneDriveRoot)) Then
-                paths.Add fso.BuildPath(CStr(oneDriveRoot), relPath)
-            End If
-        Next oneDriveRoot
+    AddMappedSearchPaths paths, wb.Path, fso
+    If Len(wb.FullName) > 0 Then
+        AddMappedSearchPaths paths, fso.GetParentFolderName(wb.FullName), fso
     End If
 
     Set BuildWorkbookSearchPaths = paths
 End Function
 
-Private Function GetOneDriveRoots() As Variant
-    GetOneDriveRoots = Array( _
-        Environ$("USERPROFILE") & "\OneDrive", _
-        Environ$("USERPROFILE") & "\OneDrive - Personal")
+Private Sub AddMappedSearchPaths(ByVal paths As Collection, ByVal workbookPath As String, ByVal fso As Object)
+    Dim relPath As String
+    Dim oneDriveRoot As Variant
+
+    If Len(workbookPath) = 0 Then Exit Sub
+
+    If LCase$(Left$(workbookPath, 4)) <> "http" Then
+        AddUniquePath paths, workbookPath
+        Exit Sub
+    End If
+
+    relPath = OneDriveRelativePathFromUrl(workbookPath)
+    If relPath = "" Then Exit Sub
+
+    For Each oneDriveRoot In GetOneDriveRoots(fso)
+        AddUniquePath paths, fso.BuildPath(CStr(oneDriveRoot), relPath)
+    Next oneDriveRoot
+End Sub
+
+Private Function FindKnownProjectDataFolder(ByVal fso As Object) As String
+    Dim oneDriveRoot As Variant
+    Dim projectFolder As Variant
+    Dim candidate As String
+
+    For Each oneDriveRoot In GetOneDriveRoots(fso)
+        For Each projectFolder In Array("Desktop\groceryPlanner", "Documents\groceryPlanner")
+            candidate = fso.BuildPath(CStr(oneDriveRoot), CStr(projectFolder))
+            candidate = fso.BuildPath(candidate, DATA_FOLDER_NAME)
+            If DataFolderExists(fso, candidate) Then
+                FindKnownProjectDataFolder = candidate
+                Exit Function
+            End If
+        Next projectFolder
+    Next oneDriveRoot
+
+    FindKnownProjectDataFolder = ""
+End Function
+
+Private Function GetOneDriveRoots(ByVal fso As Object) As Collection
+    Dim roots As New Collection
+    Dim profileFolder As Object
+    Dim childFolder As Object
+
+    On Error Resume Next
+    Set profileFolder = fso.GetFolder(Environ$("USERPROFILE"))
+    On Error GoTo 0
+
+    If Not profileFolder Is Nothing Then
+        For Each childFolder In profileFolder.SubFolders
+            If LCase$(Left$(childFolder.Name, 8)) = "onedrive" Then
+                AddUniquePath roots, childFolder.Path
+            End If
+        Next childFolder
+    End If
+
+    AddUniquePath roots, Environ$("USERPROFILE") & "\OneDrive"
+    AddUniquePath roots, Environ$("USERPROFILE") & "\OneDrive - Personal"
+    Set GetOneDriveRoots = roots
 End Function
 
 Private Function OneDriveRelativePathFromUrl(ByVal urlPath As String) As String
     Dim normalized As String
+    Dim markers As Variant
+    Dim marker As Variant
+    Dim pos As Long
     Dim parts() As String
     Dim i As Long
 
     normalized = Replace$(Replace$(urlPath, "\", "/"), "https://", vbNullString)
     normalized = Replace$(normalized, "http://", vbNullString)
-    parts = Split(normalized, "/")
 
+    markers = Array("/Desktop/", "/Documents/", "/desktop/", "/documents/")
+    For Each marker In markers
+        pos = InStr(1, normalized, CStr(marker), vbTextCompare)
+        If pos > 0 Then
+            OneDriveRelativePathFromUrl = Replace$(Mid$(normalized, pos + Len(marker)), "/", "\")
+            If Right$(OneDriveRelativePathFromUrl, 1) = "\" Then
+                OneDriveRelativePathFromUrl = Left$(OneDriveRelativePathFromUrl, Len(OneDriveRelativePathFromUrl) - 1)
+            End If
+            Exit Function
+        End If
+    Next marker
+
+    parts = Split(normalized, "/")
     If UBound(parts) < 2 Then Exit Function
 
     OneDriveRelativePathFromUrl = parts(2)
     For i = 3 To UBound(parts)
-        OneDriveRelativePathFromUrl = OneDriveRelativePathFromUrl & "\" & parts(i)
+        If Len(parts(i)) > 0 Then
+            OneDriveRelativePathFromUrl = OneDriveRelativePathFromUrl & "\" & parts(i)
+        End If
     Next i
 End Function
+
+Private Function DataFolderExists(ByVal fso As Object, ByVal folderPath As String) As Boolean
+    On Error Resume Next
+    DataFolderExists = fso.FolderExists(folderPath)
+    If Not DataFolderExists Then
+        DataFolderExists = Len(Dir(folderPath, vbDirectory)) > 0
+    End If
+    On Error GoTo 0
+End Function
+
+Private Function CollectionContainsPath(ByVal paths As Collection, ByVal pathValue As String) As Boolean
+    Dim item As Variant
+
+    For Each item In paths
+        If StrComp(CStr(item), pathValue, vbTextCompare) = 0 Then
+            CollectionContainsPath = True
+            Exit Function
+        End If
+    Next item
+End Function
+
+Private Sub AddUniquePath(ByVal paths As Collection, ByVal pathValue As String)
+    If Len(pathValue) > 0 Then
+        If Not CollectionContainsPath(paths, pathValue) Then paths.Add pathValue
+    End If
+End Sub
 
 Public Sub RefreshAll(ByVal targetWorkbook As Workbook)
     Dim dataRoot As String
@@ -103,8 +198,9 @@ Public Sub RefreshAll(ByVal targetWorkbook As Workbook)
     dataRoot = ResolveDataRoot(targetWorkbook)
     If dataRoot = "" Then
         Err.Raise vbObjectError + 513, "GroceryCsvImporter", _
-            "Could not locate the data folder. Expected '" & DATA_FOLDER_NAME & _
-            "' next to this workbook."
+            "Could not locate the data folder. Save GroceryPlanner.xlsm in the " & _
+            "project root beside '" & DATA_FOLDER_NAME & "', or set the full path " & _
+            "to your data folder in Instructions!B6."
     End If
 
     Set pricesCombined = EnsureSheet(targetWorkbook, PRICES_COMBINED_SHEET)

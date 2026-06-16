@@ -14,6 +14,7 @@ SHEETS = [
         ("A3", "Last refreshed"),
         ("A4", "Refresh timestamp"),
         ("A5", "Refresh summary"),
+        ("A6", "Data folder override (optional)"),
         ("A7", "How to use"),
         ("A8", "1. Copy template/GroceryPlanner.template.xlsm to GroceryPlanner.xlsm in the project root."),
         ("A9", "2. Add or update CSV files under data/<store>/prices.csv and deals.csv."),
