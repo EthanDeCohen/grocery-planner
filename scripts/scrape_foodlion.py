@@ -27,6 +27,7 @@ TIMEZONE = ZoneInfo("America/New_York")
 
 DEALS_HEADERS = [
     "item_name",
+    "sub_category",
     "deal_type",
     "deal_description",
     "regular_price",
@@ -37,6 +38,44 @@ DEALS_HEADERS = [
     "valid_to",
     "loyalty_required",
     "notes",
+]
+
+# (sub_category, keyword tuples). First match wins; order matters.
+SUB_CATEGORY_RULES: list[tuple[str, tuple[str, ...]]] = [
+    ("Store Promotion Banner", ("mvp summer", "shop & earn", "summer savings")),
+    ("Loyalty Program Feature", ("shop & earn", "p6_v2", "mvp ")),
+    ("Pantry & Seasoning", ("seasoning", "spice", "sauce", "pasta", "rice", "beans")),
+    ("Meat & Seafood", (
+        "beef", "pork", "poultry", "seafood", "chicken", "steak", "sausage",
+        "lunchmeat", "london broil", "wings", "drumstick", "fish", "salmon",
+        "turkey", "ham", "bacon", "burger", "meatball", "ribeye", "ribs",
+    )),
+    ("Dairy & Cheese", (
+        "cheese", "feta", "cheddar", "milk", "yogurt", "butter", "cream",
+        "sour cream", "cottage cheese",
+    )),
+    ("Frozen Foods", (
+        "pizza", "frozen", "dinners", "marie callender", "healthy choice",
+        "lean cuisine", "ice cream",
+    )),
+    ("Snacks & Chips", (
+        "chips", "fritos", "cheetos", "crackers", "club", "town house",
+        "tortilla chips", "pretzel", "popcorn", "cookies", "snack",
+    )),
+    ("Beverages", (
+        "coca-cola", "coke", "pepsi", "water", "propel", "juice", "tea",
+        "coffee", "soda", "drink", "lemonade", "sparkling",
+    )),
+    ("Bakery", ("bagel", "croissant", "bread", "roll", "muffin", "donut", "cake")),
+    ("Produce", (
+        "apple", "banana", "grape", "melon", "watermelon", "cantaloupe",
+        "lettuce", "tomato", "potato", "onion", "pepper", "salad", "fruit",
+        "vegetable", "produce",
+    )),
+    ("Household & Personal Care", (
+        "shampoo", "soap", "detergent", "cleaner", "paper towel", "tissue",
+    )),
+    ("Baby & Kids", ("beech-nut", "pouch", "diaper", "baby", "infant")),
 ]
 
 
@@ -118,6 +157,24 @@ def normalize_price(value: Any) -> str:
         return text
 
 
+def infer_sub_category(item_name: str, brand: str, has_price: bool) -> str:
+    """Classify flyer items; no-price rows get explicit promo/product labels."""
+    haystack = f"{item_name} {brand}".lower()
+
+    for category, keywords in SUB_CATEGORY_RULES:
+        if any(keyword in haystack for keyword in keywords):
+            return category
+
+    if not has_price:
+        if re.search(r"\b(or|and)\b", item_name.lower()) and len(item_name.split()) >= 4:
+            return "Multi-Product Promo (price not listed)"
+        if brand:
+            return f"{brand} Brand Feature (price not listed)"
+        return "Weekly Ad Feature (price not listed)"
+
+    return "General Grocery"
+
+
 def infer_unit(item_name: str, price: str) -> str:
     name = item_name.lower()
     if any(token in name for token in ("lb", "pound", "per lb")):
@@ -135,14 +192,20 @@ def item_to_deal_row(item: dict[str, Any], flyer: dict[str, Any]) -> dict[str, s
     item_name = (item.get("name") or "").strip()
     brand = (item.get("brand") or "").strip()
     sale_price = normalize_price(item.get("price"))
+    has_price = bool(sale_price)
     unit = infer_unit(item_name, sale_price)
+    sub_category = infer_sub_category(item_name, brand, has_price)
 
     description_parts = []
     if brand:
         description_parts.append(brand)
     if sale_price:
         description_parts.append(f"${sale_price}" + (f"/{unit}" if unit else ""))
+    elif sub_category:
+        description_parts.append(sub_category)
     deal_description = " — ".join(description_parts) if description_parts else "Weekly ad item"
+
+    deal_type = "Weekly Ad" if has_price else "Weekly Ad (price not listed)"
 
     notes = [
         f"flipp_flyer_id={flyer.get('id')}",
@@ -150,10 +213,13 @@ def item_to_deal_row(item: dict[str, Any], flyer: dict[str, Any]) -> dict[str, s
     ]
     if brand:
         notes.append(f"brand={brand}")
+    if not has_price:
+        notes.append("price_missing=true")
 
     return {
         "item_name": item_name,
-        "deal_type": "Weekly Ad",
+        "sub_category": sub_category,
+        "deal_type": deal_type,
         "deal_description": deal_description,
         "regular_price": "",
         "sale_price": sale_price,
@@ -194,7 +260,8 @@ def scrape(postal_code: str = DEFAULT_POSTAL_CODE) -> Path:
 
     print(f"Flyer: {flyer.get('name')} ({flyer.get('id')})")
     print(f"Valid: {format_date(flyer.get('valid_from'))} to {format_date(flyer.get('valid_to'))}")
-    print(f"Wrote {len(rows)} deals to {DEALS_CSV}")
+    no_price = sum(1 for row in rows if not row["sale_price"])
+    print(f"Wrote {len(rows)} deals to {DEALS_CSV} ({no_price} without listed price)")
     return DEALS_CSV
 
 
