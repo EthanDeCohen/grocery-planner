@@ -15,12 +15,16 @@ SHEETS = [
         ("A4", "Refresh timestamp"),
         ("A5", "Refresh summary"),
         ("A6", "Data folder override (optional)"),
-        ("A7", "How to use"),
-        ("A8", "1. Copy template/GroceryPlanner.template.xlsm to GroceryPlanner.xlsm in the project root."),
-        ("A9", "2. Add or update CSV files under data/<store>/prices.csv and deals.csv."),
-        ("A10", "3. Run the RefreshGroceryData macro (Alt+F8) or click Refresh on the Instructions sheet."),
-        ("A11", "4. Review per-store sheets plus All Prices, All Deals, and Savings Summary."),
-        ("A13", "Tracked in git: template/, vba/, scripts/. Gitignored: data/, your GroceryPlanner.xlsm copy."),
+        ("A7", "Auto-refresh on open (Y/N)"),
+        ("B7", "Y"),
+        ("A8", "Auto-refresh every hour while open (Y/N)"),
+        ("B8", "Y"),
+        ("A10", "How to use"),
+        ("A11", "1. Copy template/GroceryPlanner.template.xlsm to GroceryPlanner.xlsm in the project root."),
+        ("A12", "2. Add or update CSV files under data/<store>/prices.csv and deals.csv."),
+        ("A13", "3. Run RefreshGroceryData (Alt+F8), or set B7/B8 to Y for automatic refresh."),
+        ("A14", "4. Review per-store sheets plus All Prices, All Deals, and Savings Summary."),
+        ("A16", "Tracked in git: template/, vba/, scripts/. Gitignored: data/, your GroceryPlanner.xlsm copy."),
     ]),
     ("Whole Foods", [("A1", "Run RefreshGroceryData to load data/wholefoods/*.csv")]),
     ("Whole Foods Deals", [("A1", "Run RefreshGroceryData to load data/wholefoods/deals.csv")]),
@@ -78,6 +82,15 @@ def build_workbook(excel):
         component = vba_project.VBComponents.Add(component_type)
         component.Name = module_name
         component.CodeModule.AddFromString(source)
+
+    this_workbook_path = VBA_DIR / "ThisWorkbook.cls"
+    if this_workbook_path.exists():
+        this_workbook = vba_project.VBComponents.Item("ThisWorkbook")
+        source = read_vba_source(this_workbook_path)
+        code_module = this_workbook.CodeModule
+        if code_module.CountOfLines > 0:
+            code_module.DeleteLines(1, code_module.CountOfLines)
+        code_module.AddFromString(source)
 
     wb.SaveAs(str(TEMPLATE_PATH), FileFormat=52)
     wb.Close(SaveChanges=False)

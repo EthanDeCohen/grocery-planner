@@ -36,6 +36,17 @@ try {
         $component.CodeModule.AddFromString($source)
     }
 
+    $thisWorkbookPath = Join-Path $ProjectRoot "vba\ThisWorkbook.cls"
+    if (Test-Path $thisWorkbookPath) {
+        $thisWorkbook = $vbaProject.VBComponents.Item("ThisWorkbook")
+        $thisWorkbookSource = Read-VbaImportSource -Path $thisWorkbookPath
+        $thisWorkbookModule = $thisWorkbook.CodeModule
+        if ($thisWorkbookModule.CountOfLines -gt 0) {
+            $thisWorkbookModule.DeleteLines(1, $thisWorkbookModule.CountOfLines)
+        }
+        $thisWorkbookModule.AddFromString($thisWorkbookSource)
+    }
+
     if (Test-Path $OutputWorkbook) {
         Remove-Item $OutputWorkbook -Force
     }
