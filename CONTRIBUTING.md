@@ -94,11 +94,19 @@ If you change CSV column layouts (`prices.csv` or `deals.csv`):
 
 ## Branch protection on `main`
 
-`main` is protected with:
+**Target rules (when available):**
 
 - Pull request required before merge
 - Force pushes disabled
 - Branch deletion disabled
+
+**Note:** GitHub only enforces branch protection on **private** repos with a **Pro** plan (or if the repo is **public** on the free plan). Until then, follow the PR workflow manually — do not push directly to `main`:
+
+```powershell
+# Instead of: git push origin main
+git push -u origin feat/your-branch
+# Then open a PR on GitHub and merge there
+```
 
 ## Quick command reference
 
