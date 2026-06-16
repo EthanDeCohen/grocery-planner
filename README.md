@@ -129,7 +129,8 @@ Weekly promotions, BOGO offers, manager specials, etc.
 | Column | Description |
 |--------|-------------|
 | `item_name` | Product name |
-| `deal_type` | e.g. Bogo, Weekly Special, Manager Special |
+| `sub_category` | Item grouping (e.g. Meat & Seafood, Beverages). No-price flyer rows get explicit promo labels |
+| `deal_type` | e.g. Weekly Ad, Weekly Ad (price not listed), Bogo |
 | `deal_description` | Human-readable deal text |
 | `regular_price` | Pre-deal price |
 | `sale_price` | Deal price |
@@ -310,6 +311,8 @@ If `setup_personal_workbook.ps1` copies the `.xlsx` (no macros), either:
 ## Git strategy
 
 Git is initialized in this project. The repo tracks source code and templates; it does **not** track personal data.
+
+**Workflow:** All changes go through feature branches and pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md). The `main` branch is protected — no direct pushes.
 
 ### Tracked (committed)
 
