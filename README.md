@@ -40,7 +40,7 @@ Excel-based grocery price and deal planner for comparing stores in the Greensbor
 
 ## How it currently works
 
-The VBA import path is **fully implemented**. The Python CSV-generation path is **only partially implemented** — sample CSVs exist and one capture prototype exists, but there is no end-to-end scraper/parser yet.
+The VBA import path is **fully implemented**. The Python CSV-generation path is **not started** — sample CSVs exist as hand-written examples, but there is no scraper yet.
 
 ### What works today
 
@@ -50,8 +50,8 @@ The VBA import path is **fully implemented**. The Python CSV-generation path is 
 | VBA `RefreshGroceryData` | Done | Reads CSVs into all sheets |
 | Template workbook build | Done | Two methods (see below) |
 | Personal workbook setup | Done | `setup_personal_workbook.ps1` |
-| Python CSV generation | **Not done** | Only `test_capture.py` (screenshot prototype) |
-| OCR / vision parsing | **Not done** | Planned follow-up to capture script |
+| Python CSV generation | **Not done** | No scraper scripts yet |
+| Web scraping | **Not done** | Planned: HTTP/API-based fetch per store |
 
 ### Current manual workflow
 
@@ -80,9 +80,6 @@ groceryPlanner/
 │   ├── harristeeter/
 │   │   ├── prices.csv
 │   │   └── deals.csv
-│   └── captures/                      # Screenshots from capture scripts (gitignored)
-│       └── test/
-│           └── foodlion_weekly_test.png
 │
 ├── template/                          # Tracked shared template (committed)
 │   ├── GroceryPlanner.template.xlsx   # Static template (no macros)
@@ -97,8 +94,7 @@ groceryPlanner/
     ├── create_template_workbook.py    # Build .xlsx template from current CSVs (openpyxl)
     ├── build_template.py              # Build .xlsm with embedded VBA (pywin32 + Excel COM)
     ├── import_vba.ps1                 # Inject vba/ into template → .xlsm (PowerShell + Excel COM)
-    ├── setup_personal_workbook.ps1    # Copy template to GroceryPlanner.xlsm
-    └── test_capture.py                # Prototype: screenshot Food Lion weekly ad (Playwright)
+    └── setup_personal_workbook.ps1    # Copy template to GroceryPlanner.xlsm
 ```
 
 ---
@@ -242,19 +238,6 @@ Opens the resolved `data/` folder in Windows Explorer. Fails with a message if t
   ```
 - **Note:** If you need macros in the personal copy, use the `.xlsm` template instead (copy manually or extend this script).
 
-### `scripts/test_capture.py` (CSV generation prototype — incomplete)
-
-- **Purpose:** Capture a full-page screenshot of the Food Lion weekly ad for ZIP 27401. Intended as the first step toward automated CSV generation (screenshot → OCR/vision → parse → write CSV).
-- **Dependencies:** `playwright` (Chromium)
-- **Output:** `data/captures/test/foodlion_weekly_test.png`
-- **Run:**
-  ```powershell
-  pip install playwright
-  playwright install chromium
-  python scripts/test_capture.py
-  ```
-- **Status:** Capture only. Does **not** yet write `prices.csv` or `deals.csv`.
-
 ---
 
 ## First-time setup
@@ -273,10 +256,6 @@ pip install pandas openpyxl
 
 # Alternative .xlsm build
 pip install pywin32
-
-# Ad capture prototype
-pip install playwright
-playwright install chromium
 ```
 
 ### Excel Trust Center (required for `import_vba.ps1` and `build_template.py`)
@@ -328,7 +307,7 @@ Git is initialized in this project. The repo tracks source code and templates; i
 
 ### Gitignored (local only)
 
-- `data/` — store CSVs and captures (personal shopping data)
+- `data/` — store CSVs (personal shopping data)
 - `GroceryPlanner.xlsm` / `GroceryPlanner.xlsx` — your working workbook
 - `MyGroceryPlanner.*`, `*.local.xlsm`, Excel temp files (`~$*`)
 
@@ -345,9 +324,9 @@ d4c1561 Add personal workbook setup script and tidy VBA importer
 
 These are the gaps between the **target architecture** and **current state**:
 
-1. **Python CSV writers** — Scripts that parse store ads/sites and emit `prices.csv` / `deals.csv` per store.
-2. **Food Lion parser** — Extend `test_capture.py` pipeline: screenshot → extract items/prices → write `data/foodlion/deals.csv`.
-3. **Harris Teeter / Whole Foods sources** — Define capture URLs or APIs; add matching scripts under `scripts/`.
+1. **Store scrapers** — One script per store (or shared library) that fetches deal/price data and writes `data/<store>/prices.csv` and `deals.csv`.
+2. **Food Lion first** — Inspect `ad.foodlion.com` network traffic for JSON/API endpoints; avoid headless browsers.
+3. **Harris Teeter / Whole Foods** — Identify data sources (weekly ad API, product pages, etc.) and add matching fetchers under `scripts/`.
 4. **Scheduled refresh** — Optional Task Scheduler job to regenerate CSVs weekly, then open Excel and refresh.
 5. **Savings logic** — `Savings Summary` currently shows row counts only; future: cost-per-gram protein, best-deal ranking, etc. (see `groceryInfo.txt` on Desktop for research context).
 
@@ -362,7 +341,6 @@ These are the gaps between the **target architecture** and **current state**:
 | VBA import script fails | Enable "Trust access to the VBA project object model" in Excel Trust Center. |
 | Macro not visible | Open the `.xlsm` file, not `.xlsx`. Re-run `import_vba.ps1`. |
 | `create_template_workbook.py` errors | `pip install pandas openpyxl` |
-| `test_capture.py` timeout | Food Lion ad page may be slow; increase timeout or check network. |
 
 ---
 
@@ -376,7 +354,7 @@ These are the gaps between the **target architecture** and **current state**:
 
 **Tell the assistant:**
 
-> Project is at `C:\Users\edeco\OneDrive\Desktop\groceryPlanner`. CSVs in `data/<store>/` feed Excel via the `RefreshGroceryData` VBA macro. Python should generate CSVs from store ads; only `test_capture.py` exists so far. Read `README.md` for full layout.
+> Project is at `C:\Users\edeco\OneDrive\Desktop\groceryPlanner`. CSVs in `data/<store>/` feed Excel via the `RefreshGroceryData` VBA macro. Scrapers are not built yet — CSVs are manual. Read `README.md` for full layout.
 
 **Most common commands:**
 
@@ -384,7 +362,6 @@ These are the gaps between the **target architecture** and **current state**:
 cd C:\Users\edeco\OneDrive\Desktop\groceryPlanner
 python scripts/create_template_workbook.py          # rebuild .xlsx from CSVs
 powershell -File scripts/import_vba.ps1             # rebuild .xlsm with macros
-python scripts/test_capture.py                      # Food Lion ad screenshot test
 ```
 
 Then in Excel: **Alt+F8** → **RefreshGroceryData**.
