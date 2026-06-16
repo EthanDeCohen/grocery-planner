@@ -6,26 +6,30 @@ Private Const PRICES_COMBINED_SHEET As String = "All Prices"
 Private Const DEALS_COMBINED_SHEET As String = "All Deals"
 
 Public Function ResolveDataRoot(ByVal wb As Workbook) As String
-    Dim workbookPath As String
+    Dim fso As Object
+    Dim searchPath As String
+    Dim parentPath As String
     Dim candidate As String
 
-    workbookPath = wb.Path
-    If workbookPath = "" Then
+    If wb.Path = "" Then
         ResolveDataRoot = ""
         Exit Function
     End If
 
-    candidate = workbookPath & "\" & DATA_FOLDER_NAME
-    If Dir(candidate, vbDirectory) <> "" Then
-        ResolveDataRoot = candidate
-        Exit Function
-    End If
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    searchPath = wb.Path
 
-    candidate = workbookPath & "\..\" & DATA_FOLDER_NAME
-    If Dir(candidate, vbDirectory) <> "" Then
-        ResolveDataRoot = candidate
-        Exit Function
-    End If
+    Do
+        candidate = fso.BuildPath(searchPath, DATA_FOLDER_NAME)
+        If fso.FolderExists(candidate) Then
+            ResolveDataRoot = candidate
+            Exit Function
+        End If
+
+        parentPath = fso.GetParentFolderName(searchPath)
+        If parentPath = searchPath Then Exit Do
+        searchPath = parentPath
+    Loop
 
     ResolveDataRoot = ""
 End Function
@@ -97,7 +101,7 @@ Private Function ImportStoreCsv(ByVal targetWorkbook As Workbook, ByVal csvPath 
     Set ws = EnsureSheet(targetWorkbook, sheetName)
     ClearSheetData ws, 1
 
-    If Dir(csvPath) = "" Then
+    If Not CsvFileExists(csvPath) Then
         ws.Range("A2").Value = "No CSV found at " & csvPath
         ImportStoreCsv = 0
         Exit Function
@@ -125,7 +129,7 @@ Private Function LoadCsvToSheet(ByVal csvPath As String, ByVal ws As Worksheet, 
     ws.Range("B1").Value = "row_type"
 
     Set queryTable = ws.QueryTables.Add( _
-        Connection:="TEXT;" & csvPath, _
+        Connection:="TEXT;" & Chr(34) & csvPath & Chr(34), _
         Destination:=ws.Range("C1"))
 
     With queryTable
@@ -169,6 +173,12 @@ Private Sub AppendSheetRows(ByVal sourceSheet As Worksheet, ByVal targetSheet As
 
     sourceRange.Copy Destination:=targetSheet.Cells(targetStartRow, 1)
 End Sub
+
+Private Function CsvFileExists(ByVal csvPath As String) As Boolean
+    Dim fso As Object
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    CsvFileExists = fso.FileExists(csvPath)
+End Function
 
 Private Function EnsureSheet(ByVal targetWorkbook As Workbook, ByVal sheetName As String) As Worksheet
     On Error Resume Next
