@@ -7,7 +7,8 @@ Private Const DEALS_COMBINED_SHEET As String = "All Deals"
 
 Public Function ResolveDataRoot(ByVal wb As Workbook) As String
     Dim fso As Object
-    Dim searchPath As String
+    Dim searchPaths As Collection
+    Dim searchPath As Variant
     Dim parentPath As String
     Dim candidate As String
 
@@ -17,21 +18,69 @@ Public Function ResolveDataRoot(ByVal wb As Workbook) As String
     End If
 
     Set fso = CreateObject("Scripting.FileSystemObject")
-    searchPath = wb.Path
+    Set searchPaths = BuildWorkbookSearchPaths(wb.Path, fso)
 
-    Do
-        candidate = fso.BuildPath(searchPath, DATA_FOLDER_NAME)
-        If fso.FolderExists(candidate) Then
-            ResolveDataRoot = candidate
-            Exit Function
-        End If
+    For Each searchPath In searchPaths
+        Do
+            candidate = fso.BuildPath(CStr(searchPath), DATA_FOLDER_NAME)
+            If fso.FolderExists(candidate) Then
+                ResolveDataRoot = candidate
+                Exit Function
+            End If
 
-        parentPath = fso.GetParentFolderName(searchPath)
-        If parentPath = searchPath Then Exit Do
-        searchPath = parentPath
-    Loop
+            parentPath = fso.GetParentFolderName(CStr(searchPath))
+            If parentPath = CStr(searchPath) Then Exit Do
+            searchPath = parentPath
+        Loop
+    Next searchPath
 
     ResolveDataRoot = ""
+End Function
+
+Private Function BuildWorkbookSearchPaths(ByVal workbookPath As String, ByVal fso As Object) As Collection
+    Dim paths As New Collection
+    Dim relPath As String
+    Dim oneDriveRoot As Variant
+
+    If LCase$(Left$(workbookPath, 4)) <> "http" Then
+        paths.Add workbookPath
+        Set BuildWorkbookSearchPaths = paths
+        Exit Function
+    End If
+
+    relPath = OneDriveRelativePathFromUrl(workbookPath)
+    If relPath <> "" Then
+        For Each oneDriveRoot In GetOneDriveRoots()
+            If fso.FolderExists(CStr(oneDriveRoot)) Then
+                paths.Add fso.BuildPath(CStr(oneDriveRoot), relPath)
+            End If
+        Next oneDriveRoot
+    End If
+
+    Set BuildWorkbookSearchPaths = paths
+End Function
+
+Private Function GetOneDriveRoots() As Variant
+    GetOneDriveRoots = Array( _
+        Environ$("USERPROFILE") & "\OneDrive", _
+        Environ$("USERPROFILE") & "\OneDrive - Personal")
+End Function
+
+Private Function OneDriveRelativePathFromUrl(ByVal urlPath As String) As String
+    Dim normalized As String
+    Dim parts() As String
+    Dim i As Long
+
+    normalized = Replace$(Replace$(urlPath, "\", "/"), "https://", vbNullString)
+    normalized = Replace$(normalized, "http://", vbNullString)
+    parts = Split(normalized, "/")
+
+    If UBound(parts) < 2 Then Exit Function
+
+    OneDriveRelativePathFromUrl = parts(2)
+    For i = 3 To UBound(parts)
+        OneDriveRelativePathFromUrl = OneDriveRelativePathFromUrl & "\" & parts(i)
+    Next i
 End Function
 
 Public Sub RefreshAll(ByVal targetWorkbook As Workbook)
@@ -121,6 +170,7 @@ Private Function LoadCsvToSheet(ByVal csvPath As String, ByVal ws As Worksheet, 
     ByVal storeLabel As String, ByVal rowType As String) As Long
 
     Dim queryTable As QueryTable
+    Dim queryPath As String
     Dim lastRow As Long
     Dim dataRows As Long
 
@@ -128,10 +178,13 @@ Private Function LoadCsvToSheet(ByVal csvPath As String, ByVal ws As Worksheet, 
     ws.Range("A1").Value = "store"
     ws.Range("B1").Value = "row_type"
 
+    queryPath = MaterializeCsvForExcel(csvPath)
+
     Set queryTable = ws.QueryTables.Add( _
-        Connection:="TEXT;" & Chr(34) & csvPath & Chr(34), _
+        Connection:="TEXT;" & queryPath, _
         Destination:=ws.Range("C1"))
 
+    On Error GoTo CleanFail
     With queryTable
         .TextFileParseType = xlDelimited
         .TextFileCommaDelimiter = True
@@ -140,6 +193,7 @@ Private Function LoadCsvToSheet(ByVal csvPath As String, ByVal ws As Worksheet, 
         .Refresh BackgroundQuery:=False
         .Delete
     End With
+    On Error GoTo 0
 
     lastRow = ws.Cells(ws.Rows.Count, "C").End(xlUp).Row
     If lastRow < 2 Then
@@ -156,6 +210,25 @@ Private Function LoadCsvToSheet(ByVal csvPath As String, ByVal ws As Worksheet, 
     ws.Range("B2:B" & lastRow).Value = rowType
 
     LoadCsvToSheet = dataRows
+    Exit Function
+
+CleanFail:
+    On Error Resume Next
+    queryTable.Delete
+    On Error GoTo 0
+    Err.Raise Err.Number, "GroceryCsvImporter", "Failed to import CSV: " & csvPath & " (" & Err.Description & ")"
+End Function
+
+Private Function MaterializeCsvForExcel(ByVal csvPath As String) As String
+    Dim fso As Object
+    Dim tempPath As String
+
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    tempPath = fso.BuildPath(Environ$("TEMP"), "groceryplanner_" & fso.GetFileName(csvPath))
+
+    If fso.FileExists(tempPath) Then fso.DeleteFile tempPath, True
+    fso.CopyFile csvPath, tempPath, True
+    MaterializeCsvForExcel = tempPath
 End Function
 
 Private Sub AppendSheetRows(ByVal sourceSheet As Worksheet, ByVal targetSheet As Worksheet, _
