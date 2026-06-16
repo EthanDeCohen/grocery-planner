@@ -13,6 +13,10 @@ MyGroceryPlanner.xlsx
 ~$*
 *.tmp
 
+# Python
+__pycache__/
+*.pyc
+
 # OS noise
 Thumbs.db
 Desktop.ini
