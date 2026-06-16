@@ -69,8 +69,8 @@ def build_workbook(excel):
 
     vba_project = wb.VBProject
     for filename, component_type, module_name in [
-        ("GroceryStoreConfig.cls", 2, "GroceryStoreConfig"),
-        ("GroceryCsvImporter.cls", 2, "GroceryCsvImporter"),
+        ("GroceryStoreConfig.bas", 1, "GroceryStoreConfig"),
+        ("GroceryCsvImporter.bas", 1, "GroceryCsvImporter"),
         ("GroceryPlannerModule.bas", 1, "GroceryPlannerModule"),
     ]:
         source = read_vba_source(VBA_DIR / filename)

@@ -1,99 +1,11 @@
-VERSION 1.0 CLASS
-BEGIN
-  MultiUse = -1  'True
-END
 Attribute VB_Name = "GroceryCsvImporter"
-Attribute VB_GlobalNameSpace = False
-Attribute VB_Creatable = False
-Attribute VB_PredeclaredId = False
-Attribute VB_Exposed = False
 Option Explicit
 
 Private Const DATA_FOLDER_NAME As String = "data"
 Private Const PRICES_COMBINED_SHEET As String = "All Prices"
 Private Const DEALS_COMBINED_SHEET As String = "All Deals"
 
-Private mWorkbook As Workbook
-Private mDataRoot As String
-Private mStores As Collection
-
-Public Sub Init(ByVal targetWorkbook As Workbook)
-    Set mWorkbook = targetWorkbook
-    mDataRoot = ResolveDataRoot(mWorkbook)
-    Set mStores = BuildStoreConfigs()
-End Sub
-
-Public Function DataRoot() As String
-    DataRoot = mDataRoot
-End Function
-
-Public Sub RefreshAll()
-    Dim store As GroceryStoreConfig
-    Dim pricesCombined As Worksheet
-    Dim dealsCombined As Worksheet
-    Dim nextPricesRow As Long
-    Dim nextDealsRow As Long
-    Dim importedPrices As Long
-    Dim importedDeals As Long
-    Dim totalPrices As Long
-    Dim totalDeals As Long
-    Dim summary As String
-
-    If mDataRoot = "" Then
-        Err.Raise vbObjectError + 513, "GroceryCsvImporter", _
-            "Could not locate the data folder. Expected '" & DATA_FOLDER_NAME & _
-            "' next to this workbook."
-    End If
-
-    Set pricesCombined = EnsureSheet(PRICES_COMBINED_SHEET)
-    Set dealsCombined = EnsureSheet(DEALS_COMBINED_SHEET)
-
-    ClearSheetData pricesCombined, 1
-    ClearSheetData dealsCombined, 1
-
-    nextPricesRow = 2
-    nextDealsRow = 2
-
-    For Each store In mStores
-        importedPrices = ImportStoreCsv(store, store.PricesCsvPath(mDataRoot), _
-            store.PricesSheetName, pricesCombined, nextPricesRow, store.StoreName, "price")
-        importedDeals = ImportStoreCsv(store, store.DealsCsvPath(mDataRoot), _
-            store.DealsSheetName, dealsCombined, nextDealsRow, store.StoreName, "deal")
-
-        totalPrices = totalPrices + importedPrices
-        totalDeals = totalDeals + importedDeals
-    Next store
-
-    ApplyTableFormatting pricesCombined, nextPricesRow - 1
-    ApplyTableFormatting dealsCombined, nextDealsRow - 1
-    UpdateSavingsSummary totalPrices, totalDeals
-
-    summary = "Imported " & totalPrices & " price row(s) and " & totalDeals & _
-        " deal row(s) from " & mDataRoot
-    mWorkbook.Worksheets("Instructions").Range("B4").Value = Now
-    mWorkbook.Worksheets("Instructions").Range("B5").Value = summary
-End Sub
-
-Private Function BuildStoreConfigs() As Collection
-    Dim stores As New Collection
-    Dim store As GroceryStoreConfig
-
-    Set store = New GroceryStoreConfig
-    store.Init "Whole Foods", "wholefoods", "Whole Foods", "Whole Foods Deals"
-    stores.Add store
-
-    Set store = New GroceryStoreConfig
-    store.Init "Food Lion", "foodlion", "Food Lion", "Food Lion Deals"
-    stores.Add store
-
-    Set store = New GroceryStoreConfig
-    store.Init "Harris Teeter", "harristeeter", "Harris Teeter", "Harris Teeter Deals"
-    stores.Add store
-
-    Set BuildStoreConfigs = stores
-End Function
-
-Private Function ResolveDataRoot(ByVal wb As Workbook) As String
+Public Function ResolveDataRoot(ByVal wb As Workbook) As String
     Dim workbookPath As String
     Dim candidate As String
 
@@ -118,14 +30,71 @@ Private Function ResolveDataRoot(ByVal wb As Workbook) As String
     ResolveDataRoot = ""
 End Function
 
-Private Function ImportStoreCsv(ByVal store As GroceryStoreConfig, ByVal csvPath As String, _
+Public Sub RefreshAll(ByVal targetWorkbook As Workbook)
+    Dim dataRoot As String
+    Dim storeName As String
+    Dim folderName As String
+    Dim pricesSheet As String
+    Dim dealsSheet As String
+    Dim storeIndex As Long
+    Dim pricesCombined As Worksheet
+    Dim dealsCombined As Worksheet
+    Dim nextPricesRow As Long
+    Dim nextDealsRow As Long
+    Dim importedPrices As Long
+    Dim importedDeals As Long
+    Dim totalPrices As Long
+    Dim totalDeals As Long
+    Dim summary As String
+
+    dataRoot = ResolveDataRoot(targetWorkbook)
+    If dataRoot = "" Then
+        Err.Raise vbObjectError + 513, "GroceryCsvImporter", _
+            "Could not locate the data folder. Expected '" & DATA_FOLDER_NAME & _
+            "' next to this workbook."
+    End If
+
+    Set pricesCombined = EnsureSheet(targetWorkbook, PRICES_COMBINED_SHEET)
+    Set dealsCombined = EnsureSheet(targetWorkbook, DEALS_COMBINED_SHEET)
+
+    ClearSheetData pricesCombined, 1
+    ClearSheetData dealsCombined, 1
+
+    nextPricesRow = 2
+    nextDealsRow = 2
+
+    For storeIndex = 1 To STORE_COUNT
+        GetStoreConfig storeIndex, storeName, folderName, pricesSheet, dealsSheet
+
+        importedPrices = ImportStoreCsv(targetWorkbook, _
+            PricesCsvPath(dataRoot, folderName), pricesSheet, pricesCombined, _
+            nextPricesRow, storeName, "price")
+        importedDeals = ImportStoreCsv(targetWorkbook, _
+            DealsCsvPath(dataRoot, folderName), dealsSheet, dealsCombined, _
+            nextDealsRow, storeName, "deal")
+
+        totalPrices = totalPrices + importedPrices
+        totalDeals = totalDeals + importedDeals
+    Next storeIndex
+
+    ApplyTableFormatting pricesCombined, nextPricesRow - 1
+    ApplyTableFormatting dealsCombined, nextDealsRow - 1
+    UpdateSavingsSummary targetWorkbook, dataRoot, totalPrices, totalDeals
+
+    summary = "Imported " & totalPrices & " price row(s) and " & totalDeals & _
+        " deal row(s) from " & dataRoot
+    targetWorkbook.Worksheets("Instructions").Range("B4").Value = Now
+    targetWorkbook.Worksheets("Instructions").Range("B5").Value = summary
+End Sub
+
+Private Function ImportStoreCsv(ByVal targetWorkbook As Workbook, ByVal csvPath As String, _
     ByVal sheetName As String, ByVal combinedSheet As Worksheet, ByRef nextCombinedRow As Long, _
     ByVal storeLabel As String, ByVal rowType As String) As Long
 
     Dim ws As Worksheet
     Dim rowCount As Long
 
-    Set ws = EnsureSheet(sheetName)
+    Set ws = EnsureSheet(targetWorkbook, sheetName)
     ClearSheetData ws, 1
 
     If Dir(csvPath) = "" Then
@@ -150,6 +119,7 @@ Private Function LoadCsvToSheet(ByVal csvPath As String, ByVal ws As Worksheet, 
     Dim queryTable As QueryTable
     Dim lastRow As Long
     Dim dataRows As Long
+
     ws.Range("A1").CurrentRegion.Clear
     ws.Range("A1").Value = "store"
     ws.Range("B1").Value = "row_type"
@@ -200,13 +170,13 @@ Private Sub AppendSheetRows(ByVal sourceSheet As Worksheet, ByVal targetSheet As
     sourceRange.Copy Destination:=targetSheet.Cells(targetStartRow, 1)
 End Sub
 
-Private Function EnsureSheet(ByVal sheetName As String) As Worksheet
+Private Function EnsureSheet(ByVal targetWorkbook As Workbook, ByVal sheetName As String) As Worksheet
     On Error Resume Next
-    Set EnsureSheet = mWorkbook.Worksheets(sheetName)
+    Set EnsureSheet = targetWorkbook.Worksheets(sheetName)
     On Error GoTo 0
 
     If EnsureSheet Is Nothing Then
-        Set EnsureSheet = mWorkbook.Worksheets.Add(After:=mWorkbook.Worksheets(mWorkbook.Worksheets.Count))
+        Set EnsureSheet = targetWorkbook.Worksheets.Add(After:=targetWorkbook.Worksheets(targetWorkbook.Worksheets.Count))
         EnsureSheet.Name = sheetName
     End If
 End Function
@@ -239,9 +209,11 @@ Private Sub ApplyTableFormatting(ByVal ws As Worksheet, ByVal lastRow As Long)
     ws.Columns.AutoFit
 End Sub
 
-Private Sub UpdateSavingsSummary(ByVal totalPrices As Long, ByVal totalDeals As Long)
+Private Sub UpdateSavingsSummary(ByVal targetWorkbook As Workbook, ByVal dataRoot As String, _
+    ByVal totalPrices As Long, ByVal totalDeals As Long)
+
     Dim ws As Worksheet
-    Set ws = EnsureSheet("Savings Summary")
+    Set ws = EnsureSheet(targetWorkbook, "Savings Summary")
 
     ws.Range("A1").Value = "Metric"
     ws.Range("B1").Value = "Value"
@@ -250,7 +222,7 @@ Private Sub UpdateSavingsSummary(ByVal totalPrices As Long, ByVal totalDeals As 
     ws.Range("A3").Value = "Total deal rows"
     ws.Range("B3").Value = totalDeals
     ws.Range("A4").Value = "Data folder"
-    ws.Range("B4").Value = mDataRoot
+    ws.Range("B4").Value = dataRoot
 
     ApplyTableFormatting ws, 4
 End Sub

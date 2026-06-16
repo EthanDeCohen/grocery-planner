@@ -24,8 +24,8 @@ try {
     $vbaProject = $wb.VBProject
 
     $modules = @(
-        @{ Path = Join-Path $ProjectRoot "vba\GroceryStoreConfig.cls"; Type = 2; Name = "GroceryStoreConfig" },
-        @{ Path = Join-Path $ProjectRoot "vba\GroceryCsvImporter.cls"; Type = 2; Name = "GroceryCsvImporter" },
+        @{ Path = Join-Path $ProjectRoot "vba\GroceryStoreConfig.bas"; Type = 1; Name = "GroceryStoreConfig" },
+        @{ Path = Join-Path $ProjectRoot "vba\GroceryCsvImporter.bas"; Type = 1; Name = "GroceryCsvImporter" },
         @{ Path = Join-Path $ProjectRoot "vba\GroceryPlannerModule.bas"; Type = 1; Name = "GroceryPlannerModule" }
     )
 

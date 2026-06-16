@@ -2,7 +2,6 @@ Attribute VB_Name = "GroceryPlannerModule"
 Option Explicit
 
 Public Sub RefreshGroceryData()
-    Dim importer As GroceryCsvImporter
     Dim previousScreenUpdating As Boolean
     Dim previousEvents As Boolean
 
@@ -13,9 +12,7 @@ Public Sub RefreshGroceryData()
     Application.ScreenUpdating = False
     Application.EnableEvents = False
 
-    Set importer = New GroceryCsvImporter
-    importer.Init ThisWorkbook
-    importer.RefreshAll
+    GroceryCsvImporter.RefreshAll ThisWorkbook
 
 CleanExit:
     Application.ScreenUpdating = previousScreenUpdating
@@ -30,12 +27,9 @@ CleanFail:
 End Sub
 
 Public Sub OpenDataFolder()
-    Dim importer As GroceryCsvImporter
     Dim dataRoot As String
 
-    Set importer = New GroceryCsvImporter
-    importer.Init ThisWorkbook
-    dataRoot = importer.DataRoot
+    dataRoot = GroceryCsvImporter.ResolveDataRoot(ThisWorkbook)
 
     If dataRoot = "" Then
         MsgBox "Data folder not found. Save this workbook beside the data folder first.", _
