@@ -40,7 +40,7 @@ Excel-based grocery price and deal planner for comparing stores in the Greensbor
 
 ## How it currently works
 
-The VBA import path is **fully implemented**. The Python CSV-generation path is **not started** — sample CSVs exist as hand-written examples, but there is no scraper yet.
+The VBA import path is **fully implemented**. The Python CSV-generation path is **partially started** — Food Lion weekly ad deals can be scraped via `scripts/scrape_foodlion.py`; other stores are still manual.
 
 ### What works today
 
@@ -50,12 +50,12 @@ The VBA import path is **fully implemented**. The Python CSV-generation path is 
 | VBA `RefreshGroceryData` | Done | Reads CSVs into all sheets |
 | Template workbook build | Done | Two methods (see below) |
 | Personal workbook setup | Done | `setup_personal_workbook.ps1` |
-| Python CSV generation | **Not done** | No scraper scripts yet |
-| Web scraping | **Not done** | Planned: HTTP/API-based fetch per store |
+| Food Lion deals scraper | Done | `scripts/scrape_foodlion.py` via Flipp API |
+| Harris Teeter / Whole Foods scrapers | **Not done** | CSVs still manual |
 
 ### Current manual workflow
 
-1. Edit or replace CSV files under `data/<store>/` by hand (or with your own scripts).
+1. Run `python scripts/scrape_foodlion.py` for Food Lion deals, or edit other store CSVs by hand.
 2. Ensure `GroceryPlanner.xlsm` sits in the project root next to the `data/` folder.
 3. Open the workbook in Excel, press **Alt+F8**, run **`RefreshGroceryData`**.
 4. VBA reloads all store sheets and combined summary sheets from disk.
@@ -94,7 +94,8 @@ groceryPlanner/
     ├── create_template_workbook.py    # Build .xlsx template from current CSVs (openpyxl)
     ├── build_template.py              # Build .xlsm with embedded VBA (pywin32 + Excel COM)
     ├── import_vba.ps1                 # Inject vba/ into template → .xlsm (PowerShell + Excel COM)
-    └── setup_personal_workbook.ps1    # Copy template to GroceryPlanner.xlsm
+    ├── setup_personal_workbook.ps1    # Copy template to GroceryPlanner.xlsm
+    └── scrape_foodlion.py             # Fetch Food Lion weekly ad → data/foodlion/deals.csv
 ```
 
 ---
@@ -238,6 +239,20 @@ Opens the resolved `data/` folder in Windows Explorer. Fails with a message if t
   ```
 - **Note:** If you need macros in the personal copy, use the `.xlsm` template instead (copy manually or extend this script).
 
+### `scripts/scrape_foodlion.py`
+
+- **Purpose:** Fetch the active Food Lion weekly ad for your ZIP code from the public Flipp API and write `data/foodlion/deals.csv`.
+- **Dependencies:** `httpx` (see `requirements.txt`)
+- **No browser required** — plain HTTP only; lightweight and fast.
+- **Run:**
+  ```powershell
+  pip install -r requirements.txt
+  python scripts/scrape_foodlion.py
+  python scripts/scrape_foodlion.py --postal-code 27401
+  ```
+- **Output:** Overwrites `data/foodlion/deals.csv` with weekly ad items (name, sale price, valid dates).
+- **Then:** Open `GroceryPlanner.xlsm` → **Alt+F8** → **RefreshGroceryData**.
+
 ---
 
 ## First-time setup
@@ -251,10 +266,9 @@ Opens the resolved `data/` folder in Windows Explorer. Fails with a message if t
 ### Python packages (by task)
 
 ```powershell
-# Template building from CSVs
-pip install pandas openpyxl
+pip install -r requirements.txt
 
-# Alternative .xlsm build
+# Alternative .xlsm build (also needs pywin32)
 pip install pywin32
 ```
 
@@ -324,9 +338,10 @@ d4c1561 Add personal workbook setup script and tidy VBA importer
 
 These are the gaps between the **target architecture** and **current state**:
 
-1. **Store scrapers** — One script per store (or shared library) that fetches deal/price data and writes `data/<store>/prices.csv` and `deals.csv`.
-2. **Food Lion first** — Inspect `ad.foodlion.com` network traffic for JSON/API endpoints; avoid headless browsers.
-3. **Harris Teeter / Whole Foods** — Identify data sources (weekly ad API, product pages, etc.) and add matching fetchers under `scripts/`.
+1. **Harris Teeter scraper** — Same Flipp API pattern as Food Lion; write `data/harristeeter/deals.csv`.
+2. **Whole Foods scraper** — Identify data source (may differ from Flipp).
+3. **Food Lion prices** — Optional `prices.csv` writer for non-flyer shelf prices.
+4. **Shared scraper library** — Extract common Flipp fetch/CSV code used by multiple store scripts.
 4. **Scheduled refresh** — Optional Task Scheduler job to regenerate CSVs weekly, then open Excel and refresh.
 5. **Savings logic** — `Savings Summary` currently shows row counts only; future: cost-per-gram protein, best-deal ranking, etc. (see `groceryInfo.txt` on Desktop for research context).
 
@@ -354,12 +369,13 @@ These are the gaps between the **target architecture** and **current state**:
 
 **Tell the assistant:**
 
-> Project is at `C:\Users\edeco\OneDrive\Desktop\groceryPlanner`. CSVs in `data/<store>/` feed Excel via the `RefreshGroceryData` VBA macro. Scrapers are not built yet — CSVs are manual. Read `README.md` for full layout.
+> Project is at `C:\Users\edeco\OneDrive\Desktop\groceryPlanner`. CSVs in `data/<store>/` feed Excel via the `RefreshGroceryData` VBA macro. Food Lion deals scraper exists (`scripts/scrape_foodlion.py`); other stores are manual. Read `README.md` for full layout.
 
 **Most common commands:**
 
 ```powershell
 cd C:\Users\edeco\OneDrive\Desktop\groceryPlanner
+python scripts/scrape_foodlion.py                   # fetch Food Lion weekly deals
 python scripts/create_template_workbook.py          # rebuild .xlsx from CSVs
 powershell -File scripts/import_vba.ps1             # rebuild .xlsm with macros
 ```
