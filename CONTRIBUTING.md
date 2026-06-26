@@ -15,6 +15,22 @@ Every branch, commit, and PR is tied to a Jira ticket in the **GFP** (Grocery Pl
 
 Optional Smart Commit directives in the commit body: `GFP-9 #comment <text>`, `GFP-9 #time 2h`, `GFP-9 #done` (transitions the issue). Prefer transitioning via the board for now; always include the key so the dev panel stays in sync.
 
+## Testing (as we go)
+
+Every code change ships with tests. CI (GitHub Actions, `.github/workflows/ci.yml`) runs on every push/PR — **a PR shouldn't merge with red CI.**
+
+```powershell
+# Python unit/integration tests (offline, fast)
+pip install -e ".[dev]"
+pytest
+
+# End-to-end CLI smoke test (generates its own sample data, throwaway DB)
+powershell -ExecutionPolicy Bypass -File scripts/smoke_test.ps1
+powershell -ExecutionPolicy Bypass -File scripts/smoke_test.ps1 -IncludeScrape   # also hits network
+```
+
+Add `pytest` cases under `tests/` for new logic; add a `Test-Case` line to `scripts/smoke_test.ps1` for new CLI commands. Keep unit tests network-free (scraper *parsing* is tested via pure functions, not live calls).
+
 ## Branch rules
 
 | Branch | Purpose | Who can push |
