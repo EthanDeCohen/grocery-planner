@@ -1,13 +1,13 @@
 """Typer CLI entry point for grocery-planner (`gp`).
 
 Local-first commands over the SQLite store:
-    gp import [PATH]        import data/<store>/*.csv into the DB
-    gp scrape STORE         fetch fresh deals (Food Lion implemented)
-    gp list deals|prices    query stored rows
-    gp stores               show tracked stores + row counts
-    gp db-path              print the database location
-    gp formula ...          manage user-defined formulas
-    gp profile ...          set/get profile values used by formulas
+    gplan import [PATH]     import data/<store>/*.csv into the DB
+    gplan scrape STORE      fetch fresh deals (Food Lion implemented)
+    gplan list deals|prices query stored rows
+    gplan stores            show tracked stores + row counts
+    gplan db-path           print the database location
+    gplan formula ...       manage user-defined formulas
+    gplan profile ...       set/get profile values used by formulas
 """
 from __future__ import annotations
 
@@ -163,7 +163,7 @@ def stores() -> None:
 
 @formula_app.command("set")
 def formula_set(name: str, expression: str, description: str = typer.Option("", "--desc")) -> None:
-    """Define or update a formula: gp formula set target_protein "weight * 1.6"."""
+    """Define or update a formula: gplan formula set target_protein "weight * 1.6"."""
     formulas.set_formula(db.connect(), name, expression, description)
     typer.secho(f"Saved formula {name!r}.", fg=typer.colors.GREEN)
 
@@ -202,7 +202,7 @@ def formula_eval(
 
 @profile_app.command("set")
 def profile_set(key: str, value: str) -> None:
-    """Set a profile value: gp profile set weight 82."""
+    """Set a profile value: gplan profile set weight 82."""
     conn = db.connect()
     conn.execute("INSERT INTO profile(key, value) VALUES (?, ?) "
                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
