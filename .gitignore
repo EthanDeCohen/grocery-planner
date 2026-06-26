@@ -17,3 +17,17 @@ MyGroceryPlanner.xlsx
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Local SQLite databases (personal data lives in the per-OS user-data dir)
+*.sqlite3
+*.db
