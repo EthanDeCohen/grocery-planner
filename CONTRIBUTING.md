@@ -2,6 +2,35 @@
 
 This project uses a simple **branch → pull request → review → merge** workflow. Direct pushes to `main` are blocked.
 
+## Issue tracking (Jira)
+
+Every branch, commit, and PR is tied to a Jira ticket in the **GFP** (Grocery Planner) project on `decohen-partners.atlassian.net`. The GitHub-for-Jira integration is connected, so referencing the key links the work into the ticket's development panel automatically (Smart Commits).
+
+| Artifact | Convention | Example |
+|----------|-----------|---------|
+| Branch | `<type>/GFP-<n>-slug` | `feat/GFP-9-cli-skeleton` |
+| Commit | `GFP-<n> <type>: summary` (key first) | `GFP-9 feat: add CLI + SQLite skeleton` |
+| PR title | `GFP-<n>: summary` | `GFP-9: local-first CLI + SQLite skeleton` |
+| PR body | Links the ticket | `Closes GFP-9` / `Refs GFP-9` |
+
+Optional Smart Commit directives in the commit body: `GFP-9 #comment <text>`, `GFP-9 #time 2h`, `GFP-9 #done` (transitions the issue). Prefer transitioning via the board for now; always include the key so the dev panel stays in sync.
+
+## Testing (as we go)
+
+Every code change ships with tests. CI (GitHub Actions, `.github/workflows/ci.yml`) runs on every push/PR — **a PR shouldn't merge with red CI.**
+
+```powershell
+# Python unit/integration tests (offline, fast)
+pip install -e ".[dev]"
+pytest
+
+# End-to-end CLI smoke test (generates its own sample data, throwaway DB)
+powershell -ExecutionPolicy Bypass -File scripts/smoke_test.ps1
+powershell -ExecutionPolicy Bypass -File scripts/smoke_test.ps1 -IncludeScrape   # also hits network
+```
+
+Add `pytest` cases under `tests/` for new logic; add a `Test-Case` line to `scripts/smoke_test.ps1` for new CLI commands. Keep unit tests network-free (scraper *parsing* is tested via pure functions, not live calls).
+
 ## Branch rules
 
 | Branch | Purpose | Who can push |
