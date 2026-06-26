@@ -2,6 +2,19 @@
 
 This project uses a simple **branch → pull request → review → merge** workflow. Direct pushes to `main` are blocked.
 
+## Issue tracking (Jira)
+
+Every branch, commit, and PR is tied to a Jira ticket in the **GFP** (Grocery Planner) project on `decohen-partners.atlassian.net`. The GitHub-for-Jira integration is connected, so referencing the key links the work into the ticket's development panel automatically (Smart Commits).
+
+| Artifact | Convention | Example |
+|----------|-----------|---------|
+| Branch | `<type>/GFP-<n>-slug` | `feat/GFP-9-cli-skeleton` |
+| Commit | `GFP-<n> <type>: summary` (key first) | `GFP-9 feat: add CLI + SQLite skeleton` |
+| PR title | `GFP-<n>: summary` | `GFP-9: local-first CLI + SQLite skeleton` |
+| PR body | Links the ticket | `Closes GFP-9` / `Refs GFP-9` |
+
+Optional Smart Commit directives in the commit body: `GFP-9 #comment <text>`, `GFP-9 #time 2h`, `GFP-9 #done` (transitions the issue). Prefer transitioning via the board for now; always include the key so the dev panel stays in sync.
+
 ## Branch rules
 
 | Branch | Purpose | Who can push |
