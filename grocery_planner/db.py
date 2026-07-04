@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS deals (
     deal_description TEXT,
     regular_price    REAL,
     sale_price       REAL,
+    dollar_price     REAL,
     discount_amount  REAL,
     discount_percent REAL,
     valid_from       TEXT,
@@ -92,9 +93,17 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Additive, idempotent migrations for DBs created before a column existed."""
+    deal_cols = {r["name"] for r in conn.execute("PRAGMA table_info(deals)")}
+    if "dollar_price" not in deal_cols:
+        conn.execute("ALTER TABLE deals ADD COLUMN dollar_price REAL")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
-    """Create tables (idempotent) and seed the store registry."""
+    """Create tables (idempotent), migrate, and seed the store registry."""
     conn.executescript(SCHEMA)
+    _migrate(conn)
     for s in STORES:
         conn.execute(
             "INSERT INTO stores(key, display_name, data_folder) VALUES (?, ?, ?) "
