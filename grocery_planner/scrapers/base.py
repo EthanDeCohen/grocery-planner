@@ -108,7 +108,8 @@ def price_to_float(value: Any) -> float | None:
 
 
 # --------------------------------------------------------------------------- #
-# Best-effort dollar-price extraction (ported from scripts/price_extract.py)
+# Best-effort dollar-price extraction: one comparable numeric price per deal,
+# from a structured field or dug out of the free-text ad copy.
 # --------------------------------------------------------------------------- #
 DOLLAR_AMOUNT = re.compile(r"\$\s*(\d{1,4}(?:\.\d{1,2})?)")
 SAVE_AMOUNT = re.compile(r"save\s+\$?\s*(\d+(?:\.\d{1,2})?)", re.IGNORECASE)

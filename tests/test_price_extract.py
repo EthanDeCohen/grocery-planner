@@ -1,4 +1,4 @@
-"""Best-effort dollar-price extraction (ported from scripts/price_extract.py)."""
+"""Best-effort dollar-price extraction: one comparable numeric price per deal."""
 from grocery_planner.scrapers.base import extract_dollar_price
 
 
