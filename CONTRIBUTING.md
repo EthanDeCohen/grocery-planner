@@ -110,15 +110,15 @@ git pull origin main
 
 1. **Summary** — what changed and why
 2. **Test plan** — commands you ran and what you verified
-3. **Screenshots / sample output** — for scraper or Excel changes, paste row counts or sample CSV lines
-4. **Breaking changes** — new CSV columns, renamed scripts, etc.
+3. **Sample output** — for scraper changes, paste row counts or sample rows
+4. **Breaking changes** — new CSV columns, DB schema/migrations, renamed commands, etc.
 
-## Scraper changes
+## Scraper / schema changes
 
-If you change CSV column layouts (`prices.csv` or `deals.csv`):
+If you change CSV column layouts (`prices.csv` or `deals.csv`) or the DB schema:
 
-1. Update `README.md` schema section
-2. Run the scraper locally and confirm `RefreshGroceryData` still works in Excel
+1. Update the `README.md` data-model section
+2. Add/adjust a DB migration in `grocery_planner/db.py` for existing databases
 3. Note that `data/` is gitignored — describe output in the PR, don't commit personal CSVs
 
 ## Branch protection on `main`

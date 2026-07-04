@@ -1,117 +1,131 @@
 # Grocery Planner
 
-Excel-based grocery price and deal planner for comparing stores in the Greensboro, NC area (ZIP 27401). Store data lives in CSV files under `data/`. Python scripts build the workbook template and (eventually) generate those CSVs from store sources. VBA macros read the CSVs and populate the Excel sheets.
+A local-first command-line tool for scraping, storing, and comparing grocery
+deals and prices across stores in the Greensboro, NC area (ZIP 27401). Everything
+runs on your machine against a single-file SQLite database — no server, no
+account, no cloud.
 
-**Project location:** `C:\Users\edeco\OneDrive\Desktop\groceryPlanner`
+The runtime is the **`gplan`** CLI (the `grocery_planner` Python package). Store
+weekly ads and digital coupons are fetched from the Flipp/Wishabi flyer API;
+results are normalized into a `deals` table you can query, filter, and feed into
+your own savings formulas.
 
----
-
-## How it is supposed to work (target architecture)
-
-```
-┌─────────────────────┐     ┌──────────────────────┐     ┌─────────────────────────┐
-│  Grocery store      │     │  data/<store>/         │     │  GroceryPlanner.xlsm    │
-│  sources (ads,      │ --> │  prices.csv            │ --> │  (Excel + VBA macros)   │
-│  websites, flyers)  │     │  deals.csv             │     │                         │
-└─────────────────────┘     └──────────────────────┘     └─────────────────────────┘
-         ^                            ^                              ^
-         │                            │                              │
-    Python scripts              CSV files on disk            RefreshGroceryData
-    scrape / capture /          (one folder per store)       macro loads CSVs into
-    parse store data                                           per-store + summary sheets
-```
-
-### Intended pipeline
-
-1. **Collect** — Python scripts fetch or capture grocery data from each store (weekly ads, price pages, etc.).
-2. **Write CSVs** — Parsed results are saved as `data/<store>/prices.csv` and `data/<store>/deals.csv`.
-3. **Refresh Excel** — Open `GroceryPlanner.xlsm` in the project root and run the `RefreshGroceryData` macro. VBA reads every store CSV and rebuilds all workbook sheets.
-4. **Compare** — Review per-store sheets plus combined `All Prices`, `All Deals`, and `Savings Summary`.
-
-### Tracked stores
-
-| Display name    | Data folder      | Prices sheet      | Deals sheet           |
-|-----------------|------------------|-------------------|-----------------------|
-| Whole Foods     | `wholefoods`     | Whole Foods       | Whole Foods Deals     |
-| Food Lion       | `foodlion`       | Food Lion         | Food Lion Deals       |
-| Harris Teeter   | `harristeeter`   | Harris Teeter     | Harris Teeter Deals   |
+> Excel was the original runtime and has been retired — see the git history if
+> you need the old VBA workbook and template builders.
 
 ---
 
-## How it currently works
+## How it works
 
-The VBA import path is **fully implemented**. The Python CSV-generation path is **in progress** — Food Lion and Harris Teeter weekly ads plus Flipp grocery digital coupons can be scraped via `scripts/scrape_*.py`; Whole Foods is still manual.
+```
+┌────────────────────┐    gplan scrape     ┌──────────────────────┐    gplan list / formula
+│  Flipp flyer API    │  ───────────────▶   │  SQLite (one file)   │  ───────────────▶  you
+│  (weekly ads +      │    gplan import     │  deals · prices ·    │    query, filter,
+│   digital coupons)  │  ──── CSVs ────▶    │  profile · formulas  │    compare, evaluate
+└────────────────────┘                     └──────────────────────┘
+```
 
-### What works today
+1. **Collect** — `gplan scrape <store>` pulls a store's active weekly ad plus
+   grocery digital coupons and writes normalized rows into the database.
+   `gplan import` loads CSVs (`data/<store>/{prices,deals}.csv`) instead.
+2. **Store** — one SQLite file in your user-data dir (`gplan db-path`). Disposable:
+   delete that one folder and everything is gone.
+3. **Compare** — `gplan list deals|prices` to browse/filter; `gplan formula` to
+   evaluate your own savings/nutrition expressions against `gplan profile` values.
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| CSV layout + sample data | Done | Example rows in `data/<store>/` |
-| VBA `RefreshGroceryData` | Done | Reads CSVs into all sheets |
-| Template workbook build | Done | Two methods (see below) |
-| Personal workbook setup | Done | `setup_personal_workbook.ps1` |
-| Food Lion deals scraper | Done | Weekly ad + grocery digital coupons |
-| Harris Teeter deals scraper | Done | Weekly ad + grocery digital coupons |
-| Shared Flipp library | Done | `scripts/flipp_common.py` |
-| Whole Foods scraper | **Not done** | CSVs still manual |
+### Stores
 
-### Current manual workflow
+| Store         | Key            | Scraper                        |
+|---------------|----------------|--------------------------------|
+| Food Lion     | `foodlion`     | ✅ weekly ad + digital coupons |
+| Harris Teeter | `harristeeter` | ✅ weekly ad + digital coupons |
+| Whole Foods   | `wholefoods`   | ⏳ manual CSV for now (GFP-4)  |
 
-1. Run `python scripts/scrape_all_deals.py` (or per-store scrapers) to refresh deal CSVs.
-2. Ensure `GroceryPlanner.xlsm` sits in the project root next to the `data/` folder.
-3. Open the workbook in Excel, press **Alt+F8**, run **`RefreshGroceryData`**.
-4. VBA reloads all store sheets and combined summary sheets from disk.
+The Flipp dependency (undocumented, unauthenticated `flippback.com` endpoints —
+no license fee, but ToS/breakage/rate-limit risk) is isolated in one place:
+`grocery_planner/scrapers/base.py`. Adding a Flipp-backed store is a thin module
+plus a registry entry (see `foodlion.py` / `harristeeter.py`).
 
 ---
 
-## Directory layout
+## Install
 
+Requires Python 3.11+.
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python -m pip install -e ".[dev]"
 ```
-groceryPlanner/
-├── README.md                          # This file
-├── .gitignore                         # Excludes data/ and personal workbooks
-├── GroceryPlanner.xlsm                # YOUR personal workbook (gitignored)
-│
-├── data/                              # Store CSV data (gitignored)
-│   ├── wholefoods/
-│   │   ├── prices.csv
-│   │   └── deals.csv
-│   ├── foodlion/
-│   │   ├── prices.csv
-│   │   └── deals.csv
-│   ├── harristeeter/
-│   │   ├── prices.csv
-│   │   └── deals.csv
-│
-├── template/                          # Tracked shared template (committed)
-│   ├── GroceryPlanner.template.xlsx   # Static template (no macros)
-│   └── GroceryPlanner.template.xlsm   # Macro-enabled template (with VBA)
-│
-├── vba/                               # VBA source (committed; edit here, re-import)
-│   ├── GroceryStoreConfig.cls         # Store name / folder / sheet mapping
-│   ├── GroceryCsvImporter.cls         # Core CSV → sheet import logic
-│   └── GroceryPlannerModule.bas       # Public macros (RefreshGroceryData, etc.)
-│
-└── scripts/
-    ├── create_template_workbook.py    # Build .xlsx template from current CSVs (openpyxl)
-    ├── build_template.py              # Build .xlsm with embedded VBA (pywin32 + Excel COM)
-    ├── import_vba.ps1                 # Inject vba/ into template → .xlsm (PowerShell + Excel COM)
-    ├── setup_personal_workbook.ps1    # Copy template to GroceryPlanner.xlsm
-    ├── flipp_common.py                # Shared Flipp API + CSV mapping logic
-    ├── scrape_foodlion.py             # Food Lion → data/foodlion/deals.csv
-    ├── scrape_harristeeter.py         # Harris Teeter → data/harristeeter/deals.csv
-    └── scrape_all_deals.py            # Run all store scrapers
-```
+
+Then run via `.venv\Scripts\gplan.exe` (or activate the venv and use `gplan`).
+
+> On Windows the `gplan` name is used deliberately — `gp` is a built-in
+> PowerShell alias for `Get-ItemProperty`.
 
 ---
 
-## CSV file formats
+## Commands
 
-Each store folder contains two files. Headers must match these columns (extra columns are fine; missing files show a placeholder message in Excel).
+```
+gplan scrape <store> [-z ZIP]      fetch fresh weekly ad + coupons into the DB
+gplan import [DATA_DIR]            load data/<store>/{prices,deals}.csv into the DB
+gplan list deals  [-s STORE] [-n N] [--on-sale]
+gplan list prices [-s STORE] [-n N]
+gplan stores                      tracked stores + row counts
+gplan db-path                     print the SQLite database path
+gplan formula set NAME EXPR [--desc TEXT]
+gplan formula list
+gplan formula eval NAME [-v key=value ...]
+gplan profile set KEY VALUE
+gplan profile list
+gplan version
+```
 
-### `prices.csv`
+Examples:
 
-Regular and sale pricing for individual items.
+```powershell
+gplan scrape foodlion                     # Food Lion weekly ad + coupons
+gplan scrape harristeeter -z 27401
+gplan list deals -s foodlion --on-sale -n 30
+gplan profile set weight 82
+gplan formula set target_protein "weight * 1.6" --desc "grams/day"
+gplan formula eval target_protein         # uses profile[weight]
+gplan formula eval target_protein -v weight=120
+```
+
+Formulas are evaluated with `simpleeval` (a safe expression evaluator — no raw
+`eval`), with `gplan profile` values available as variables.
+
+---
+
+## Data model
+
+One SQLite file (`gplan db-path`) with tables `stores`, `deals`, `prices`,
+`profile`, `formulas`, and `scraping_jobs`. The `deals` and `prices` schemas
+mirror the CSV layout below, so imports are loss-less.
+
+### `data/<store>/deals.csv`
+
+Weekly promotions, BOGO offers, digital coupons.
+
+| Column | Description |
+|--------|-------------|
+| `item_name` | Product name |
+| `sub_category` | Item grouping (e.g. Meat & Seafood); no-price rows get promo labels |
+| `deal_type` | Weekly Ad, Weekly Ad (price not listed), Bogo, Digital Coupon, Percent Off Coupon |
+| `deal_description` | Human-readable deal text |
+| `regular_price` | Pre-deal price |
+| `sale_price` | Deal price |
+| `dollar_price` | One comparable numeric price (from a field or parsed from the text) |
+| `discount_amount` | Dollar savings (coupons) |
+| `discount_percent` | Percent savings (coupons) |
+| `valid_from` / `valid_to` | Deal window |
+| `loyalty_required` | Y/N (MVP, VIC card, etc.) |
+| `notes` | Provenance tags (source, flyer/coupon id, loyalty) |
+
+### `data/<store>/prices.csv`
+
+Regular/sale shelf pricing for individual items.
 
 | Column | Description |
 |--------|-------------|
@@ -121,282 +135,39 @@ Regular and sale pricing for individual items.
 | `regular_price` | Shelf price |
 | `sale_price` | Promotional price (if on sale) |
 | `unit` | lb, each, dozen, gallon, etc. |
-| `price_per_unit` | Normalized price used for comparison |
+| `price_per_unit` | Normalized price for comparison |
 | `on_sale` | Y/N |
-| `loyalty_required` | Y/N (MVP, VIC card, etc.) |
-| `date_collected` | ISO date when price was recorded |
-| `notes` | Free text |
-
-### `deals.csv`
-
-Weekly promotions, BOGO offers, manager specials, etc.
-
-| Column | Description |
-|--------|-------------|
-| `item_name` | Product name |
-| `sub_category` | Item grouping (e.g. Meat & Seafood, Beverages). No-price flyer rows get explicit promo labels |
-| `deal_type` | e.g. Weekly Ad, Weekly Ad (price not listed), Bogo |
-| `deal_description` | Human-readable deal text |
-| `regular_price` | Pre-deal price |
-| `sale_price` | Deal price |
-| `discount_amount` | Dollar savings |
-| `discount_percent` | Percent savings |
-| `valid_from` | Deal start date |
-| `valid_to` | Deal end date |
 | `loyalty_required` | Y/N |
+| `date_collected` | ISO date collected |
 | `notes` | Free text |
 
-When VBA imports a CSV, it prepends two columns to every row:
-
-- `store` — display name (e.g. "Food Lion")
-- `row_type` — `"price"` or `"deal"`
+Re-importing or re-scraping a store replaces that store's prior rows for the same
+source, so the commands are idempotent. `data/` is gitignored (personal data).
 
 ---
 
-## Excel workbook sheets
-
-The template and personal workbook contain these sheets:
-
-| Sheet | Contents |
-|-------|----------|
-| Instructions | Usage steps, last refresh timestamp (B4), refresh summary (B5) |
-| Whole Foods | `data/wholefoods/prices.csv` |
-| Whole Foods Deals | `data/wholefoods/deals.csv` |
-| Food Lion | `data/foodlion/prices.csv` |
-| Food Lion Deals | `data/foodlion/deals.csv` |
-| Harris Teeter | `data/harristeeter/prices.csv` |
-| Harris Teeter Deals | `data/harristeeter/deals.csv` |
-| All Prices | Combined price rows from all stores |
-| All Deals | Combined deal rows from all stores |
-| Savings Summary | Row counts + data folder path |
-
----
-
-## VBA macros
-
-Defined in `vba/GroceryPlannerModule.bas`. After VBA is imported into the workbook, run via **Alt+F8** or assign to a button on the Instructions sheet.
-
-### `RefreshGroceryData`
-
-Main macro. Flow:
-
-1. Locate `data/` relative to the workbook path (`<workbook_dir>/data` or `<workbook_dir>/../data`).
-2. For each configured store (Whole Foods, Food Lion, Harris Teeter):
-   - Clear the store's prices and deals sheets.
-   - If the CSV exists, import via Excel `QueryTable` (comma-delimited).
-   - Prepend `store` and `row_type` columns.
-   - Append rows to `All Prices` or `All Deals`.
-3. Format headers (bold, light blue background) and auto-fit columns.
-4. Update `Savings Summary` with total row counts and data folder path.
-5. Write refresh timestamp and summary to `Instructions!B4` and `Instructions!B5`.
-6. Show a success or error message box.
-
-### `OpenDataFolder`
-
-Opens the resolved `data/` folder in Windows Explorer. Fails with a message if the workbook is unsaved or `data/` cannot be found.
-
-### VBA source modules
-
-- **`GroceryStoreConfig`** — Maps store display name → folder name → sheet names; builds CSV paths.
-- **`GroceryCsvImporter`** — All import, combine, format, and summary logic.
-- **`GroceryPlannerModule`** — Thin public entry points (`RefreshGroceryData`, `OpenDataFolder`).
-
----
-
-## Python scripts
-
-### `scripts/create_template_workbook.py` (primary template builder)
-
-- **Purpose:** Create `template/GroceryPlanner.template.xlsx` from whatever CSVs currently exist in `data/`.
-- **Dependencies:** `pandas`, `openpyxl`
-- **Behavior:** Reads each store's `prices.csv` and `deals.csv`, adds `store` and `row_type` columns, writes all sheets including combined views. Does **not** embed VBA.
-- **Run:**
-  ```powershell
-  cd C:\Users\edeco\OneDrive\Desktop\groceryPlanner
-  python scripts/create_template_workbook.py
-  ```
-
-### `scripts/build_template.py` (alternative: one-step .xlsm)
-
-- **Purpose:** Build `template/GroceryPlanner.template.xlsm` with sheets **and** embedded VBA in a single step.
-- **Dependencies:** `pywin32` (requires Excel installed)
-- **Behavior:** Uses Excel COM to create workbook, add sheets, inject all `vba/*.cls` and `vba/*.bas` source, save as macro-enabled.
-- **Run:**
-  ```powershell
-  pip install pywin32
-  python scripts/build_template.py
-  ```
-
-### `scripts/import_vba.ps1` (recommended VBA injection)
-
-- **Purpose:** Take the `.xlsx` template and produce `template/GroceryPlanner.template.xlsm` with VBA modules added.
-- **Requires:** Excel installed + Trust Center setting enabled (see Setup below).
-- **Run:**
-  ```powershell
-  powershell -ExecutionPolicy Bypass -File scripts/import_vba.ps1
-  ```
-
-### `scripts/setup_personal_workbook.ps1`
-
-- **Purpose:** Copy `template/GroceryPlanner.template.xlsx` → `GroceryPlanner.xlsm` in the project root (your gitignored working copy).
-- **Run:**
-  ```powershell
-  powershell -ExecutionPolicy Bypass -File scripts/setup_personal_workbook.ps1
-  ```
-- **Note:** If you need macros in the personal copy, use the `.xlsm` template instead (copy manually or extend this script).
-
-### `scripts/flipp_common.py`
-
-Shared library used by store scrapers. Fetches from `flyers-ng.flippback.com` (no browser):
-
-- Weekly ad items for a merchant (Food Lion, Harris Teeter)
-- Active grocery digital coupons (clip-to-card), including BOGO when present
-- `sub_category` classification and no-price labeling
-
-### `scripts/scrape_foodlion.py` / `scripts/scrape_harristeeter.py`
-
-- **Purpose:** Write `data/<store>/deals.csv` with weekly ad rows + grocery digital coupon rows.
-- **Dependencies:** `httpx` (see `requirements.txt`)
-- **Run:**
-  ```powershell
-  pip install -r requirements.txt
-  python scripts/scrape_foodlion.py
-  python scripts/scrape_harristeeter.py
-  python scripts/scrape_all_deals.py
-  ```
-- **Flags:** `--postal-code 27401`, `--no-digital-coupons` (weekly ad only)
-- **Then:** Open `GroceryPlanner.xlsm` → **Alt+F8** → **RefreshGroceryData**.
-
----
-
-## First-time setup
-
-### Prerequisites
-
-- Windows with Microsoft Excel
-- Python 3.x
-- PowerShell
-
-### Python packages (by task)
+## Development
 
 ```powershell
-pip install -r requirements.txt
+.venv\Scripts\python -m pip install -e ".[dev]"
 
-# Alternative .xlsm build (also needs pywin32)
-pip install pywin32
+pytest                                                   # offline unit tests
+powershell -ExecutionPolicy Bypass -File scripts/smoke_test.ps1   # e2e CLI smoke test
+powershell -ExecutionPolicy Bypass -File scripts/smoke_test.ps1 -IncludeScrape  # + live network
 ```
 
-### Excel Trust Center (required for `import_vba.ps1` and `build_template.py`)
+CI (`.github/workflows/ci.yml`) runs `pytest` and the smoke test on
+`windows-latest` for Python 3.11 and 3.13 on every push/PR. Tests ship with every
+change and CI must be green to merge.
 
-1. Excel → **File** → **Options** → **Trust Center** → **Trust Center Settings**
-2. **Macro Settings** → check **"Trust access to the VBA project object model"**
-3. Click OK and restart Excel if prompted.
-
-### Build template and personal workbook
-
-```powershell
-cd C:\Users\edeco\OneDrive\Desktop\groceryPlanner
-
-# Step 1: Create .xlsx template preloaded from sample CSVs
-python scripts/create_template_workbook.py
-
-# Step 2: Inject VBA → macro-enabled template
-powershell -ExecutionPolicy Bypass -File scripts/import_vba.ps1
-
-# Step 3: Create your personal workbook copy
-powershell -ExecutionPolicy Bypass -File scripts/setup_personal_workbook.ps1
-```
-
-If `setup_personal_workbook.ps1` copies the `.xlsx` (no macros), either:
-
-- Manually copy `template/GroceryPlanner.template.xlsm` to `GroceryPlanner.xlsm`, or
-- Re-run setup after pointing it at the `.xlsm` template.
-
-### Daily use
-
-1. Update CSVs in `data/<store>/` (manually today; via Python scripts in the future).
-2. Open `GroceryPlanner.xlsm` from the project root (must be saved — unsaved workbooks have no path, so VBA cannot find `data/`).
-3. **Alt+F8** → **RefreshGroceryData**.
-4. Review sheets.
+Contribution and Jira-tracking workflow: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
-## Git strategy
+## Planned work
 
-Git is initialized in this project. The repo tracks source code and templates; it does **not** track personal data.
-
-**Workflow:** All changes go through feature branches and pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md). The `main` branch is protected — no direct pushes.
-
-### Tracked (committed)
-
-- `README.md`
-- `vba/`
-- `scripts/`
-- `template/` (shared templates)
-- `.gitignore`
-
-### Gitignored (local only)
-
-- `data/` — store CSVs (personal shopping data)
-- `GroceryPlanner.xlsm` / `GroceryPlanner.xlsx` — your working workbook
-- `MyGroceryPlanner.*`, `*.local.xlsm`, Excel temp files (`~$*`)
-
-### Commit history
-
-```
-d4c1561 Add personal workbook setup script and tidy VBA importer
-6f29d30 Initial grocery planner: CSV layout, VBA importer, Excel template
-```
-
----
-
-## Planned work (not yet built)
-
-These are the gaps between the **target architecture** and **current state**:
-
-1. **Whole Foods scraper** — Identify data source (may differ from Flipp).
-2. **Store-specific digital coupons** — Filter coupons by MVP/VIC loyalty program when Flipp exposes them.
-3. **Food Lion / Harris Teeter prices** — Optional `prices.csv` writer for non-flyer shelf prices.
-4. **Scheduled weekly refresh** — Task Scheduler + `scrape_all_deals.py`.
-4. **Scheduled refresh** — Optional Task Scheduler job to regenerate CSVs weekly, then open Excel and refresh.
-5. **Savings logic** — `Savings Summary` currently shows row counts only; future: cost-per-gram protein, best-deal ranking, etc. (see `groceryInfo.txt` on Desktop for research context).
-
----
-
-## Troubleshooting
-
-| Problem | Fix |
-|---------|-----|
-| "Could not locate the data folder" | Save `GroceryPlanner.xlsm` in the project root (same folder as `data/`). |
-| "No CSV found at …" | Create the missing file or check the store folder name matches (`foodlion`, not `food-lion`). |
-| VBA import script fails | Enable "Trust access to the VBA project object model" in Excel Trust Center. |
-| VBA syntax error on open | Rebuild: `powershell -File scripts/import_vba.ps1` then `powershell -File scripts/setup_personal_workbook.ps1`. Caused by `Attribute VB_*` lines incorrectly injected during import. |
-| Macro not visible | Open the `.xlsm` file, not `.xlsx`. Re-run `import_vba.ps1`. |
-| `create_template_workbook.py` errors | `pip install pandas openpyxl` |
-
----
-
-## Related files outside this repo
-
-- `C:\Users\edeco\OneDrive\Desktop\groceryInfo.txt` — Detailed protein-sourcing and deal research for Greensboro 27401 (June 2026). Not part of the git repo; useful background for what to track in CSVs.
-
----
-
-## Quick reference for future sessions
-
-**Tell the assistant:**
-
-> Project is at `C:\Users\edeco\OneDrive\Desktop\groceryPlanner`. CSVs in `data/<store>/` feed Excel via `RefreshGroceryData`. Scrapers: `scrape_foodlion.py`, `scrape_harristeeter.py`, `scrape_all_deals.py`. Whole Foods manual. PR workflow in CONTRIBUTING.md.
-
-**Most common commands:**
-
-```powershell
-cd C:\Users\edeco\OneDrive\Desktop\groceryPlanner
-python scripts/scrape_all_deals.py                  # fetch all store deals
-python scripts/scrape_foodlion.py                   # Food Lion only
-python scripts/scrape_harristeeter.py               # Harris Teeter only
-python scripts/create_template_workbook.py          # rebuild .xlsx from CSVs
-powershell -File scripts/import_vba.ps1             # rebuild .xlsm with macros
-```
-
-Then in Excel: **Alt+F8** → **RefreshGroceryData**.
+- **GFP-4 Whole Foods** — identify a data source (likely not Flipp).
+- **GFP-5 shelf prices** — optional `prices.csv` writer for non-flyer prices.
+- **GFP-7 scheduled refresh** — background/resumable weekly scrape jobs.
+- **GFP-8 savings logic** — best-deal ranking, cost-per-gram protein, etc.
+- **GFP-10 packaged binary**, **GFP-11 desktop GUI**.

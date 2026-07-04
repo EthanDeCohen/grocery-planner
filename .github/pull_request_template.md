@@ -11,10 +11,10 @@
 
 ## Test plan
 
-<!-- Commands run, Excel steps, sample output -->
+<!-- Commands run, sample output -->
 
-- [ ] Ran locally
-- [ ] Verified Excel `RefreshGroceryData` (if CSV/VBA touched)
+- [ ] `pytest` green
+- [ ] Ran `scripts/smoke_test.ps1` (if CLI changed)
 - [ ] Updated `README.md` (if behavior or schema changed)
 
 ## Sample output
