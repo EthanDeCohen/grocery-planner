@@ -17,14 +17,17 @@ SOURCE_CSV = "csv-import"
 
 DEAL_COLUMNS = [
     "item_name", "sub_category", "deal_type", "deal_description",
-    "regular_price", "sale_price", "discount_amount", "discount_percent",
+    "regular_price", "sale_price", "dollar_price", "discount_amount", "discount_percent",
     "valid_from", "valid_to", "loyalty_required", "notes",
 ]
 PRICE_COLUMNS = [
     "item_name", "brand", "category", "regular_price", "sale_price", "unit",
     "price_per_unit", "on_sale", "loyalty_required", "date_collected", "notes",
 ]
-NUMERIC = {"regular_price", "sale_price", "discount_amount", "discount_percent", "price_per_unit"}
+NUMERIC = {
+    "regular_price", "sale_price", "dollar_price", "discount_amount",
+    "discount_percent", "price_per_unit",
+}
 
 
 @dataclass

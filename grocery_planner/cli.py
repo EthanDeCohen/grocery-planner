@@ -87,7 +87,7 @@ def scrape(
         raise typer.Exit(2)
 
     typer.echo(f"Scraping Food Lion weekly ad for {postal_code} ...")
-    rows, flyer = foodlion.scrape(postal_code=postal_code)
+    rows, flyer, stats = foodlion.scrape(postal_code=postal_code)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     conn = db.connect()
     cols = importers.DEAL_COLUMNS
@@ -98,10 +98,10 @@ def scrape(
         [{**r, "store": store, "source": "scrape", "imported_at": now} for r in rows],
     )
     conn.commit()
-    no_price = sum(1 for r in rows if r["sale_price"] is None)
     typer.secho(
-        f"Flyer {flyer.get('name')} ({flyer.get('id')}): stored {len(rows)} deals "
-        f"({no_price} without a listed price).",
+        f"Flyer {flyer.get('name')} ({flyer.get('id')}): stored {stats['total']} deals — "
+        f"{stats['weekly_ad']} weekly ad ({stats['no_price']} without a listed price), "
+        f"{stats['digital_coupons']} digital coupons ({stats['bogo']} BOGO).",
         fg=typer.colors.GREEN,
     )
 
@@ -130,12 +130,13 @@ def list_cmd(
     lim = "" if limit == 0 else f" LIMIT {int(limit)}"
 
     if kind is Kind.deals:
-        sql = ("SELECT store, item_name, sub_category, sale_price, valid_to "
+        sql = ("SELECT store, item_name, sub_category, sale_price, dollar_price, valid_to "
                f"FROM deals{clause} ORDER BY store, item_name{lim}")
         rows = conn.execute(sql, params).fetchall()
-        _print_table(["store", "item", "sub_category", "sale", "valid_to"],
+        _print_table(["store", "item", "sub_category", "sale", "price", "valid_to"],
                      [(BY_KEY[r["store"]].display_name, r["item_name"], r["sub_category"],
-                       _money(r["sale_price"]), r["valid_to"] or "") for r in rows])
+                       _money(r["sale_price"]), _money(r["dollar_price"]), r["valid_to"] or "")
+                      for r in rows])
     else:
         sql = ("SELECT store, item_name, category, regular_price, sale_price, unit "
                f"FROM prices{clause} ORDER BY store, item_name{lim}")

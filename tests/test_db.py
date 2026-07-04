@@ -19,3 +19,26 @@ def test_init_is_idempotent(conn):
     init_db(conn)
     count = conn.execute("SELECT COUNT(*) FROM stores").fetchone()[0]
     assert count == len(STORES)
+
+
+def test_deals_has_dollar_price_column(conn):
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(deals)")}
+    assert "dollar_price" in cols
+
+
+def test_migration_adds_dollar_price_to_old_db(tmp_path):
+    # Simulate a DB created before the dollar_price column existed.
+    import sqlite3
+
+    from grocery_planner import db
+
+    p = tmp_path / "old.sqlite3"
+    raw = sqlite3.connect(p)
+    raw.execute("CREATE TABLE deals (id INTEGER PRIMARY KEY, store TEXT, sale_price REAL)")
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(p)  # runs init_db -> _migrate
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(deals)")}
+    assert "dollar_price" in cols
+    conn.close()

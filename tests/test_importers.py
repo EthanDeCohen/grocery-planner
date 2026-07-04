@@ -26,3 +26,17 @@ def test_reimport_is_idempotent(conn, sample_data):
     import_dir(conn, sample_data)
     import_dir(conn, sample_data)  # second pass must replace, not append
     assert conn.execute("SELECT COUNT(*) FROM deals").fetchone()[0] == 4
+
+
+def test_dollar_price_column_imported(conn, tmp_path):
+    from grocery_planner.importers import DEAL_COLUMNS
+
+    folder = tmp_path / "data" / "foodlion"
+    folder.mkdir(parents=True)
+    header = ",".join(DEAL_COLUMNS)
+    row = "Chips,Snacks & Chips,Weekly Ad,$3.49,,3.49,3.49,,,2026-06-10,2026-06-16,Y,"
+    (folder / "deals.csv").write_text(header + "\n" + row + "\n", encoding="utf-8")
+
+    import_dir(conn, tmp_path / "data")
+    got = conn.execute("SELECT dollar_price FROM deals WHERE item_name='Chips'").fetchone()
+    assert got["dollar_price"] == 3.49
