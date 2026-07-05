@@ -98,6 +98,23 @@ Formulas are evaluated with `simpleeval` (a safe expression evaluator — no raw
 
 ---
 
+## Desktop GUI (preview)
+
+An early cross-platform (Windows + macOS) desktop shell is available behind the
+optional `gui` extra — a minimal window to pick a store, run a scrape, and browse
+the resulting deals without touching the CLI. It drives the same
+`grocery_planner.service` core as `gplan`.
+
+```powershell
+.venv\Scripts\python -m pip install -e ".[gui]"     # installs PySide6 (Qt)
+.venv\Scripts\python -m grocery_planner.gui          # or: gplan-gui
+```
+
+This is the MVP shell (GFP-14); the full GUI — formula editor, schedule settings,
+per-job progress, Export to Excel — is GFP-11.
+
+---
+
 ## Data model
 
 One SQLite file (`gplan db-path`) with tables `stores`, `deals`, `prices`,
@@ -170,4 +187,5 @@ Contribution and Jira-tracking workflow: see [CONTRIBUTING.md](CONTRIBUTING.md).
 - **GFP-5 shelf prices** — optional `prices.csv` writer for non-flyer prices.
 - **GFP-7 scheduled refresh** — background/resumable weekly scrape jobs.
 - **GFP-8 savings logic** — best-deal ranking, cost-per-gram protein, etc.
-- **GFP-10 packaged binary**, **GFP-11 desktop GUI**.
+- **GFP-10 packaged binary** — single-file `.exe` / `.app` (PyInstaller).
+- **GFP-11 desktop GUI** — full-featured GUI on top of the GFP-14 preview shell.

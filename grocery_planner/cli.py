@@ -11,13 +11,12 @@ Local-first commands over the SQLite store:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
 import typer
 
-from . import __version__, db, formulas, importers
+from . import __version__, db, formulas, importers, service
 from .scrapers import SCRAPERS
 from .stores import BY_KEY
 
@@ -83,7 +82,7 @@ def scrape(
     scraper = SCRAPERS.get(store)
     if scraper is None:
         typer.secho(
-            f"No scraper for {store!r}. Available: {', '.join(sorted(SCRAPERS))}. "
+            f"No scraper for {store!r}. Available: {', '.join(service.available_scrapers())}. "
             "Whole Foods is GFP-4.",
             fg=typer.colors.YELLOW, err=True,
         )
@@ -91,17 +90,8 @@ def scrape(
 
     zip_code = postal_code or scraper.DEFAULT_POSTAL_CODE
     typer.echo(f"Scraping {scraper.MERCHANT} weekly ad for {zip_code} ...")
-    rows, flyer, stats = scraper.scrape(postal_code=postal_code)
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    conn = db.connect()
-    cols = importers.DEAL_COLUMNS
-    conn.execute("DELETE FROM deals WHERE store=? AND source=?", (store, "scrape"))
-    conn.executemany(
-        f"INSERT INTO deals(store, {', '.join(cols)}, source, imported_at) "
-        f"VALUES (:store, {', '.join(':' + c for c in cols)}, :source, :imported_at)",
-        [{**r, "store": store, "source": "scrape", "imported_at": now} for r in rows],
-    )
-    conn.commit()
+    result = service.run_scrape(store, postal_code=postal_code)
+    flyer, stats = result["flyer"], result["stats"]
     typer.secho(
         f"Flyer {flyer.get('name')} ({flyer.get('id')}): stored {stats['total']} deals — "
         f"{stats['weekly_ad']} weekly ad ({stats['no_price']} without a listed price), "
