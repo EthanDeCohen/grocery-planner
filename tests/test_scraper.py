@@ -77,6 +77,23 @@ def test_pick_weekly_flyer():
     assert base.pick_weekly_flyer(flyers, "Publix", datetime(2026, 6, 12)) is None
 
 
+def test_store_registry():
+    from grocery_planner.scrapers import SCRAPERS
+
+    assert set(SCRAPERS) == {"foodlion", "harristeeter"}
+    # Every registered module exposes the thin store-scraper surface the CLI uses.
+    for key, mod in SCRAPERS.items():
+        assert mod.STORE_KEY == key
+        assert mod.MERCHANT and mod.DEFAULT_POSTAL_CODE
+        assert callable(mod.scrape)
+
+
+def test_harris_teeter_config():
+    assert base.HARRIS_TEETER.key == "harristeeter"
+    assert base.HARRIS_TEETER.merchant_name == "Harris Teeter"
+    assert base.HARRIS_TEETER.loyalty_name == "VIC"
+
+
 def test_infer_coupon_deal_type():
     assert base.infer_coupon_deal_type("Buy One Get One Free", "") == "Bogo"
     assert base.infer_coupon_deal_type("BOGO on chips", "") == "Bogo"

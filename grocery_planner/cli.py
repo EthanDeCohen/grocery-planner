@@ -18,7 +18,7 @@ from pathlib import Path
 import typer
 
 from . import __version__, db, formulas, importers
-from .scrapers import foodlion
+from .scrapers import SCRAPERS
 from .stores import BY_KEY
 
 app = typer.Typer(add_completion=False, help="Local-first grocery price/deal planner.")
@@ -74,20 +74,24 @@ def import_cmd(
 
 @app.command()
 def scrape(
-    store: str = typer.Argument(..., help="Store key, e.g. 'foodlion'."),
-    postal_code: str = typer.Option(foodlion.DEFAULT_POSTAL_CODE, "--postal-code", "-z"),
+    store: str = typer.Argument(..., help="Store key, e.g. 'foodlion' or 'harristeeter'."),
+    postal_code: str = typer.Option(
+        None, "--postal-code", "-z", help="ZIP for the flyer lookup (default: store's own)."
+    ),
 ) -> None:
     """Scrape fresh deals for a store and store them in the DB."""
-    if store != foodlion.STORE_KEY:
+    scraper = SCRAPERS.get(store)
+    if scraper is None:
         typer.secho(
-            f"Only '{foodlion.STORE_KEY}' is implemented so far (got {store!r}). "
-            "Harris Teeter / Whole Foods are GFP-3 / GFP-4.",
+            f"No scraper for {store!r}. Available: {', '.join(sorted(SCRAPERS))}. "
+            "Whole Foods is GFP-4.",
             fg=typer.colors.YELLOW, err=True,
         )
         raise typer.Exit(2)
 
-    typer.echo(f"Scraping Food Lion weekly ad for {postal_code} ...")
-    rows, flyer, stats = foodlion.scrape(postal_code=postal_code)
+    zip_code = postal_code or scraper.DEFAULT_POSTAL_CODE
+    typer.echo(f"Scraping {scraper.MERCHANT} weekly ad for {zip_code} ...")
+    rows, flyer, stats = scraper.scrape(postal_code=postal_code)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     conn = db.connect()
     cols = importers.DEAL_COLUMNS
