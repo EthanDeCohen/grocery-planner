@@ -1,0 +1,107 @@
+-- GFP-23: starter food catalog + protein values, seeded into the tables
+-- created by 0005_GFP-23.ddl.
+--
+-- source='curated' marks these as hand-entered starting points, not a
+-- verified USDA lookup, so a later USDA FoodData Central ingest (GFP-24,
+-- source='usda') can be told apart from these rows and supersede them.
+-- Protein-per-100g figures below are common, widely-cited approximations
+-- for the raw/uncooked form of each item (whey powders are as-sold powder,
+-- not made into a shake), rounded to the nearest whole gram -- deliberately
+-- not claiming lab precision this ticket has no source for. GFP-24 replaces
+-- these with sourced USDA figures; deal-to-food matching is GFP-25.
+--
+-- Idempotency: foods.UNIQUE(source, source_ref) and
+-- food_nutrients.UNIQUE(food_id, nutrient) mean INSERT OR IGNORE is a safe
+-- no-op to re-run, which matters because db.py applies every migration
+-- script on every connect() (see db_script/README.md).
+--
+-- 32 items spread across the six v1 client-facing categories (beef, pork,
+-- chicken, fish, tofu, whey); the category list itself is read from this
+-- data (SELECT DISTINCT category FROM foods), not hard-coded in a UI.
+
+INSERT OR IGNORE INTO foods (name, category, source, source_ref) VALUES
+    ('Ground beef, 80/20, raw',                 'beef',    'curated', 'beef-ground-80-20'),
+    ('Ground beef, 93/7, raw',                   'beef',    'curated', 'beef-ground-93-7'),
+    ('Beef sirloin steak, raw',                  'beef',    'curated', 'beef-sirloin-steak'),
+    ('Beef ribeye steak, raw',                   'beef',    'curated', 'beef-ribeye-steak'),
+    ('Beef chuck roast, raw',                    'beef',    'curated', 'beef-chuck-roast'),
+    ('Beef brisket, raw',                        'beef',    'curated', 'beef-brisket'),
+
+    ('Pork loin chop, raw',                      'pork',    'curated', 'pork-loin-chop'),
+    ('Pork tenderloin, raw',                     'pork',    'curated', 'pork-tenderloin'),
+    ('Pork shoulder, raw',                       'pork',    'curated', 'pork-shoulder'),
+    ('Ground pork, raw',                         'pork',    'curated', 'pork-ground'),
+    ('Bacon, raw',                                'pork',    'curated', 'bacon'),
+
+    ('Chicken breast, skinless/boneless, raw',   'chicken', 'curated', 'chicken-breast-skinless-boneless'),
+    ('Chicken thigh, skinless/boneless, raw',    'chicken', 'curated', 'chicken-thigh-skinless-boneless'),
+    ('Chicken drumstick, raw',                   'chicken', 'curated', 'chicken-drumstick'),
+    ('Chicken wing, raw',                        'chicken', 'curated', 'chicken-wing'),
+    ('Ground chicken, raw',                      'chicken', 'curated', 'chicken-ground'),
+    ('Whole chicken, raw',                       'chicken', 'curated', 'chicken-whole'),
+
+    ('Salmon, Atlantic, raw',                    'fish',    'curated', 'salmon-atlantic'),
+    ('Tuna, yellowfin, raw',                     'fish',    'curated', 'tuna-yellowfin'),
+    ('Tilapia, raw',                             'fish',    'curated', 'tilapia'),
+    ('Cod, raw',                                 'fish',    'curated', 'cod'),
+    ('Shrimp, raw',                              'fish',    'curated', 'shrimp'),
+    ('Tuna, canned in water, drained',           'fish',    'curated', 'tuna-canned-water'),
+
+    ('Tofu, firm',                               'tofu',    'curated', 'tofu-firm'),
+    ('Tofu, extra firm',                         'tofu',    'curated', 'tofu-extra-firm'),
+    ('Tofu, silken/soft',                        'tofu',    'curated', 'tofu-silken'),
+    ('Tofu, medium',                             'tofu',    'curated', 'tofu-medium'),
+
+    ('Whey protein isolate, powder',             'whey',    'curated', 'whey-protein-isolate'),
+    ('Whey protein concentrate, powder',         'whey',    'curated', 'whey-protein-concentrate'),
+    ('Whey protein hydrolysate, powder',         'whey',    'curated', 'whey-protein-hydrolysate'),
+    ('Whey protein blend (whey + casein), powder','whey',   'curated', 'whey-protein-blend'),
+    ('Whey protein, ready-to-drink shake',       'whey',    'curated', 'whey-protein-rtd-shake');
+
+-- SQLite's VALUES table-value constructor has no PostgreSQL-style
+-- "AS v(col1, col2)" column-naming syntax, so the two synthesized columns
+-- are referenced by their SQLite-assigned default names, column1/column2.
+INSERT OR IGNORE INTO food_nutrients (food_id, nutrient, amount_per_100g, unit)
+SELECT f.id, 'protein', v.column2, 'g'
+FROM foods f
+JOIN (VALUES
+    ('beef-ground-80-20',                17.0),
+    ('beef-ground-93-7',                 20.0),
+    ('beef-sirloin-steak',               21.0),
+    ('beef-ribeye-steak',                20.0),
+    ('beef-chuck-roast',                 20.0),
+    ('beef-brisket',                     19.0),
+
+    ('pork-loin-chop',                   21.0),
+    ('pork-tenderloin',                  21.0),
+    ('pork-shoulder',                    18.0),
+    ('pork-ground',                      17.0),
+    ('bacon',                            12.0),
+
+    ('chicken-breast-skinless-boneless', 23.0),
+    ('chicken-thigh-skinless-boneless',  20.0),
+    ('chicken-drumstick',                18.0),
+    ('chicken-wing',                     18.0),
+    ('chicken-ground',                   18.0),
+    ('chicken-whole',                    18.0),
+
+    ('salmon-atlantic',                  20.0),
+    ('tuna-yellowfin',                   24.0),
+    ('tilapia',                          20.0),
+    ('cod',                              18.0),
+    ('shrimp',                           20.0),
+    ('tuna-canned-water',                26.0),
+
+    ('tofu-firm',                         8.0),
+    ('tofu-extra-firm',                  10.0),
+    ('tofu-silken',                       5.0),
+    ('tofu-medium',                       7.0),
+
+    ('whey-protein-isolate',             90.0),
+    ('whey-protein-concentrate',         78.0),
+    ('whey-protein-hydrolysate',         85.0),
+    ('whey-protein-blend',               70.0),
+    ('whey-protein-rtd-shake',            8.0)
+) AS v
+ON f.source_ref = v.column1
+WHERE f.source = 'curated';

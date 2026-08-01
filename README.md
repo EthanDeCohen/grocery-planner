@@ -177,8 +177,27 @@ uploads them as artifacts.
 ## Data model
 
 One SQLite file (`gplan db-path`) with tables `stores`, `deals`, `prices`,
-`profile`, `formulas`, and `scraping_jobs`. The `deals` and `prices` schemas
-mirror the CSV layout below, so imports are loss-less.
+`profile`, `formulas`, `scraping_jobs`, `schedules`, `foods`, and
+`food_nutrients`. The `deals` and `prices` schemas mirror the CSV layout
+below, so imports are loss-less. Schema is defined in `db_script/` (see
+`db_script/README.md`), not inline in `grocery_planner/db.py`.
+
+### Nutrition foundation (`foods` / `food_nutrients`)
+
+Groundwork (GFP-23) for optimising cost per gram of protein for nutritionist
+clients. `foods` holds one row per known food (`name`, `category`, `source`,
+`source_ref`); `food_nutrients` holds one row per `(food, nutrient)` fact —
+protein is just the first nutrient populated (`nutrient='protein'`,
+`amount_per_100g`, `unit='g'`), so fibre/carbs/fat scaffold in later as more
+rows, not a schema change. `foods.category` is one of six v1 client-facing
+categories (`beef`, `pork`, `chicken`, `fish`, `tofu`, `whey`), sourced from
+the data rather than hard-coded in a UI. `source='curated'` marks the
+starter catalog seeded by `db_script/migration/0006_GFP-23.dml`; a later
+USDA FoodData Central ingest (GFP-24) uses `source='usda'` and can supersede
+curated rows. Deal-to-food matching is GFP-25. Read access is in
+`grocery_planner/nutrition.py` (`list_foods`, `get_food`, `list_categories`,
+`protein_per_100g`), following the same "module functions + optional `conn`"
+convention as `grocery_planner/service/deals.py`.
 
 ### `data/<store>/deals.csv`
 
