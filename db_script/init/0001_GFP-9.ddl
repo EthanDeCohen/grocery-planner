@@ -1,20 +1,21 @@
--- GFP-9: baseline schema — builds a blank database from scratch.
+-- GFP-9: the ORIGINAL baseline schema, frozen.
 --
--- This file is the CURRENT structure, kept up to date as the schema
--- evolves (see db_script/README.md for the convention). It is safe to run
--- against an existing database: every statement is idempotent
--- (IF NOT EXISTS), so re-running it on every `connect()` is a no-op once
--- the structure already matches.
+-- READ THIS BEFORE EDITING (GFP-60 changed the rules):
 --
--- Column/table additions after this baseline was first cut belong in
--- db_script/migration/ instead of being edited in here retroactively,
--- UNLESS the goal is specifically to keep this file describing "today's
--- structure" for a brand-new database (see GFP-59). The dollar_price
--- column below is one such case: GFP-6 added it after the original
--- GFP-9 schema shipped, but a fresh database should have it from the
--- start, so it is folded into this baseline rather than left to only be
--- added via the GFP-6 migration (db_script/migration/0002_GFP-6.ddl),
--- which exists for databases that predate this file.
+-- This file is a FROZEN historical baseline, not a living picture of today's
+-- schema. It is executed only against a brand-new database, and every change
+-- made after it lives solely in db_script/migration/, applied in sequence on
+-- top of this file. Fresh database == this file + every migration replayed.
+--
+-- DO NOT fold a new table or column back into this file. That was the earlier
+-- convention (GFP-59) and it described each change twice, so replaying both
+-- against one database collided by design -- and SQLite reports that collision
+-- with the same SQLITE_ERROR it uses for a genuine typo, making the two
+-- impossible to tell apart. Keeping this file frozen means a migration failure
+-- is always a real failure, and can always be raised rather than guessed at.
+--
+-- To see today's structure, build a database and introspect it -- do not read
+-- this file (GFP-61 automates that comparison in CI).
 
 CREATE TABLE IF NOT EXISTS stores (
     key          TEXT PRIMARY KEY,
@@ -31,7 +32,6 @@ CREATE TABLE IF NOT EXISTS deals (
     deal_description TEXT,
     regular_price    REAL,
     sale_price       REAL,
-    dollar_price     REAL,
     discount_amount  REAL,
     discount_percent REAL,
     valid_from       TEXT,
@@ -39,35 +39,8 @@ CREATE TABLE IF NOT EXISTS deals (
     loyalty_required TEXT,
     notes            TEXT,
     source           TEXT,
-    imported_at      TEXT,
-    postal_code      TEXT  -- GFP-54: ZIP code the deal was scraped for
+    imported_at      TEXT
 );
-
--- GFP-39: append-only price-history log. `deals` above stays a
--- current-snapshot table (a scrape replaces its prior rows); this is where
--- price movement over time actually lives. One row per (store, postal_code,
--- item_name, deal_type) per calendar day -- see
--- db_script/migration/0004_GFP-39.ddl for the upsert grain this depends on.
-CREATE TABLE IF NOT EXISTS price_history (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    store            TEXT NOT NULL,
-    postal_code      TEXT NOT NULL,
-    item_name        TEXT NOT NULL,
-    sub_category     TEXT,
-    deal_type        TEXT,
-    regular_price    REAL,
-    sale_price       REAL,
-    dollar_price     REAL,
-    discount_amount  REAL,
-    discount_percent REAL,
-    source           TEXT,
-    captured_at      TEXT NOT NULL,
-    updated_at       TEXT,
-    UNIQUE(store, postal_code, item_name, deal_type, captured_at)
-);
-
-CREATE INDEX IF NOT EXISTS idx_price_history_lookup
-    ON price_history(store, postal_code, item_name, captured_at);
 
 CREATE TABLE IF NOT EXISTS prices (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,9 +81,6 @@ CREATE TABLE IF NOT EXISTS scraping_jobs (
     message         TEXT
 );
 
--- Refresh cadence per store (GFP-7). Kept in our own table rather than an
--- APScheduler job store so the schedule survives restarts without pulling in
--- SQLAlchemy; the scheduler is rebuilt from these rows on every start.
 CREATE TABLE IF NOT EXISTS schedules (
     store      TEXT PRIMARY KEY,
     kind       TEXT NOT NULL,   -- 'interval' or 'cron'
@@ -120,62 +90,6 @@ CREATE TABLE IF NOT EXISTS schedules (
     updated_at TEXT
 );
 
--- Nutrition foundation (GFP-23): folded into the baseline so a fresh
--- database gets these tables immediately, in addition to
--- db_script/migration/0005_GFP-23.ddl which carries them to pre-existing
--- databases. See that file for the full rationale (nutrients are DATA, not
--- columns; category is data-driven, not a UI enum).
-CREATE TABLE IF NOT EXISTS foods (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT NOT NULL,
-    category   TEXT NOT NULL,
-    source     TEXT NOT NULL,
-    source_ref TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(source, source_ref)
-);
-
-CREATE TABLE IF NOT EXISTS food_nutrients (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    food_id         INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,
-    nutrient        TEXT NOT NULL,
-    amount_per_100g REAL,
-    unit            TEXT,
-    UNIQUE(food_id, nutrient)
-);
-
--- Customer domain (GFP-28): folded into the baseline so a fresh database
--- gets this table immediately, in addition to
--- db_script/migration/0008_GFP-28.ddl which carries it to pre-existing
--- databases. See that file for the full rationale -- in short: weight_kg is
--- the canonical column the future protein-target formula (GFP-29) must read
--- (the existing weight * 1.6 formula is grams-per-KILOGRAM; a pound value
--- stored there un-converted is a 2.2x dosing error), weight_unit is the
--- user's originally-entered unit kept only for display, and deleted_at makes
--- delete() a soft delete because a customer record -- unlike every other
--- table here -- cannot be re-scraped or re-imported if lost.
-CREATE TABLE IF NOT EXISTS customers (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    name           TEXT NOT NULL,
-    weight_kg      REAL,
-    weight_unit    TEXT,
-    height_cm      REAL,
-    age            INTEGER,
-    sex            TEXT,
-    activity_level TEXT,
-    goal           TEXT,
-    protein_factor REAL NOT NULL DEFAULT 1.6,
-    notes          TEXT,
-    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    deleted_at     TEXT
-);
-
 CREATE INDEX IF NOT EXISTS idx_deals_store ON deals(store);
+
 CREATE INDEX IF NOT EXISTS idx_prices_store ON prices(store);
-CREATE INDEX IF NOT EXISTS idx_foods_category ON foods(category);
-CREATE INDEX IF NOT EXISTS idx_food_nutrients_food_id ON food_nutrients(food_id);
-CREATE INDEX IF NOT EXISTS idx_food_nutrients_nutrient ON food_nutrients(nutrient);
-CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(name);
-CREATE INDEX IF NOT EXISTS idx_customers_deleted_at ON customers(deleted_at);

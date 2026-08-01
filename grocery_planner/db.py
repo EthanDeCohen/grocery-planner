@@ -7,10 +7,25 @@ original Excel pipeline (so imports are loss-less) plus app-state tables
 The schema itself lives in db_script/ (see db_script/README.md), not inline
 here: db_script/init/ holds the current structure built from scratch, and
 db_script/migration/ holds incremental changes for pre-existing databases.
-This module just locates and executes those .ddl/.dml files in order.
+This module locates those .ddl/.dml files, tracks which ones have been
+applied to a given database in a `schema_version` table, and applies each
+pending one exactly once, in order, inside its own transaction (GFP-60).
+
+GFP-59 shipped a deliberately interim mechanism where every script on disk
+was re-executed on every connect(), with a "duplicate column name" /
+"already exists" OperationalError treated as "already applied". That had
+three problems: (1) it matched on substrings of human-readable error text,
+(2) sqlite3.Connection.executescript() aborts remaining statements once one
+raises, so a multi-statement migration that hits that error partway through
+silently skips the rest (0003_GFP-54.ddl's ALTER + backfill UPDATE was only
+safe "by luck" -- the UPDATE was a no-op on repeat runs anyway), and (3)
+every connect() re-read and re-executed every script on disk, forever. This
+module replaces that mechanism entirely -- see `_apply_pending_migrations`.
 """
 from __future__ import annotations
 
+import hashlib
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -19,6 +34,33 @@ from .paths import db_path
 from .stores import STORES
 
 SCRIPT_EXTENSIONS = (".ddl", ".dml")
+
+# NNNN_GFP-KEY.{ddl,dml} -- see db_script/README.md for the convention.
+_SCRIPT_NAME_RE = re.compile(r"^(\d{4})_(GFP-\d+)\.(?:ddl|dml)$")
+
+SCHEMA_VERSION_DDL = """
+CREATE TABLE IF NOT EXISTS schema_version (
+    seq        INTEGER PRIMARY KEY,
+    jira_key   TEXT NOT NULL,
+    filename   TEXT NOT NULL UNIQUE,
+    checksum   TEXT NOT NULL,
+    mode       TEXT NOT NULL DEFAULT 'executed',
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+)
+"""
+
+# How a script came to be recorded. Worth distinguishing when debugging a
+# database later: "baselined" means it was never run against THIS database
+# because its effect was already present when schema_version was introduced.
+EXECUTED = "executed"
+BASELINED = "baselined"
+
+
+class SchemaVersionError(RuntimeError):
+    """Raised when db_script/ and schema_version disagree in a way that must
+    not be silently papered over: a checksum mismatch (history was edited
+    after being applied), a missing file for a previously-applied seq, a gap
+    in the sequence, or a real (non-adoption) failure applying a script."""
 
 
 def _db_script_root() -> Path:
@@ -65,23 +107,253 @@ def _sql_files(subdir: str) -> list[Path]:
     return sorted(files, key=lambda p: p.name)
 
 
-def _apply_sql_file(conn: sqlite3.Connection, path: Path) -> None:
-    """Execute one script, treating "already applied" as success.
+def _parse_script_name(name: str) -> tuple[int, str]:
+    """Return (sequence number, Jira key) from a NNNN_GFP-KEY.ddl|dml name."""
+    m = _SCRIPT_NAME_RE.match(name)
+    if not m:
+        raise SchemaVersionError(
+            f"{name!r} under db_script/ does not match the NNNN_GFP-KEY."
+            "ddl|dml naming convention (see db_script/README.md)"
+        )
+    return int(m.group(1)), m.group(2)
 
-    init/ scripts use CREATE TABLE/INDEX IF NOT EXISTS and are naturally
-    idempotent. migration/ scripts (e.g. ALTER TABLE ADD COLUMN) have no
-    such conditional form in SQLite, so a "duplicate column name" or
-    "already exists" OperationalError means the change is already present
-    rather than a real failure -- safe to ignore so re-running every
-    connect() stays a no-op on a database that's already current.
+
+def _all_scripts() -> list[tuple[int, str, Path]]:
+    """Every init/ and migration/ script, as (seq, jira_key, path), sorted by
+    seq. seq is one counter shared across both subdirectories (see
+    db_script/README.md) -- both are version-tracked the same way (see
+    module docstring / db_script/README.md for why init/ is included too)."""
+    scripts = [
+        (*_parse_script_name(p.name), p)
+        for p in _sql_files("init") + _sql_files("migration")
+    ]
+    scripts.sort(key=lambda t: t[0])
+    return scripts
+
+
+def _checksum(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _split_statements(sql: str) -> list[str]:
+    """Split a script into individual statements for execute()-by-execute()
+    application, respecting '--' line comments and single-quoted string
+    literals (with '' escaping) so semicolons inside either don't cause an
+    incorrect split.
+
+    This (rather than executescript()) is what lets a pending script be
+    applied inside one explicit transaction: executescript() implicitly
+    commits any open transaction before it runs and does not participate in
+    one, so it can't be wrapped in a transaction we control -- which is
+    exactly what let 0003_GFP-54.ddl's ALTER succeed while its backfill
+    UPDATE silently never ran on a repeat pass under the old mechanism.
     """
+    statements: list[str] = []
+    buf: list[str] = []
+    in_string = False
+    i, n = 0, len(sql)
+    while i < n:
+        ch = sql[i]
+        if in_string:
+            buf.append(ch)
+            if ch == "'":
+                if i + 1 < n and sql[i + 1] == "'":
+                    buf.append(sql[i + 1])
+                    i += 2
+                    continue
+                in_string = False
+            i += 1
+            continue
+        if ch == "'":
+            in_string = True
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "-" and i + 1 < n and sql[i + 1] == "-":
+            nl = sql.find("\n", i)
+            i = n if nl == -1 else nl + 1
+            continue
+        if ch == ";":
+            stmt = "".join(buf).strip()
+            if stmt:
+                statements.append(stmt)
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        statements.append(tail)
+    return statements
+
+
+def _schema_fingerprint(conn: sqlite3.Connection) -> dict[str, set[str]]:
+    """Every application table mapped to its column names.
+
+    Deliberately structural only -- enough to answer "does this database
+    already have the schema the scripts describe?" without caring about row
+    contents. schema_version and SQLite's own bookkeeping are excluded.
+    """
+    names = [
+        r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT IN ('schema_version', 'sqlite_sequence')"
+        )
+    ]
+    return {
+        name: {r[1] for r in conn.execute(f"PRAGMA table_info({name})")}
+        for name in sorted(names)
+    }
+
+
+def _reference_fingerprint() -> dict[str, set[str]]:
+    """The schema every script on disk produces, built in memory.
+
+    Used only when adopting a database that predates schema_version, to tell
+    "already fully migrated" from "genuinely behind" without inspecting error
+    text. Cheap, and it happens at most once per database.
+    """
+    ref = sqlite3.connect(":memory:")
     try:
-        conn.executescript(path.read_text(encoding="utf-8"))
-    except sqlite3.OperationalError as exc:
-        msg = str(exc).lower()
-        if "duplicate column name" in msg or "already exists" in msg:
+        for _seq, _key, path in _all_scripts():
+            for stmt in _split_statements(path.read_text(encoding="utf-8")):
+                ref.execute(stmt)
+        return _schema_fingerprint(ref)
+    finally:
+        ref.close()
+
+
+def _ensure_schema_version_table(conn: sqlite3.Connection) -> None:
+    """Create schema_version if missing. Must run before anything can be
+    recorded, and must not itself depend on any migration file having run
+    (bootstrap chicken-and-egg) -- so this is plain code, not a migration.
+    A migration file documenting this table also exists for the historical
+    record (db_script/migration/0007_GFP-60.ddl) and for fresh init/, but
+    this call is what actually guarantees the table exists."""
+    conn.execute(SCHEMA_VERSION_DDL)
+    conn.commit()
+
+
+def _apply_pending_migrations(conn: sqlite3.Connection) -> None:
+    """Apply every not-yet-recorded db_script/ script, in sequence order,
+    exactly once, each inside its own transaction.
+
+    Nothing is ever swallowed. A script that fails is rolled back, left
+    unrecorded, and raised -- so it surfaces again next connect instead of
+    being silently marked done.
+
+    That is only possible because db_script/init/0001 is a FROZEN baseline
+    (GFP-60): every change after it lives solely in migration/, so a fresh
+    database is "init + replay every migration" and a migration never
+    legitimately collides with what is already there. The earlier convention
+    folded each change into init/ as well, describing it twice, which made
+    collisions inevitable -- and SQLite reports them with the same
+    SQLITE_ERROR as a genuine typo, so they could not be told apart.
+
+    The one exception is adoption: a database created before schema_version
+    existed has no record of what it has run. If its structure already matches
+    what the scripts produce, they are recorded as BASELINED rather than
+    replayed; if it is genuinely behind, they are executed and bring it up to
+    date. That comparison is structural, never based on error text.
+    """
+    _ensure_schema_version_table(conn)
+
+    scripts = _all_scripts()
+    seqs = [seq for seq, _, _ in scripts]
+    expected = list(range(1, len(seqs) + 1))
+    if seqs != expected:
+        raise SchemaVersionError(
+            "db_script/ has a gap or duplicate in its NNNN sequence "
+            f"prefixes: found {seqs}, expected a contiguous {expected}. "
+            "Every prefix from 0001 must be present exactly once across "
+            "init/ and migration/ (see db_script/README.md)."
+        )
+    scripts_by_seq = {seq: (jira_key, path) for seq, jira_key, path in scripts}
+
+    recorded = {
+        row["seq"]: row
+        for row in conn.execute(
+            "SELECT seq, jira_key, filename, checksum FROM schema_version"
+        ).fetchall()
+    }
+    recorded_seqs = sorted(recorded)
+    if recorded_seqs and recorded_seqs != list(range(1, len(recorded_seqs) + 1)):
+        raise SchemaVersionError(
+            "schema_version has a gap in its recorded sequence numbers: "
+            f"{recorded_seqs}. This should be impossible from normal use; "
+            "the table may have been edited by hand."
+        )
+
+    # Refuse to run if a recorded script's checksum (or filename) changed,
+    # or if the file it refers to has disappeared entirely -- history was
+    # edited after being applied.
+    for seq, row in recorded.items():
+        if seq not in scripts_by_seq:
+            raise SchemaVersionError(
+                f"schema_version records seq {seq} ({row['filename']}) as "
+                "already applied, but no matching file exists under "
+                "db_script/ anymore. Refusing to continue."
+            )
+        jira_key, path = scripts_by_seq[seq]
+        checksum = _checksum(path)
+        if row["filename"] != path.name or row["checksum"] != checksum:
+            raise SchemaVersionError(
+                f"db_script/{path.name} (seq {seq}) does not match what "
+                f"schema_version recorded when it was applied: recorded "
+                f"filename={row['filename']!r} checksum={row['checksum']}, "
+                f"on-disk filename={path.name!r} checksum={checksum}. A "
+                "previously-applied migration was edited after the fact -- "
+                "refusing to continue rather than silently re-applying a "
+                "changed script."
+            )
+
+    def _record(seq: int, jira_key: str, path: Path, checksum: str, mode: str) -> None:
+        conn.execute(
+            "INSERT INTO schema_version(seq, jira_key, filename, checksum, mode) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (seq, jira_key, path.name, checksum, mode),
+        )
+        conn.commit()
+        recorded[seq] = {
+            "seq": seq, "jira_key": jira_key, "filename": path.name,
+            "checksum": checksum,
+        }
+
+    # One-time adoption. A database with application tables but no
+    # schema_version rows predates this tracking. If it already matches what
+    # the scripts produce, replaying them would collide, so record them as
+    # baselined instead. If it does NOT match, it is genuinely behind and the
+    # pending scripts are executed normally -- which is what repairs it.
+    if not recorded and _schema_fingerprint(conn):
+        if _schema_fingerprint(conn) == _reference_fingerprint():
+            for seq, jira_key, path in scripts:
+                _record(seq, jira_key, path, _checksum(path), BASELINED)
             return
-        raise
+
+    for seq, jira_key, path in scripts:
+        if seq in recorded:
+            continue
+        checksum = _checksum(path)
+        statements = _split_statements(path.read_text(encoding="utf-8"))
+
+        conn.execute("BEGIN")
+        try:
+            for stmt in statements:
+                conn.execute(stmt)
+        except sqlite3.Error as exc:
+            # A real failure. Roll back, do NOT record, and raise -- so it is
+            # attempted again (and reported) on the next connect rather than
+            # being permanently marked done. Nothing is swallowed here: the
+            # frozen init/ baseline means a migration never legitimately
+            # collides with the schema it is applied to.
+            conn.rollback()
+            raise SchemaVersionError(
+                f"db_script/{path.parent.name}/{path.name} (seq {seq}) failed to "
+                f"apply: {exc}. It has NOT been recorded in schema_version, so it "
+                "will be retried once fixed."
+            ) from exc
+        _record(seq, jira_key, path, checksum, EXECUTED)
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
@@ -97,10 +369,7 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
 def init_db(conn: sqlite3.Connection) -> None:
     """Build the schema from db_script/, apply pending migrations, and seed
     the store registry. Safe to call repeatedly (idempotent)."""
-    for f in _sql_files("init"):
-        _apply_sql_file(conn, f)
-    for f in _sql_files("migration"):
-        _apply_sql_file(conn, f)
+    _apply_pending_migrations(conn)
     for s in STORES:
         conn.execute(
             "INSERT INTO stores(key, display_name, data_folder) VALUES (?, ?, ?) "
