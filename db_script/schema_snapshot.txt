@@ -69,6 +69,7 @@ TABLE foods
   created_at: TEXT NOT NULL DEFAULT datetime('now')
   id: INTEGER PK
   name: TEXT NOT NULL
+  slug: TEXT
   source: TEXT NOT NULL
   source_ref: TEXT
   updated_at: TEXT NOT NULL DEFAULT datetime('now')

@@ -321,18 +321,20 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _curated_food_ids(conn: sqlite3.Connection) -> dict[str, int]:
-    """``source_ref -> foods.id`` for the GFP-23 curated catalog.
+def _catalog_food_ids(conn: sqlite3.Connection) -> dict[str, int]:
+    """``slug -> foods.id`` for the whole catalog, whatever the provenance.
 
-    Matching targets ``source='curated'`` specifically: that is the seed
-    catalog this module's vocabulary was hand-built against (GFP-24's USDA
-    ingest, running in parallel, is a different provenance and out of scope
-    here -- see the module docstring).
+    Keyed on ``slug``, not ``source_ref``, and deliberately NOT filtered by
+    ``source`` (GFP-68). ``gplan nutrition sync`` supersedes a curated row in
+    place -- flipping ``source`` to ``usda`` and replacing ``source_ref`` with
+    the FDC id -- so keying on either of those made a food vanish from this
+    vocabulary the moment its protein figure got a better source. Which is
+    backwards: a sourced food is the one we most want to match.
     """
     return {
-        row["source_ref"]: row["id"]
+        row["slug"]: row["id"]
         for row in conn.execute(
-            "SELECT id, source_ref FROM foods WHERE source='curated' AND source_ref IS NOT NULL"
+            "SELECT id, slug FROM foods WHERE slug IS NOT NULL"
         )
     }
 
@@ -349,7 +351,7 @@ def match_deals(conn: sqlite3.Connection | None = None) -> dict[str, Any]:
     silently undo a human decision.
     """
     own = conn or db.connect()
-    food_ids = _curated_food_ids(own)
+    food_ids = _catalog_food_ids(own)
     manual_keys = {
         (row["store"], row["item_name"])
         for row in own.execute(
