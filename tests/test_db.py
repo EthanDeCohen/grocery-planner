@@ -156,3 +156,89 @@ def test_script_sequence_prefixes_are_unique_across_init_and_migration():
     prefixes = [f.name.split("_", 1)[0] for f in
                 _sql_files("init") + _sql_files("migration")]
     assert len(prefixes) == len(set(prefixes))
+
+
+# --------------------------------------------------------------------------- #
+# GFP-54 — deals.postal_code
+# --------------------------------------------------------------------------- #
+def test_deals_has_postal_code_column(conn):
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(deals)")}
+    assert "postal_code" in cols
+
+
+def test_migration_backfills_postal_code_on_old_db(tmp_path):
+    """A database from before GFP-54 has no postal_code column at all; every
+    row it already has was scraped/imported back when the app only ever used
+    one ZIP, so connect() must backfill those rows to that ZIP ("27401" --
+    see db_script/migration/0003_GFP-54.ddl)."""
+    import sqlite3
+
+    from grocery_planner import db
+
+    p = tmp_path / "old.sqlite3"
+    raw = sqlite3.connect(p)
+    raw.execute(
+        "CREATE TABLE deals (id INTEGER PRIMARY KEY, store TEXT, sale_price REAL, source TEXT)"
+    )
+    raw.execute(
+        "INSERT INTO deals(store, sale_price, source) VALUES ('foodlion', 1.99, 'scrape')"
+    )
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(p)  # runs init_db -> applies db_script/migration/0003_GFP-54.ddl
+    try:
+        row = conn.execute(
+            "SELECT postal_code FROM deals WHERE store='foodlion'"
+        ).fetchone()
+        assert row["postal_code"] == "27401"
+    finally:
+        conn.close()
+
+
+def test_postal_code_migration_is_idempotent_on_a_current_db(conn):
+    """Re-applying db_script/migration/0003_GFP-54.ddl against a database that
+    already has the column (built from the current init/ baseline) must not
+    raise."""
+    from grocery_planner.db import _apply_sql_file, _sql_files
+
+    migration_files = _sql_files("migration")
+    cols_before = {r["name"] for r in conn.execute("PRAGMA table_info(deals)")}
+    assert "postal_code" in cols_before  # already present via init/
+
+    for f in migration_files:
+        _apply_sql_file(conn, f)  # must not raise "duplicate column name"
+
+    cols_after = {r["name"] for r in conn.execute("PRAGMA table_info(deals)")}
+    assert cols_after == cols_before
+
+
+# --------------------------------------------------------------------------- #
+# GFP-39 — price_history
+# --------------------------------------------------------------------------- #
+def test_price_history_table_created(conn):
+    names = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "price_history" in names
+
+
+def test_price_history_created_on_an_old_db_missing_it(tmp_path):
+    """A pre-GFP-39 database has no price_history table at all; connect() must
+    create it via db_script/migration/0004_GFP-39.ddl."""
+    import sqlite3
+
+    from grocery_planner import db
+
+    p = tmp_path / "old.sqlite3"
+    raw = sqlite3.connect(p)
+    raw.execute("CREATE TABLE deals (id INTEGER PRIMARY KEY, store TEXT)")
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(p)
+    try:
+        names = {r["name"] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "price_history" in names
+    finally:
+        conn.close()
