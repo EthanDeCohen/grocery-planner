@@ -11,8 +11,13 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hiddenimports = collect_submodules("apscheduler")
 # db_script ships the .ddl/.dml schema scripts (GFP-59); see gplan.spec for
-# why this must be explicit rather than assumed to "just come along".
-datas = collect_data_files("tzdata") + collect_data_files("db_script")
+# why this must be explicit rather than assumed to "just come along". Same
+# reasoning covers grocery_planner/data/*.json, GFP-24's vendored USDA snapshot.
+datas = (
+    collect_data_files("tzdata")
+    + collect_data_files("db_script")
+    + collect_data_files("grocery_planner", includes=["data/*.json"])
+)
 
 a = Analysis(
     ["gplan_gui_entry.py"],
