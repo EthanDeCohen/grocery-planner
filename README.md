@@ -32,6 +32,8 @@ your own savings formulas.
    delete that one folder and everything is gone.
 3. **Compare** — `gplan list deals|prices` to browse/filter; `gplan formula` to
    evaluate your own savings/nutrition expressions against `gplan profile` values.
+   Deals whose `valid_to` has passed are marked `(expired)` rather than silently
+   shown as current; `--hide-expired` (or the GUI's "Hide expired" box) drops them.
 
 ### Stores
 
@@ -69,7 +71,7 @@ Then run via `.venv\Scripts\gplan.exe` (or activate the venv and use `gplan`).
 ```
 gplan scrape <store> [-z ZIP]      fetch fresh weekly ad + coupons into the DB
 gplan import [DATA_DIR]            load data/<store>/{prices,deals}.csv into the DB
-gplan list deals  [-s STORE] [-n N] [--on-sale]
+gplan list deals  [-s STORE] [-n N] [--on-sale] [--hide-expired]
 gplan list prices [-s STORE] [-n N]
 gplan stores                      tracked stores + row counts
 gplan db-path                     print the SQLite database path
@@ -87,6 +89,7 @@ Examples:
 gplan scrape foodlion                     # Food Lion weekly ad + coupons
 gplan scrape harristeeter -z 27401
 gplan list deals -s foodlion --on-sale -n 30
+gplan list deals --hide-expired           # only deals still valid today
 gplan profile set weight 82
 gplan formula set target_protein "weight * 1.6" --desc "grams/day"
 gplan formula eval target_protein         # uses profile[weight]

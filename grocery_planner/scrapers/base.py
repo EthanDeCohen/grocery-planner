@@ -74,11 +74,35 @@ def format_date(value: str | None) -> str:
     return parsed.date().isoformat() if parsed else ""
 
 
+def _align_tz(value: datetime, reference: datetime) -> datetime:
+    """Make ``value`` comparable to ``reference`` (both aware or both naive).
+
+    Flipp normally returns offset-aware timestamps and :func:`local_now` is
+    aware, but a date-only or offset-less value would otherwise raise
+    ``TypeError`` mid-scrape. Assume such a value is in the reference's zone.
+    """
+    if (value.tzinfo is None) == (reference.tzinfo is None):
+        return value
+    if reference.tzinfo is None:
+        return value.replace(tzinfo=None)
+    return value.replace(tzinfo=reference.tzinfo)
+
+
 def is_active(value_from: str | None, value_to: str | None, now: datetime) -> bool:
     start, end = parse_dt(value_from), parse_dt(value_to)
     if not start or not end:
         return False
-    return start <= now <= end
+    return _align_tz(start, now) <= now <= _align_tz(end, now)
+
+
+def is_expired(value_to: str | None, now: datetime) -> bool:
+    """True only when ``value_to`` parses to a moment already past.
+
+    An absent or unparseable end date is *unknown*, not expired — we never drop
+    a deal just because the source omitted a date.
+    """
+    end = parse_dt(value_to)
+    return end is not None and _align_tz(end, now) < now
 
 
 def normalize_price(value: Any) -> str:
@@ -276,22 +300,54 @@ class FlippClient:
         return items
 
 
-def pick_weekly_flyer(
-    flyers: list[dict[str, Any]], merchant: str, now: datetime
-) -> dict[str, Any] | None:
-    """Pick the active 'weekly' flyer for a merchant; fall back to newest."""
-    candidates = [
+def weekly_flyer_candidates(
+    flyers: list[dict[str, Any]], merchant: str
+) -> list[dict[str, Any]]:
+    """Every 'weekly' flyer a merchant publishes, regardless of validity dates."""
+    return [
         f for f in flyers
         if (f.get("merchant") or "").strip().lower() == merchant.lower()
         and "weekly" in (f.get("name") or "").lower()
     ]
-    if not candidates:
-        return None
 
-    active = [f for f in candidates if is_active(f.get("valid_from"), f.get("valid_to"), now)]
-    pool = active or candidates
-    pool.sort(key=lambda f: f.get("valid_from", ""), reverse=True)
-    return pool[0]
+
+def flyer_status(flyer: dict[str, Any], now: datetime) -> str:
+    """Classify a flyer as ``active``, ``upcoming``, ``expired`` or ``unknown``."""
+    valid_from, valid_to = flyer.get("valid_from"), flyer.get("valid_to")
+    if is_active(valid_from, valid_to, now):
+        return "active"
+    if is_expired(valid_to, now):
+        return "expired"
+    start = parse_dt(valid_from)
+    if start and _align_tz(start, now) > now:
+        return "upcoming"
+    return "unknown"
+
+
+def pick_weekly_flyer(
+    flyers: list[dict[str, Any]], merchant: str, now: datetime
+) -> dict[str, Any] | None:
+    """Pick the weekly flyer to scrape: the active one, else the next to start.
+
+    Never returns an expired flyer. The old ``pool = active or candidates``
+    fallback silently served last week's ad as current, and every weekly-ad row
+    inherited its dates — the GFP-16 bug. ``None`` means "nothing usable"; the
+    caller must say so rather than store stale rows.
+    """
+    candidates = weekly_flyer_candidates(flyers, merchant)
+    by_status: dict[str, list[dict[str, Any]]] = {}
+    for flyer in candidates:
+        by_status.setdefault(flyer_status(flyer, now), []).append(flyer)
+
+    active = by_status.get("active") or []
+    if active:  # most recently started active flyer wins
+        return max(active, key=lambda f: f.get("valid_from") or "")
+
+    # Next best: an ad that hasn't started yet (or carries no usable dates).
+    pending = (by_status.get("upcoming") or []) + (by_status.get("unknown") or [])
+    if pending:  # the one starting soonest
+        return min(pending, key=lambda f: f.get("valid_from") or "")
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -437,6 +493,25 @@ def coupon_to_row(coupon: dict[str, Any], store: StoreConfig) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Orchestration
 # --------------------------------------------------------------------------- #
+def _no_flyer_message(
+    flyers: list[dict[str, Any]], store: StoreConfig, postal_code: str, now: datetime
+) -> str:
+    """Explain *why* there is nothing to scrape — expired ad vs. no ad at all."""
+    candidates = weekly_flyer_candidates(flyers, store.merchant_name)
+    if not candidates:
+        return (
+            f"No {store.merchant_name} weekly flyer found for postal code {postal_code}. "
+            f"Flipp listed {len(flyers)} flyers; none matched that merchant + 'weekly'."
+        )
+    newest = max(candidates, key=lambda f: f.get("valid_to") or "")
+    return (
+        f"No current {store.merchant_name} weekly flyer for postal code {postal_code} — "
+        f"the newest one ({newest.get('name')!r}, {format_date(newest.get('valid_from'))} to "
+        f"{format_date(newest.get('valid_to'))}) has expired. Refusing to store stale deals; "
+        "try again once the new ad is published."
+    )
+
+
 def scrape_store(
     store: StoreConfig,
     postal_code: str | None = None,
@@ -458,16 +533,18 @@ def scrape_store(
 
         flyer = pick_weekly_flyer(flyers, store.merchant_name, now)
         if flyer is None:
-            raise RuntimeError(
-                f"No {store.merchant_name} weekly flyer found for postal code {postal_code}"
-            )
+            raise RuntimeError(_no_flyer_message(flyers, store, postal_code, now))
 
         items = client.fetch_flyer_items(flyer["id"])
-        weekly_rows = [
-            flyer_item_to_row(i, flyer, store)
-            for i in items
-            if (i.get("name") or "").strip()
-        ]
+        weekly_rows, expired_items = [], 0
+        for item in items:
+            if not (item.get("name") or "").strip():
+                continue
+            # An item may carry its own dates and lapse before the flyer does.
+            if is_expired(item.get("valid_to") or flyer.get("valid_to"), now):
+                expired_items += 1
+                continue
+            weekly_rows.append(flyer_item_to_row(item, flyer, store))
 
         coupon_rows: list[dict[str, Any]] = []
         if include_coupons:
@@ -489,9 +566,11 @@ def scrape_store(
         "digital_coupons": len(coupon_rows),
         "no_price": sum(1 for r in weekly_rows if r["sale_price"] is None),
         "bogo": sum(1 for r in coupon_rows if r["deal_type"] == "Bogo"),
+        "expired_items": expired_items,
         "total": len(rows),
         "flyer_id": flyer.get("id"),
         "flyer_name": flyer.get("name"),
+        "flyer_status": flyer_status(flyer, now),
         "valid_from": format_date(flyer.get("valid_from")),
         "valid_to": format_date(flyer.get("valid_to")),
     }
