@@ -90,3 +90,31 @@ actually ran against a given database.
 3. Write it so it applies cleanly to a database that does not yet have the
    change — that is the only database it will ever run against.
 4. Ship tests with it, as with any change.
+5. If the change is structural, regenerate `schema_snapshot.txt` (see below)
+   in the same PR.
+
+## CI guards (GFP-61)
+
+`tests/test_schema_guard.py` enforces the rules above so a broken freeze or
+an undocumented schema change fails CI instead of being noticed later:
+
+- **`init_baseline.sha256`** pins `init/0001_GFP-9.ddl`'s checksum. If the
+  frozen baseline is edited, the hash no longer matches and the test fails
+  with a message pointing back at the "init/ is FROZEN" section above.
+  Updating this file (via the command in its own header comment) is the
+  deliberate way to re-baseline `init/`, which should be exceedingly rare.
+- **`schema_snapshot.txt`** is a human-readable, sorted, diff-friendly list
+  of every table and column a brand-new database ends up with (built by
+  replaying `init/` + every `migration/` script, in order). A test builds a
+  database and asserts it matches. Regenerate it after a structural change
+  with:
+
+      .venv/Scripts/python.exe scripts/update_schema_snapshot.py
+
+  (`--check` verifies without writing -- this is what the test does under
+  the hood.) The point: a schema change now *requires* updating this file in
+  the same PR, so a reviewer sees the structural diff here instead of it
+  hiding inside a `.ddl`/`.dml` file.
+- **Script hygiene**: every file under `init/`/`migration/` matches
+  `NNNN_GFP-KEY.{ddl,dml}`, the `NNNN` sequence is contiguous with no gaps or
+  duplicates, and `init/` contains exactly one file.
