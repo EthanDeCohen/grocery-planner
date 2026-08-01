@@ -10,6 +10,11 @@
 # that is the point -- a reviewer sees the structural diff here instead of
 # it hiding inside a .ddl/.dml file.
 
+TABLE customer_protein_preferences
+  category: TEXT NOT NULL PK
+  created_at: TEXT NOT NULL DEFAULT datetime('now')
+  customer_id: INTEGER NOT NULL PK
+
 TABLE customers
   activity_level: TEXT
   age: INTEGER
