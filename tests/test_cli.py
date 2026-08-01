@@ -74,6 +74,51 @@ def test_categories_command(env_db, sample_data):
     assert "Produce" in result.stdout
 
 
+def _seed_sized_deals():
+    from grocery_planner import db as _db
+
+    conn = _db.connect()
+    conn.executemany(
+        "INSERT INTO deals(store, item_name, sub_category, deal_type, dollar_price, "
+        "sale_price, valid_to, source) VALUES (?, ?, 'Pantry & Seasoning', 'Weekly Ad', "
+        "?, ?, '2099-01-01', 'scrape')",
+        [
+            ("foodlion", "16 oz. Peanut Butter", 4.00, 4.00),
+            ("harristeeter", "28 oz. Peanut Butter", 5.60, 5.60),
+            ("foodlion", "Mystery Feature", 1.00, 1.00),
+        ],
+    )
+    conn.commit()
+    return conn
+
+
+def test_best_ranks_by_cost_per_unit(env_db):
+    """GFP-8: the bigger jar wins on $/oz even though it costs more."""
+    _seed_sized_deals()
+    result = runner.invoke(app, ["best", "-u", "oz"])
+    assert result.exit_code == 0, result.stdout
+
+    lines = [ln for ln in result.stdout.splitlines() if "Peanut Butter" in ln]
+    assert "28 oz" in lines[0] and "$0.200/oz" in lines[0]
+    assert "16 oz" in lines[1] and "$0.250/oz" in lines[1]
+    # The unreadable row is excluded, and the exclusion is stated, not hidden.
+    assert "Mystery Feature" not in result.stdout
+    assert "no readable size" in result.stdout
+
+
+def test_best_with_a_formula(env_db):
+    _seed_sized_deals()
+    assert runner.invoke(app, ["formula", "set", "value", "1 / unit_price"]).exit_code == 0
+    result = runner.invoke(app, ["best", "--score", "value", "-n", "1"])
+    assert result.exit_code == 0
+    assert "28 oz. Peanut Butter" in result.stdout
+
+
+def test_best_rejects_unknown_formula_and_type(env_db):
+    assert runner.invoke(app, ["best", "--score", "nope"]).exit_code == 1
+    assert runner.invoke(app, ["best", "--type", "nonsense"]).exit_code == 1
+
+
 def test_schedule_set_list_remove(env_db):
     """GFP-7: cadence round-trips through the CLI."""
     created = runner.invoke(app, ["schedule", "set", "foodlion", "--every", "12h"])
