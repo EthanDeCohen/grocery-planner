@@ -15,5 +15,6 @@ CREATE TABLE IF NOT EXISTS schema_version (
     jira_key   TEXT NOT NULL,
     filename   TEXT NOT NULL UNIQUE,
     checksum   TEXT NOT NULL,
+    mode       TEXT NOT NULL DEFAULT 'executed',
     applied_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

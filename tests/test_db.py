@@ -610,10 +610,78 @@ def test_failed_statement_in_a_script_rolls_back_the_whole_script(
     raw = sqlite3.connect(tmp_path / "rollback.sqlite3")
     raw.row_factory = sqlite3.Row
     try:
-        db._apply_pending_migrations(raw)  # does not raise -- see db.py docstring
+        # A genuinely broken migration must be loud, not swallowed.
+        with pytest.raises(db.SchemaVersionError):
+            db._apply_pending_migrations(raw)
+
+        # The ALTER shared a transaction with the failing UPDATE, so it must
+        # have rolled back with it rather than being left applied alone.
         cols = {r["name"] for r in raw.execute("PRAGMA table_info(widgets)")}
-        # The ALTER ran in the same transaction as the failing UPDATE, so it
-        # must have been rolled back along with it, not left applied alone.
         assert "flag" not in cols
+
+        # And it must NOT be recorded, or the bug would be permanently
+        # marked done and never retried.
+        applied = {
+            r["seq"] for r in raw.execute("SELECT seq FROM schema_version")
+        }
+        assert 2 not in applied
+
+        # Still broken on the next connect -- it surfaces again instead of
+        # being silently skipped forever.
+        with pytest.raises(db.SchemaVersionError):
+            db._apply_pending_migrations(raw)
+
+        # Once fixed, it applies normally.
+        (root / "migration" / "0002_GFP-901.ddl").write_text(
+            "ALTER TABLE widgets ADD COLUMN flag TEXT;\n", encoding="utf-8")
+        db._apply_pending_migrations(raw)
+        cols = {r["name"] for r in raw.execute("PRAGMA table_info(widgets)")}
+        assert "flag" in cols
     finally:
         raw.close()
+
+
+def test_a_database_predating_schema_version_is_baselined_not_replayed(tmp_path):
+    """The real-world upgrade path: a database built before schema_version
+    existed already has every script's effect. Replaying them would collide,
+    so they must be recorded as baselined instead -- without touching data."""
+    import sqlite3
+
+    from grocery_planner import db
+
+    p = tmp_path / "legacy.sqlite3"
+    db.connect(p).close()
+
+    # Strip the tracking table to look like a pre-GFP-60 database.
+    raw = sqlite3.connect(p)
+    raw.execute("DROP TABLE schema_version")
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(p)  # must adopt rather than collide
+    modes = {r["mode"] for r in conn.execute("SELECT mode FROM schema_version")}
+    assert modes == {db.BASELINED}
+    # Adoption is bookkeeping only -- seeded data must survive it.
+    assert conn.execute("SELECT COUNT(*) FROM foods").fetchone()[0] > 0
+    conn.close()
+
+
+def test_a_database_genuinely_behind_is_migrated_not_baselined(tmp_path):
+    """The other half: a database that is actually missing changes must have
+    them executed, not silently recorded as already-present."""
+    import sqlite3
+
+    from grocery_planner import db
+
+    p = tmp_path / "behind.sqlite3"
+    raw = sqlite3.connect(p)
+    raw.execute("CREATE TABLE deals (id INTEGER PRIMARY KEY, store TEXT, sale_price REAL)")
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(p)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(deals)")}
+    assert {"dollar_price", "postal_code"} <= cols
+    modes = {r["mode"] for r in conn.execute("SELECT mode FROM schema_version")}
+    assert modes == {db.EXECUTED}
+    conn.close()

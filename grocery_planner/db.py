@@ -44,9 +44,16 @@ CREATE TABLE IF NOT EXISTS schema_version (
     jira_key   TEXT NOT NULL,
     filename   TEXT NOT NULL UNIQUE,
     checksum   TEXT NOT NULL,
+    mode       TEXT NOT NULL DEFAULT 'executed',
     applied_at TEXT NOT NULL DEFAULT (datetime('now'))
 )
 """
+
+# How a script came to be recorded. Worth distinguishing when debugging a
+# database later: "baselined" means it was never run against THIS database
+# because its effect was already present when schema_version was introduced.
+EXECUTED = "executed"
+BASELINED = "baselined"
 
 
 class SchemaVersionError(RuntimeError):
@@ -181,6 +188,42 @@ def _split_statements(sql: str) -> list[str]:
     return statements
 
 
+def _schema_fingerprint(conn: sqlite3.Connection) -> dict[str, set[str]]:
+    """Every application table mapped to its column names.
+
+    Deliberately structural only -- enough to answer "does this database
+    already have the schema the scripts describe?" without caring about row
+    contents. schema_version and SQLite's own bookkeeping are excluded.
+    """
+    names = [
+        r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT IN ('schema_version', 'sqlite_sequence')"
+        )
+    ]
+    return {
+        name: {r[1] for r in conn.execute(f"PRAGMA table_info({name})")}
+        for name in sorted(names)
+    }
+
+
+def _reference_fingerprint() -> dict[str, set[str]]:
+    """The schema every script on disk produces, built in memory.
+
+    Used only when adopting a database that predates schema_version, to tell
+    "already fully migrated" from "genuinely behind" without inspecting error
+    text. Cheap, and it happens at most once per database.
+    """
+    ref = sqlite3.connect(":memory:")
+    try:
+        for _seq, _key, path in _all_scripts():
+            for stmt in _split_statements(path.read_text(encoding="utf-8")):
+                ref.execute(stmt)
+        return _schema_fingerprint(ref)
+    finally:
+        ref.close()
+
+
 def _ensure_schema_version_table(conn: sqlite3.Connection) -> None:
     """Create schema_version if missing. Must run before anything can be
     recorded, and must not itself depend on any migration file having run
@@ -194,35 +237,25 @@ def _ensure_schema_version_table(conn: sqlite3.Connection) -> None:
 
 def _apply_pending_migrations(conn: sqlite3.Connection) -> None:
     """Apply every not-yet-recorded db_script/ script, in sequence order,
-    exactly once, each inside its own transaction. Replaces the GFP-59
-    error-swallowing mechanism entirely (see module docstring).
+    exactly once, each inside its own transaction.
 
-    Adoption -- a database that already has some or all of 0001-0006's
-    effects but no schema_version rows yet (every real database that
-    existed before this ticket) -- must not have those scripts re-applied,
-    and must not error when a script's DDL collides with structure that's
-    already there. This isn't only a pre-existing-database concern, either:
-    by the documented db_script/ convention, a change is folded into the
-    init/ baseline once it's part of "today's structure" for a brand-new
-    database, while the original migration/ script is kept as-is for
-    databases that predate it -- so even a *brand-new* database applying
-    init/0001_GFP-9.ddl and then migration/0002_GFP-6.ddl in the same run
-    legitimately hits "column already exists" on the second one, on
-    purpose.
+    Nothing is ever swallowed. A script that fails is rolled back, left
+    unrecorded, and raised -- so it surfaces again next connect instead of
+    being silently marked done.
 
-    So: a script that fails with sqlite3.OperationalError is treated as
-    already applied -- its transaction is rolled back and it's recorded
-    as-is, unexecuted, rather than the failure propagating. This is safe
-    specifically because it can only ever happen once per script per
-    database: a script that's already recorded in schema_version is never
-    attempted again (see the loop below), so there's no ongoing, ever-repeating
-    tolerance the way GFP-59's error-swallowing was -- only a single
-    reconciliation the first (and only) time a given script is ever
-    attempted against a given database, whether that's because it's
-    genuinely new or because its effect predates schema_version tracking
-    entirely. The message text of the error is never inspected (contrast
-    GFP-59's substring matching) -- only the fact that the DDL/DML did not
-    apply cleanly.
+    That is only possible because db_script/init/0001 is a FROZEN baseline
+    (GFP-60): every change after it lives solely in migration/, so a fresh
+    database is "init + replay every migration" and a migration never
+    legitimately collides with what is already there. The earlier convention
+    folded each change into init/ as well, describing it twice, which made
+    collisions inevitable -- and SQLite reports them with the same
+    SQLITE_ERROR as a genuine typo, so they could not be told apart.
+
+    The one exception is adoption: a database created before schema_version
+    existed has no record of what it has run. If its structure already matches
+    what the scripts produce, they are recorded as BASELINED rather than
+    replayed; if it is genuinely behind, they are executed and bring it up to
+    date. That comparison is structural, never based on error text.
     """
     _ensure_schema_version_table(conn)
 
@@ -275,6 +308,29 @@ def _apply_pending_migrations(conn: sqlite3.Connection) -> None:
                 "changed script."
             )
 
+    def _record(seq: int, jira_key: str, path: Path, checksum: str, mode: str) -> None:
+        conn.execute(
+            "INSERT INTO schema_version(seq, jira_key, filename, checksum, mode) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (seq, jira_key, path.name, checksum, mode),
+        )
+        conn.commit()
+        recorded[seq] = {
+            "seq": seq, "jira_key": jira_key, "filename": path.name,
+            "checksum": checksum,
+        }
+
+    # One-time adoption. A database with application tables but no
+    # schema_version rows predates this tracking. If it already matches what
+    # the scripts produce, replaying them would collide, so record them as
+    # baselined instead. If it does NOT match, it is genuinely behind and the
+    # pending scripts are executed normally -- which is what repairs it.
+    if not recorded and _schema_fingerprint(conn):
+        if _schema_fingerprint(conn) == _reference_fingerprint():
+            for seq, jira_key, path in scripts:
+                _record(seq, jira_key, path, _checksum(path), BASELINED)
+            return
+
     for seq, jira_key, path in scripts:
         if seq in recorded:
             continue
@@ -285,30 +341,19 @@ def _apply_pending_migrations(conn: sqlite3.Connection) -> None:
         try:
             for stmt in statements:
                 conn.execute(stmt)
-        except sqlite3.OperationalError:
-            # This script's effect is already present -- either an earlier
-            # script in this very run already created it (a migration whose
-            # change has since been folded into the init/ baseline collides
-            # with what init/ just built, by the documented convention: see
-            # db_script/README.md), or this database predates
-            # schema_version tracking and already has it from a prior
-            # connect() under the old GFP-59 mechanism. Either way, roll
-            # back whatever this script's attempt partially did and record
-            # it as applied without re-running it -- this happens at most
-            # once per script, ever, per database, since a recorded script
-            # is never attempted again (see docstring).
+        except sqlite3.Error as exc:
+            # A real failure. Roll back, do NOT record, and raise -- so it is
+            # attempted again (and reported) on the next connect rather than
+            # being permanently marked done. Nothing is swallowed here: the
+            # frozen init/ baseline means a migration never legitimately
+            # collides with the schema it is applied to.
             conn.rollback()
-            conn.execute("BEGIN")
-        conn.execute(
-            "INSERT INTO schema_version(seq, jira_key, filename, checksum) "
-            "VALUES (?, ?, ?, ?)",
-            (seq, jira_key, path.name, checksum),
-        )
-        conn.commit()
-        recorded[seq] = {
-            "seq": seq, "jira_key": jira_key, "filename": path.name,
-            "checksum": checksum,
-        }
+            raise SchemaVersionError(
+                f"db_script/{path.parent.name}/{path.name} (seq {seq}) failed to "
+                f"apply: {exc}. It has NOT been recorded in schema_version, so it "
+                "will be retried once fixed."
+            ) from exc
+        _record(seq, jira_key, path, checksum, EXECUTED)
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
