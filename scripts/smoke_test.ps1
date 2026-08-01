@@ -93,6 +93,9 @@ try {
     Test-Case "list deals"               @("list", "deals")                                0 "Chicken"
     Test-Case "list deals --on-sale"     @("list", "deals", "--on-sale", "-s", "foodlion") 0
     Test-Case "list deals --limit 0"     @("list", "deals", "--limit", "0")                0
+    # GFP-16: the sample deals ended 2026-06-16, so they must read as expired.
+    Test-Case "list deals (expired mark)" @("list", "deals", "-s", "foodlion")             0 "(expired)"
+    Test-Case "list deals --hide-expired" @("list", "deals", "--hide-expired")             0 "0 shown of 0"
     Test-Case "list prices"              @("list", "prices")                               0
     Test-Case "list prices -s wholefoods" @("list", "prices", "-s", "wholefoods")          0 "Organic Eggs"
     Test-Case "profile set"              @("profile", "set", "weight", "82")               0

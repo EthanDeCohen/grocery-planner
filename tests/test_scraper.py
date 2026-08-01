@@ -2,7 +2,9 @@
 
 No network — exercises the pure functions in the shared Flipp library only.
 """
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from grocery_planner.scrapers import base
 
@@ -75,6 +77,114 @@ def test_pick_weekly_flyer():
     picked = base.pick_weekly_flyer(flyers, "Food Lion", datetime(2026, 6, 12))
     assert picked["id"] == 1
     assert base.pick_weekly_flyer(flyers, "Publix", datetime(2026, 6, 12)) is None
+
+
+# --------------------------------------------------------------------------- #
+# GFP-16 — deal freshness
+# --------------------------------------------------------------------------- #
+def _flyer(id_, valid_from, valid_to, merchant="Food Lion", name="Weekly Ad"):
+    return {"id": id_, "merchant": merchant, "name": name,
+            "valid_from": valid_from, "valid_to": valid_to}
+
+
+LAST_WEEK = _flyer(1, "2026-06-03T00:00:00", "2026-06-09T23:59:59")
+THIS_WEEK = _flyer(2, "2026-06-10T00:00:00", "2026-06-16T23:59:59")
+NEXT_WEEK = _flyer(3, "2026-06-17T00:00:00", "2026-06-23T23:59:59")
+NOW = datetime(2026, 6, 12)
+
+
+def test_pick_weekly_flyer_prefers_the_active_ad_over_an_older_one():
+    picked = base.pick_weekly_flyer([LAST_WEEK, THIS_WEEK, NEXT_WEEK], "Food Lion", NOW)
+    assert picked["id"] == THIS_WEEK["id"]
+
+
+def test_pick_weekly_flyer_never_returns_an_expired_flyer():
+    # The GFP-16 bug: with no active ad, the old code served last week's.
+    assert base.pick_weekly_flyer([LAST_WEEK], "Food Lion", NOW) is None
+
+
+def test_pick_weekly_flyer_falls_forward_to_the_next_ad():
+    picked = base.pick_weekly_flyer([LAST_WEEK, NEXT_WEEK], "Food Lion", NOW)
+    assert picked["id"] == NEXT_WEEK["id"]
+
+
+def test_flyer_status():
+    assert base.flyer_status(THIS_WEEK, NOW) == "active"
+    assert base.flyer_status(LAST_WEEK, NOW) == "expired"
+    assert base.flyer_status(NEXT_WEEK, NOW) == "upcoming"
+    assert base.flyer_status(_flyer(4, None, None), NOW) == "unknown"
+
+
+def test_is_expired():
+    assert base.is_expired("2026-06-09T23:59:59", NOW)
+    assert not base.is_expired("2026-06-16T23:59:59", NOW)
+    # An absent or unparseable date is unknown, not expired — never drop those.
+    assert not base.is_expired(None, NOW)
+    assert not base.is_expired("not a date", NOW)
+
+
+def test_date_comparison_survives_naive_vs_aware_mismatch():
+    """Flipp sends offset-aware stamps while ``now`` may be naive (or vice versa)."""
+    aware_now = datetime(2026, 6, 12, tzinfo=timezone(timedelta(hours=-4)))
+    assert base.is_active("2026-06-10T00:00:00", "2026-06-16T23:59:59", aware_now)
+    assert base.is_active("2026-06-10T00:00:00-04:00", "2026-06-16T23:59:59-04:00", NOW)
+    assert base.is_expired("2026-06-09T23:59:59-04:00", NOW)
+
+
+class _FakeFlippClient:
+    """Stands in for the HTTP client so scrape_store can be exercised offline."""
+
+    payload: dict = {}
+    items: list = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def fetch_data(self, postal_code):
+        return self.payload
+
+    def fetch_flyer_items(self, flyer_id):
+        return self.items
+
+
+def _fake_flipp(monkeypatch, payload, items):
+    _FakeFlippClient.payload, _FakeFlippClient.items = payload, items
+    monkeypatch.setattr(base, "FlippClient", _FakeFlippClient)
+
+
+def test_scrape_store_drops_items_that_lapsed_before_the_flyer(monkeypatch):
+    _fake_flipp(
+        monkeypatch,
+        {"flyers": [THIS_WEEK], "coupons": []},
+        [
+            {"id": 1, "name": "Fresh Chicken", "price": "1.99"},
+            {"id": 2, "name": "Stale Special", "price": "0.99",
+             "valid_to": "2026-06-11T23:59:59"},  # its own end date already passed
+        ],
+    )
+    rows, flyer, stats = base.scrape_store(STORE, include_coupons=False, now=NOW)
+
+    assert [r["item_name"] for r in rows] == ["Fresh Chicken"]
+    assert stats["expired_items"] == 1
+    assert stats["flyer_status"] == "active"
+    assert flyer["id"] == THIS_WEEK["id"]
+
+
+def test_scrape_store_refuses_to_store_a_stale_flyer(monkeypatch):
+    _fake_flipp(monkeypatch, {"flyers": [LAST_WEEK], "coupons": []}, [])
+    with pytest.raises(RuntimeError, match="has expired"):
+        base.scrape_store(STORE, now=NOW)
+
+
+def test_no_flyer_message_distinguishes_expired_from_missing():
+    expired = base._no_flyer_message([LAST_WEEK], STORE, "27401", NOW)
+    assert "expired" in expired and "Refusing to store stale deals" in expired
+
+    missing = base._no_flyer_message([], STORE, "27401", NOW)
+    assert "none matched" in missing
 
 
 def test_store_registry():

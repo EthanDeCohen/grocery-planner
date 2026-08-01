@@ -93,11 +93,19 @@ def scrape(
     result = service.run_scrape(store, postal_code=postal_code)
     flyer, stats = result["flyer"], result["stats"]
     typer.secho(
-        f"Flyer {flyer.get('name')} ({flyer.get('id')}): stored {stats['total']} deals — "
+        f"Flyer {flyer.get('name')} ({flyer.get('id')}), valid {stats['valid_from']} to "
+        f"{stats['valid_to']}: stored {stats['total']} deals — "
         f"{stats['weekly_ad']} weekly ad ({stats['no_price']} without a listed price), "
-        f"{stats['digital_coupons']} digital coupons ({stats['bogo']} BOGO).",
+        f"{stats['digital_coupons']} digital coupons ({stats['bogo']} BOGO)"
+        + (f"; skipped {stats['expired_items']} expired items" if stats["expired_items"] else "")
+        + ".",
         fg=typer.colors.GREEN,
     )
+    if stats["flyer_status"] != "active":
+        typer.secho(
+            f"Note: no active weekly ad right now — this flyer is {stats['flyer_status']}.",
+            fg=typer.colors.YELLOW,
+        )
 
 
 @app.command("list")
@@ -106,41 +114,50 @@ def list_cmd(
     store: str = typer.Option(None, "--store", "-s", help="Filter by store key."),
     limit: int = typer.Option(20, "--limit", "-n", help="Max rows (0 = all)."),
     on_sale: bool = typer.Option(False, "--on-sale", help="Deals: only rows with a sale price."),
+    hide_expired: bool = typer.Option(
+        False, "--hide-expired", help="Deals: drop rows whose valid_to has passed."
+    ),
 ) -> None:
     """List stored deals or prices."""
     conn = db.connect()
-    where, params = [], []
-    if store:
-        if store not in BY_KEY:
-            typer.secho(f"Unknown store {store!r}. Known: {', '.join(BY_KEY)}",
-                        fg=typer.colors.RED, err=True)
-            raise typer.Exit(1)
-        where.append("store=?")
-        params.append(store)
-    if kind is Kind.deals and on_sale:
-        where.append("sale_price IS NOT NULL")
-
-    clause = (" WHERE " + " AND ".join(where)) if where else ""
-    lim = "" if limit == 0 else f" LIMIT {int(limit)}"
+    if store and store not in BY_KEY:
+        typer.secho(f"Unknown store {store!r}. Known: {', '.join(BY_KEY)}",
+                    fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
 
     if kind is Kind.deals:
-        sql = ("SELECT store, item_name, sub_category, sale_price, dollar_price, valid_to "
-               f"FROM deals{clause} ORDER BY store, item_name{lim}")
-        rows = conn.execute(sql, params).fetchall()
+        # Freshness + filtering live in the service layer so the GUI matches.
+        rows = service.fetch_deals(store=store, limit=limit, on_sale=on_sale,
+                                   hide_expired=hide_expired, conn=conn)
+        total = service.count_deals(store=store, on_sale=on_sale,
+                                    hide_expired=hide_expired, conn=conn)
         _print_table(["store", "item", "sub_category", "sale", "price", "valid_to"],
                      [(BY_KEY[r["store"]].display_name, r["item_name"], r["sub_category"],
-                       _money(r["sale_price"]), _money(r["dollar_price"]), r["valid_to"] or "")
+                       _money(r["sale_price"]), _money(r["dollar_price"]),
+                       _valid_to(r["valid_to"], r["expired"]))
                       for r in rows])
+        stale = sum(1 for r in rows if r["expired"])
+        if stale:
+            typer.secho(
+                f"\n{stale} of the rows shown {'is' if stale == 1 else 'are'} EXPIRED — "
+                f"re-run `gplan scrape {store or 'STORE'}`"
+                " or pass --hide-expired.",
+                fg=typer.colors.YELLOW,
+            )
     else:
+        clause, params = ("", [])
+        if store:
+            clause, params = " WHERE store=?", [store]
+        lim = "" if limit == 0 else f" LIMIT {int(limit)}"
         sql = ("SELECT store, item_name, category, regular_price, sale_price, unit "
                f"FROM prices{clause} ORDER BY store, item_name{lim}")
         rows = conn.execute(sql, params).fetchall()
+        total = conn.execute(f"SELECT COUNT(*) FROM prices{clause}", params).fetchone()[0]
         _print_table(["store", "item", "category", "regular", "sale", "unit"],
                      [(BY_KEY[r["store"]].display_name, r["item_name"], r["category"],
                        _money(r["regular_price"]), _money(r["sale_price"]), r["unit"] or "")
                       for r in rows])
 
-    total = conn.execute(f"SELECT COUNT(*) FROM {kind.value}{clause}", params).fetchone()[0]
     typer.secho(f"\n{len(rows)} shown of {total} {kind.value}.", fg=typer.colors.BLUE)
 
 
@@ -214,6 +231,13 @@ def profile_list() -> None:
 
 def _money(value) -> str:
     return f"${value:.2f}" if isinstance(value, (int, float)) else ""
+
+
+def _valid_to(value: str | None, expired: int) -> str:
+    """Render a deal's end date, marking it when the deal is already stale."""
+    if not value:
+        return ""
+    return f"{value} (expired)" if expired else value
 
 
 def _print_table(headers: list[str], rows: list[tuple]) -> None:

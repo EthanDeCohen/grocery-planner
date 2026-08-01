@@ -10,8 +10,10 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QObject, Qt, QThread, Signal
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QHeaderView,
@@ -38,6 +40,7 @@ DEAL_HEADERS: list[tuple[str, str]] = [
     ("valid_to", "Valid to"),
 ]
 _MONEY_KEYS = {"sale_price", "dollar_price"}
+_EXPIRED_FG = QColor(150, 150, 150)  # greyed out: stale but still shown (GFP-16)
 
 
 class DealsTableModel(QAbstractTableModel):
@@ -58,8 +61,18 @@ class DealsTableModel(QAbstractTableModel):
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
         return 0 if parent.isValid() else len(DEAL_HEADERS)
 
+    def _is_expired(self, row: int) -> bool:
+        try:
+            return bool(self._rows[row]["expired"])
+        except (IndexError, KeyError):
+            return False
+
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole):  # noqa: N802
-        if not index.isValid() or role != Qt.DisplayRole:
+        if not index.isValid():
+            return None
+        if role == Qt.ForegroundRole:
+            return QBrush(_EXPIRED_FG) if self._is_expired(index.row()) else None
+        if role != Qt.DisplayRole:
             return None
         key = DEAL_HEADERS[index.column()][0]
         value = self._rows[index.row()][key]
@@ -68,6 +81,8 @@ class DealsTableModel(QAbstractTableModel):
             return store.display_name if store else value
         if key in _MONEY_KEYS:
             return f"${value:.2f}" if isinstance(value, (int, float)) else ""
+        if key == "valid_to" and value and self._is_expired(index.row()):
+            return f"{value} (expired)"
         return "" if value is None else str(value)
 
     def headerData(self, section: int, orientation: int, role: int = Qt.DisplayRole):  # noqa: N802
@@ -121,6 +136,13 @@ class MainWindow(QMainWindow):
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.clicked.connect(self.reload_deals)
         bar.addWidget(self.refresh_btn)
+
+        # GFP-16: stale deals are hidden by default; unchecking greys them in.
+        self.hide_expired_box = QCheckBox("Hide expired")
+        self.hide_expired_box.setChecked(True)
+        self.hide_expired_box.setToolTip("Hide deals whose valid-to date has passed.")
+        self.hide_expired_box.toggled.connect(self.reload_deals)
+        bar.addWidget(self.hide_expired_box)
         bar.addStretch(1)
         layout.addLayout(bar)
 
@@ -173,9 +195,20 @@ class MainWindow(QMainWindow):
 
     def reload_deals(self) -> None:
         store = self.current_store()
-        rows = service.fetch_deals(store=store)
+        hide_expired = self.hide_expired_box.isChecked()
+        rows = service.fetch_deals(store=store, hide_expired=hide_expired)
         self.model.set_rows(rows)
-        self.statusBar().showMessage(f"{len(rows)} deals for {self.store_box.currentText()}.")
+
+        message = f"{len(rows)} deals for {self.store_box.currentText()}"
+        if hide_expired:
+            hidden = service.count_deals(store=store) - len(rows)
+            if hidden:
+                message += f" ({hidden} expired hidden)"
+        else:
+            stale = sum(1 for r in rows if r["expired"])
+            if stale:
+                message += f" — {stale} expired"
+        self.statusBar().showMessage(message + ".")
 
 
 def main() -> int:
