@@ -4,7 +4,7 @@ The point of the app is not to list deals but to say which ones are *worth
 buying*. That needs a comparable number per deal, which means getting a size
 out of the ad copy and dividing the price by it.
 
-Three honesty rules run through this module:
+Four honesty rules run through this module:
 
 1. **A size we cannot read is ``None``, never a guess.** Weekly-ad names are
    free text ("Eggo Frozen Waffles"); a made-up size would produce a confident
@@ -14,6 +14,15 @@ Three honesty rules run through this module:
    We read the size before the first "or"; the rest belongs to other products.
 3. **Ranges take the low end** ("5.4-5.5 Oz." -> 5.4), so the resulting cost
    per ounce is never flattering by accident.
+4. **A protein-content claim is not a size** (GFP-69). "Chobani 20G Protein
+   Drinks" states 20 grams of protein per package, not a 20-gram package —
+   a drink does not weigh 20 grams. :func:`parse_size` never lets a gram
+   figure sitting next to the word "protein" become a size; the same "20"
+   next to "oz" elsewhere in the name would still be a real size, because the
+   discriminator is the adjacent word, not the unit. :func:`parse_protein_claim`
+   reads that same figure for what it actually is, so
+   :func:`cost_per_gram_protein` below can use a manufacturer's own printed
+   protein content directly when no weight-based size is available.
 
 Note on savings-vs-regular-price: the Flipp scrapers only ever populate
 ``sale_price``; ``regular_price`` arrives solely from CSV imports. So
@@ -23,12 +32,16 @@ capture (GFP-5) lands. Cost-per-unit and ranking below do not depend on it.
 :func:`cost_per_gram_protein` (GFP-26) is the number the whole app exists to
 compute: it chains a deal's price through its parsed size, its GFP-25 food
 match and that food's GFP-23 protein-per-100g figure into dollars per gram of
-protein. The same three honesty rules apply, plus one more specific to this
+protein. The same four honesty rules apply, plus one more specific to this
 chain: **only a weight-based size carries a gram weight.** A deal priced per
 ``each`` or ``fl oz`` (see ``COUNT``/``VOLUME`` above) has nothing to convert
 to grams, so it has no cost-per-gram-of-protein -- pretending ``each`` means
 some fixed weight would be exactly the kind of confident wrong guess rule 1
-forbids.
+forbids. The one exception (GFP-69): when a deal has no weight-based size but
+its name carries a rule-4 protein claim, that claim *is* the numerator this
+function wants, straight from the manufacturer, so it is used directly
+instead of returning ``None`` -- see :func:`parse_protein_claim` and the
+label-claim branch below.
 """
 from __future__ import annotations
 
@@ -85,6 +98,14 @@ _RANGE = re.compile(
 _SIMPLE = re.compile(rf"({_NUMBER})\s*({_UNIT_ALTERNATION})\b", re.IGNORECASE)
 # A bare "dozen"/"each" with no number in front still means a size.
 _BARE = re.compile(r"\b(dozen|each)\b", re.IGNORECASE)
+# "20G Protein" / "20g Protein" / "20 grams Protein" -- a manufacturer's
+# nutrition-claim, not a package weight (GFP-69). Requires the unit and
+# "protein" to be directly adjacent (only whitespace between), which is what
+# tells "20G Protein Drinks" apart from a real size like "500g Whey Protein
+# Powder" (a word, "Whey", sits between the number and "Protein" there).
+_PROTEIN_CLAIM = re.compile(
+    rf"\b({_NUMBER})\s*g(?:rams?)?\b\s*protein\b", re.IGNORECASE
+)
 
 
 @dataclass(frozen=True)
@@ -116,6 +137,8 @@ def parse_size(item_name: str | None) -> Size | None:
     Size(quantity=16.0, unit='oz', base_quantity=16.0, base_unit='oz')
     >>> parse_size("Eggo Frozen Waffles") is None
     True
+    >>> parse_size("Chobani 20G Protein Drinks") is None
+    True
     """
     if not item_name:
         return None
@@ -123,6 +146,9 @@ def parse_size(item_name: str | None) -> Size | None:
     headline = re.split(r"\bor\b", item_name, maxsplit=1, flags=re.IGNORECASE)[0]
     # "fl oz" / "fl. oz." -> the volume token, so it isn't read as weight.
     headline = re.sub(r"\bfl\.?\s*oz\.?", " floz ", headline, flags=re.IGNORECASE)
+    # A protein-content claim ("20G Protein") is not a size (GFP-69, rule 4)
+    # -- blank it out before any size pattern gets a chance at its number.
+    headline = _PROTEIN_CLAIM.sub(" ", headline)
 
     match = _MULTIPACK.search(headline)
     if match:
@@ -139,6 +165,30 @@ def parse_size(item_name: str | None) -> Size | None:
 
     match = _BARE.search(headline)
     return _normalize(1.0, match.group(1)) if match else None
+
+
+def parse_protein_claim(item_name: str | None) -> float | None:
+    """Grams of protein per package, read from a manufacturer's own on-pack
+    claim such as "20G Protein" -- or ``None`` if the headline carries no
+    such claim.
+
+    This is :func:`parse_size`'s rule 4 read the other way round: the same
+    "20G Protein" that must never become a 20-gram size *is* a real number,
+    just not a size -- it is the protein content :func:`cost_per_gram_protein`
+    ultimately wants. Rule 1 (unreadable -> ``None``, never a guess) and
+    rule 2 (only the headline product's figure counts, so an "A or B" promo
+    doesn't borrow B's claim for A) both apply here exactly as they do to size.
+
+    >>> parse_protein_claim("Chobani 20G Protein Drinks")
+    20.0
+    >>> parse_protein_claim("16 oz. Simple Truth Organic Peanut Butter") is None
+    True
+    """
+    if not item_name:
+        return None
+    headline = re.split(r"\bor\b", item_name, maxsplit=1, flags=re.IGNORECASE)[0]
+    match = _PROTEIN_CLAIM.search(headline)
+    return float(match.group(1)) if match else None
 
 
 def cost_per_unit(price: float | None, item_name: str | None) -> tuple[float, str] | None:
@@ -211,20 +261,33 @@ def rank_by_unit_price(rows: Iterable[Any], limit: int = 0) -> list[dict[str, An
     return ranked[:limit] if limit else ranked
 
 
+# GFP-69: a manufacturer's own "20G Protein" claim needs no catalog match at
+# all -- it is the exact protein content of the exact product printed on the
+# package, which is a stronger fact than any matched food's protein-per-100g
+# estimate. `food_id`/`food_name`/`size_grams` are None on this path (there is
+# no matched food and no known package weight, only a protein figure);
+# `match_confidence` sits above matching.CONFIDENCE_HIGH because there is no
+# match-quality question to weigh here at all.
+LABEL_CLAIM_SOURCE = "label"
+LABEL_CLAIM_METHOD = "protein_claim"
+LABEL_CLAIM_CONFIDENCE = 1.0
+
+
 @dataclass(frozen=True)
 class ProteinCost:
     """Dollars per gram of protein for one deal, plus the provenance a
     nutritionist needs to weigh it: which food it was matched to, how
     confident that match is, and whether the protein figure is a sourced
-    USDA value or still a curated estimate (GFP-50 needs the latter)."""
+    USDA value, a curated estimate (GFP-50 needs the latter), or a
+    manufacturer's own on-pack claim (GFP-69, no matched food at all)."""
 
     cost_per_gram_protein: float
-    food_id: int
-    food_name: str
-    protein_source: str          # 'usda' or 'curated' -- foods.source
-    match_confidence: float      # 0-1, see matching.CONFIDENCE_*
+    food_id: int | None
+    food_name: str | None
+    protein_source: str          # 'usda', 'curated', or 'label' -- see above
+    match_confidence: float      # 0-1, see matching.CONFIDENCE_* / LABEL_CLAIM_CONFIDENCE
     match_method: str
-    size_grams: float
+    size_grams: float | None     # None for the label-claim path -- no package weight is known
     protein_grams: float
 
 
@@ -243,6 +306,13 @@ def cost_per_gram_protein(
     (``deal_food_match``, GFP-25) -> protein-per-100g (``food_nutrients``,
     GFP-23) -> grams of protein in the package -> price / that.
 
+    GFP-69 exception: when there is no weight-based size but the name carries
+    a rule-4 protein claim ("20G Protein"), that figure *is* grams of protein
+    in the package already -- no size, no food match, no ``food_nutrients``
+    lookup needed, because it is the manufacturer's own number for this exact
+    product rather than an estimate for whatever it gets matched to. See
+    ``LABEL_CLAIM_SOURCE``/``LABEL_CLAIM_METHOD``/``LABEL_CLAIM_CONFIDENCE``.
+
     Deliberately store-agnostic: ``store`` is used only as half of the
     ``deal_food_match`` lookup key, never to change behavior.
     """
@@ -251,38 +321,56 @@ def cost_per_gram_protein(
 
     size = parse_size(item_name)
     # Only a weight-based size converts to grams; `each`/`fl oz` cannot (see
-    # the module docstring's fourth rule).
-    if size is None or size.base_unit != WEIGHT:
-        return None
+    # the module docstring's cost_per_gram_protein paragraph). When there is
+    # no weight-based size, fall through to the GFP-69 label-claim path below
+    # rather than returning None outright -- a protein claim may still save it.
+    if size is not None and size.base_unit == WEIGHT:
+        own = conn or db.connect()
+        match = matching.get_match(store, item_name, conn=own)
+        if match is None or match["food_id"] is None:
+            return None
 
-    own = conn or db.connect()
-    match = matching.get_match(store, item_name, conn=own)
-    if match is None or match["food_id"] is None:
-        return None
+        food = own.execute(
+            "SELECT f.name, f.source, n.amount_per_100g "
+            "FROM foods f LEFT JOIN food_nutrients n "
+            "ON n.food_id = f.id AND n.nutrient = ? "
+            "WHERE f.id = ?",
+            (nutrition.PROTEIN, match["food_id"]),
+        ).fetchone()
+        if food is None or food["amount_per_100g"] is None:
+            return None
 
-    food = own.execute(
-        "SELECT f.name, f.source, n.amount_per_100g "
-        "FROM foods f LEFT JOIN food_nutrients n "
-        "ON n.food_id = f.id AND n.nutrient = ? "
-        "WHERE f.id = ?",
-        (nutrition.PROTEIN, match["food_id"]),
-    ).fetchone()
-    if food is None or food["amount_per_100g"] is None:
-        return None
+        size_grams = size.base_quantity * GRAMS_PER_OZ
+        protein_grams = size_grams * food["amount_per_100g"] / 100.0
+        if protein_grams <= 0:
+            return None
 
-    size_grams = size.base_quantity * GRAMS_PER_OZ
-    protein_grams = size_grams * food["amount_per_100g"] / 100.0
-    if protein_grams <= 0:
+        return ProteinCost(
+            cost_per_gram_protein=price / protein_grams,
+            food_id=match["food_id"],
+            food_name=food["name"],
+            protein_source=food["source"],
+            match_confidence=match["confidence"],
+            match_method=match["method"],
+            size_grams=size_grams,
+            protein_grams=protein_grams,
+        )
+
+    # GFP-69: no weight-based size, but a manufacturer's own protein claim
+    # ("20G Protein") may still make this deal computable -- honesty rule 1
+    # still applies (no claim -> None, never a guess).
+    protein_grams = parse_protein_claim(item_name)
+    if protein_grams is None or protein_grams <= 0:
         return None
 
     return ProteinCost(
         cost_per_gram_protein=price / protein_grams,
-        food_id=match["food_id"],
-        food_name=food["name"],
-        protein_source=food["source"],
-        match_confidence=match["confidence"],
-        match_method=match["method"],
-        size_grams=size_grams,
+        food_id=None,
+        food_name=None,
+        protein_source=LABEL_CLAIM_SOURCE,
+        match_confidence=LABEL_CLAIM_CONFIDENCE,
+        match_method=LABEL_CLAIM_METHOD,
+        size_grams=None,
         protein_grams=protein_grams,
     )
 
