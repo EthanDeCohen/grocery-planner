@@ -29,6 +29,13 @@ def _fake_row(item_name: str, sale_price: float = 0.99) -> dict:
         "dollar_price": sale_price, "discount_amount": None, "discount_percent": None,
         "valid_from": "2026-06-08", "valid_to": "2026-06-16", "loyalty_required": "Y",
         "notes": "",
+        # GFP-15: run_scrape's INSERT is built generically from every column
+        # in importers.DEAL_COLUMNS, so a fake row exercised through it must
+        # supply every column that list names, same as the real scraper row
+        # builders in scrapers/base.py do (mirrors tests/test_service.py's
+        # identical _fake_row fixture).
+        "source_url": None, "image_url": None,
+        "flipp_flyer_id": None, "flipp_item_id": None, "flipp_coupon_id": None,
     }
 
 

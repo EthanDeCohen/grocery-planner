@@ -705,6 +705,15 @@ def test_a_partially_migrated_database_adopts_then_catches_up(tmp_path):
 
     # Rewind to a mid-history state: keep 0002's dollar_price, drop everything
     # 0003 onward introduced, and remove the tracking table entirely.
+    #
+    # GFP-15 note: source_url/image_url/flipp_flyer_id/flipp_item_id/
+    # flipp_coupon_id (0012_GFP-15.ddl) are also `deals` columns introduced
+    # after 0002, same as postal_code -- they must be dropped here too, or
+    # this "rewind" leaves them present while schema_version still thinks
+    # seq 12 hasn't run, and the real re-application of 0012 below then
+    # collides on columns that were never actually undone. No assertion in
+    # this test changes; the DROP list just has to keep including every
+    # `deals` column any migration after 0002 has since added.
     raw = sqlite3.connect(p)
     for stmt in (
         "DROP TABLE IF EXISTS schema_version",
@@ -713,6 +722,11 @@ def test_a_partially_migrated_database_adopts_then_catches_up(tmp_path):
         "DROP TABLE IF EXISTS foods",
         "DROP TABLE IF EXISTS customers",
         "ALTER TABLE deals DROP COLUMN postal_code",
+        "ALTER TABLE deals DROP COLUMN source_url",
+        "ALTER TABLE deals DROP COLUMN image_url",
+        "ALTER TABLE deals DROP COLUMN flipp_flyer_id",
+        "ALTER TABLE deals DROP COLUMN flipp_item_id",
+        "ALTER TABLE deals DROP COLUMN flipp_coupon_id",
     ):
         raw.execute(stmt)
     raw.execute("INSERT INTO deals(store, item_name) VALUES ('foodlion', 'Chicken Breast')")
@@ -749,6 +763,10 @@ def test_adoption_still_runs_after_a_partially_recorded_failed_upgrade(tmp_path)
     p = tmp_path / "poisoned.sqlite3"
     db.connect(p).close()
 
+    # See the identical GFP-15 note in test_a_partially_migrated_database_
+    # adopts_then_catches_up above: any `deals` column added after 0002 has
+    # to be dropped here too, so this rewind keeps being an honest simulation
+    # of "history stopped right after 0002" as the schema grows.
     raw = sqlite3.connect(p)
     for stmt in (
         "DROP TABLE IF EXISTS price_history",
@@ -756,6 +774,11 @@ def test_adoption_still_runs_after_a_partially_recorded_failed_upgrade(tmp_path)
         "DROP TABLE IF EXISTS foods",
         "DROP TABLE IF EXISTS customers",
         "ALTER TABLE deals DROP COLUMN postal_code",
+        "ALTER TABLE deals DROP COLUMN source_url",
+        "ALTER TABLE deals DROP COLUMN image_url",
+        "ALTER TABLE deals DROP COLUMN flipp_flyer_id",
+        "ALTER TABLE deals DROP COLUMN flipp_item_id",
+        "ALTER TABLE deals DROP COLUMN flipp_coupon_id",
         # Mid-history AND partially recorded: 0001 landed, nothing after it.
         "DELETE FROM schema_version WHERE seq > 1",
     ):

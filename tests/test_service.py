@@ -54,6 +54,14 @@ def _fake_row(item_name, sale_price):
         "dollar_price": sale_price, "discount_amount": None, "discount_percent": None,
         "valid_from": "2026-06-08", "valid_to": "2026-06-16", "loyalty_required": "Y",
         "notes": "",
+        # GFP-15: run_scrape's INSERT is built generically from every column
+        # in importers.DEAL_COLUMNS (that's the point -- see ingest.py), so a
+        # fake row exercised through it must supply every column that list
+        # names, same as the real scraper row builders in scrapers/base.py
+        # do. None here (no link/image/identifier for this synthetic row) --
+        # these fields aren't what any test in this file is about.
+        "source_url": None, "image_url": None,
+        "flipp_flyer_id": None, "flipp_item_id": None, "flipp_coupon_id": None,
     }
 
 

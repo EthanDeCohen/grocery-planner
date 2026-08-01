@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import random
 import re
+import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -28,6 +29,35 @@ import httpx
 FLIPP_DATA_URL = "https://flyers-ng.flippback.com/api/flipp/data"
 FLIPP_ITEMS_URL = "https://flyers-ng.flippback.com/api/flipp/flyers/{flyer_id}/flyer_items"
 USER_AGENT = "grocery-planner/0.1 (+local personal use)"
+
+# GFP-15 — where a deal's "View ad" link points.
+#
+# Flipp's *data* API (fetch_data / fetch_flyer_items, above) never returns a
+# browsable URL -- every "url"-shaped field it hands back is an image asset
+# (cutout_image_url, coupon_image_url, thumbnail_url, ...), never a page to
+# click through to. flipp.com's public web app is a separate product from
+# that data API, and its URL scheme is undocumented, so these were confirmed
+# by hand (browsing flipp.com and reading the resulting URL/page title) as
+# part of GFP-15, not guessed at:
+#   - a weekly-ad item: https://flipp.com/en-us/flyer/{flyer_id}
+#     ?postal_code={postal_code}&item_id={item_id}
+#     -> loads that store's real weekly-ad flyer, scrolled to the item's page.
+#   - a digital coupon: https://flipp.com/en-us/coupon/{coupon_id}
+#     ?postal_code={postal_code}
+#     -> loads that specific coupon's page (verified against a live Borden
+#     string-cheese coupon; the rendered page matched the coupon's own
+#     promotion_text exactly).
+# Undocumented means Flipp is free to change this scheme without notice --
+# same risk as the rest of this module (see the module docstring).
+#
+# IMPORTANT (honesty requirement, GFP-15): Flipp is a flyer AGGREGATOR, not a
+# storefront. Both URL shapes above resolve to a weekly ad or a coupon page,
+# never a cart or a "buy" flow. Any UI built on `source_url` (GFP-38/GFP-52)
+# MUST label the control "View ad", never "Buy now" -- and must render plain
+# text (not a dead link/button) when source_url is empty, since a link isn't
+# always derivable (see the row builders below).
+FLIPP_WEB_FLYER_URL = "https://flipp.com/en-us/flyer/{flyer_id}"
+FLIPP_WEB_COUPON_URL = "https://flipp.com/en-us/coupon/{coupon_id}"
 
 
 @dataclass(frozen=True)
@@ -387,16 +417,56 @@ def filter_grocery_coupons(
 # --------------------------------------------------------------------------- #
 # Row builders (emit DB-ready `deals` rows)
 # --------------------------------------------------------------------------- #
+def _flyer_item_source_url(flyer_id: Any, item_id: Any, postal_code: str | None) -> str | None:
+    """Build a "View ad" link for a weekly-ad item, or ``None`` if it can't be.
+
+    See the FLIPP_WEB_FLYER_URL comment above for how this URL shape was
+    verified. ``flyer_id``/``item_id`` are effectively always present (every
+    weekly-ad item and flyer Flipp has returned so far carries an ``id``) but
+    are not a *guaranteed* field, so this degrades to ``None`` rather than
+    emitting a URL with a missing/"None" segment -- callers (the GUI, GFP-38/
+    GFP-52) must render plain text, not a dead link, when this is ``None``.
+    """
+    if not flyer_id or not item_id:
+        return None
+    url = FLIPP_WEB_FLYER_URL.format(flyer_id=flyer_id)
+    query = {"item_id": str(item_id)}
+    if postal_code:
+        query["postal_code"] = str(postal_code)
+    return f"{url}?{urllib.parse.urlencode(query)}"
+
+
+def _coupon_source_url(coupon_id: Any, postal_code: str | None) -> str | None:
+    """Build a "View ad" link for a digital coupon, or ``None`` if it can't be."""
+    if not coupon_id:
+        return None
+    url = FLIPP_WEB_COUPON_URL.format(coupon_id=coupon_id)
+    if postal_code:
+        return f"{url}?{urllib.parse.urlencode({'postal_code': str(postal_code)})}"
+    return url
+
+
 def flyer_item_to_row(
-    item: dict[str, Any], flyer: dict[str, Any], store: StoreConfig
+    item: dict[str, Any],
+    flyer: dict[str, Any],
+    store: StoreConfig,
+    postal_code: str | None = None,
 ) -> dict[str, Any]:
-    """Map a weekly-ad flyer item to a `deals` row (numeric fields as float|None)."""
+    """Map a weekly-ad flyer item to a `deals` row (numeric fields as float|None).
+
+    ``postal_code`` defaults to the store's own default when omitted (kept
+    optional so existing callers/tests that only pass ``(item, flyer, store)``
+    keep working) and only affects the ``source_url`` query string.
+    """
+    postal_code = postal_code or store.default_postal_code
     item_name = (item.get("name") or "").strip()
     brand = (item.get("brand") or "").strip()
     sale_price = normalize_price(item.get("price"))
     has_price = bool(sale_price)
     unit = infer_unit(item_name, sale_price)
     sub_category = infer_sub_category(item_name, brand, has_price)
+    flyer_id = flyer.get("id")
+    item_id = item.get("id")
 
     parts = []
     if brand:
@@ -407,10 +477,14 @@ def flyer_item_to_row(
         parts.append(sub_category)
     deal_description = " — ".join(parts) if parts else "Weekly ad item"
 
+    # flipp_flyer_id/flipp_item_id are kept in `notes` here for provenance
+    # (unchanged, existing behavior) *and* promoted to real `deals` columns
+    # below (GFP-15) so they're queryable without parsing this free-text
+    # blob -- e.g. `WHERE flipp_flyer_id = ?` instead of a `notes LIKE`.
     notes = [
         "source=weekly_ad",
-        f"flipp_flyer_id={flyer.get('id')}",
-        f"flipp_item_id={item.get('id')}",
+        f"flipp_flyer_id={flyer_id}",
+        f"flipp_item_id={item_id}",
         f"loyalty={store.loyalty_name}",
     ]
     if brand:
@@ -438,14 +512,32 @@ def flyer_item_to_row(
         "valid_to": format_date(item.get("valid_to") or flyer.get("valid_to")),
         "loyalty_required": "Y",
         "notes": "; ".join(notes),
+        # GFP-15: a "View ad" link (never "Buy now" -- see module header) and
+        # the ad-clipping image. cutout_image_url is not a guaranteed field
+        # (Flipp's schema is undocumented) but was present on every item
+        # observed while building this ticket -- degrade to None, not a
+        # broken <img>, when it's missing.
+        "source_url": _flyer_item_source_url(flyer_id, item_id, postal_code),
+        "image_url": (item.get("cutout_image_url") or "").strip() or None,
+        "flipp_flyer_id": flyer_id,
+        "flipp_item_id": item_id,
+        "flipp_coupon_id": None,
     }
 
 
-def coupon_to_row(coupon: dict[str, Any], store: StoreConfig) -> dict[str, Any]:
-    """Map a digital coupon to a `deals` row (discount fields as float|None)."""
+def coupon_to_row(
+    coupon: dict[str, Any], store: StoreConfig, postal_code: str | None = None
+) -> dict[str, Any]:
+    """Map a digital coupon to a `deals` row (discount fields as float|None).
+
+    ``postal_code`` defaults to the store's own default when omitted, same as
+    :func:`flyer_item_to_row`.
+    """
+    postal_code = postal_code or store.default_postal_code
     sale_story = (coupon.get("sale_story") or "").strip()
     promotion_text = (coupon.get("promotion_text") or "").strip()
     deal_type = infer_coupon_deal_type(sale_story, str(coupon.get("coupon_type") or ""))
+    coupon_id = coupon.get("coupon_id")
 
     discount_amount = normalize_price(coupon.get("dollars_off"))
     discount_percent: float | None = None
@@ -461,7 +553,7 @@ def coupon_to_row(coupon: dict[str, Any], store: StoreConfig) -> dict[str, Any]:
 
     notes = [
         "source=digital_coupon",
-        f"coupon_id={coupon.get('coupon_id')}",
+        f"coupon_id={coupon_id}",
         f"coupon_type={coupon.get('coupon_type')}",
         f"loyalty={store.loyalty_name}",
         f"redemption={coupon.get('redemption_method', 'savetocard')}",
@@ -487,6 +579,13 @@ def coupon_to_row(coupon: dict[str, Any], store: StoreConfig) -> dict[str, Any]:
         "valid_to": format_date(coupon.get("valid_to")),
         "loyalty_required": "Y",
         "notes": "; ".join(notes),
+        # GFP-15: same "View ad" contract as flyer_item_to_row -- a coupon
+        # link resolves to the coupon's page, never a checkout/cart.
+        "source_url": _coupon_source_url(coupon_id, postal_code),
+        "image_url": (coupon.get("coupon_image_url") or "").strip() or None,
+        "flipp_flyer_id": None,
+        "flipp_item_id": None,
+        "flipp_coupon_id": coupon_id,
     }
 
 
@@ -544,7 +643,7 @@ def scrape_store(
             if is_expired(item.get("valid_to") or flyer.get("valid_to"), now):
                 expired_items += 1
                 continue
-            weekly_rows.append(flyer_item_to_row(item, flyer, store))
+            weekly_rows.append(flyer_item_to_row(item, flyer, store, postal_code))
 
         coupon_rows: list[dict[str, Any]] = []
         if include_coupons:
@@ -556,7 +655,7 @@ def scrape_store(
                     if coupon_id in seen:
                         continue
                     seen.add(coupon_id)
-                    coupon_rows.append(coupon_to_row(coupon, store))
+                    coupon_rows.append(coupon_to_row(coupon, store, postal_code))
 
     rows = weekly_rows + coupon_rows
     rows.sort(key=lambda r: (r["sub_category"] or "", (r["item_name"] or "").lower()))
