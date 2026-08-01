@@ -1,59 +1,20 @@
-"""Front-end-agnostic operations shared by every UI (GFP-14).
+"""Deal query, ranking and export (GFP-14): the read side of the service layer.
 
-The CLI (``cli``) and the PySide6 GUI (``gui``) both drive the app through this
-module so scrape + query logic lives in exactly one place. Functions here return
-plain data and never print — the front end owns all presentation.
+Split out of the former ``service.py`` module (GFP-43) as the front-end-agnostic
+service layer grows to cover customers, nutrition and ingest. The CLI (``cli``)
+and the PySide6 GUI (``gui``) both drive filtering/ranking/export through this
+module so that logic lives in exactly one place. Functions here return plain
+data and never print — the front end owns all presentation.
 """
 from __future__ import annotations
 
 import csv
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 from typing import Any
 
-from . import db, importers, savings
-from .scrapers import SCRAPERS
-
-
-class UnknownStoreError(ValueError):
-    """Raised when a store key has no registered scraper."""
-
-
-def available_scrapers() -> list[str]:
-    """Sorted list of store keys that can be scraped."""
-    return sorted(SCRAPERS)
-
-
-def run_scrape(
-    store_key: str,
-    postal_code: str | None = None,
-    conn: sqlite3.Connection | None = None,
-) -> dict[str, Any]:
-    """Scrape a store's fresh deals and persist them, replacing prior scrape rows.
-
-    Returns ``{"flyer": ..., "stats": ..., "postal_code": ...}``. Raises
-    :class:`UnknownStoreError` for an unregistered store. When called from a
-    worker thread, pass no ``conn`` so a thread-local connection is opened.
-    """
-    scraper = SCRAPERS.get(store_key)
-    if scraper is None:
-        raise UnknownStoreError(store_key)
-
-    zip_code = postal_code or scraper.DEFAULT_POSTAL_CODE
-    rows, flyer, stats = scraper.scrape(postal_code=postal_code)
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    own = conn or db.connect()
-    cols = importers.DEAL_COLUMNS
-    own.execute("DELETE FROM deals WHERE store=? AND source=?", (store_key, "scrape"))
-    own.executemany(
-        f"INSERT INTO deals(store, {', '.join(cols)}, source, imported_at) "
-        f"VALUES (:store, {', '.join(':' + c for c in cols)}, :source, :imported_at)",
-        [{**r, "store": store_key, "source": "scrape", "imported_at": now} for r in rows],
-    )
-    own.commit()
-    return {"flyer": flyer, "stats": stats, "postal_code": zip_code}
-
+from .. import db, savings
 
 # A deal is expired only when it has an end date that is already past (GFP-16);
 # a missing date is unknown, never expired. Dates are stored as ISO YYYY-MM-DD,
