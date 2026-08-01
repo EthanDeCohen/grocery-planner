@@ -314,3 +314,36 @@ def test_get_match_returns_none_for_an_unmatched_item(conn):
     _insert_deal(conn, "foodlion", "5.4-5.5 Oz. Select Varieties")
     matching.match_deals(conn=conn)
     assert matching.get_match("foodlion", "5.4-5.5 Oz. Select Varieties", conn=conn) is None
+
+
+def test_matching_survives_a_usda_sync(tmp_path):
+    """GFP-68: a food must stay matchable when its provenance improves.
+
+    `gplan nutrition sync` supersedes a curated row in place, flipping
+    `source` to 'usda' and replacing `source_ref` with the FDC id. Keying the
+    match vocabulary on either of those made eight foods -- every beef cut
+    plus chicken breast -- vanish the moment their protein figure got a
+    better source, which is exactly backwards.
+    """
+    from grocery_planner import db, matching, usda
+
+    conn = db.connect(tmp_path / "sync.sqlite3")
+    conn.execute(
+        "INSERT INTO deals(store, item_name, sub_category, source) "
+        "VALUES ('foodlion', '73% Lean Fresh Ground Beef', 'Meat & Seafood', 'scrape')"
+    )
+    conn.commit()
+
+    matching.match_deals(conn=conn)
+    assert conn.execute("SELECT COUNT(*) FROM deal_food_match").fetchone()[0] == 1
+
+    usda.sync(conn=conn)
+    conn.execute("DELETE FROM deal_food_match")
+    matching.match_deals(conn=conn)
+
+    row = conn.execute(
+        "SELECT f.source FROM deal_food_match m JOIN foods f ON f.id = m.food_id"
+    ).fetchone()
+    assert row is not None, "match was lost when the food gained a USDA source"
+    assert row["source"] == "usda"
+    conn.close()

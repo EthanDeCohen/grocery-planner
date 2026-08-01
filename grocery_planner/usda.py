@@ -209,10 +209,15 @@ def sync(
                 )
                 superseded += 1
             else:
+                # slug is the stable internal identity and must be set here
+                # too (GFP-68): source_ref holds the FDC id, which is
+                # provenance, and matching.py keys on slug precisely so a
+                # food stays findable when its provenance changes.
                 cur = own.execute(
-                    "INSERT INTO foods(name, category, source, source_ref) "
-                    "VALUES (?, ?, ?, ?)",
-                    (entry["name"], entry["category"], SOURCE, fdc_ref),
+                    "INSERT INTO foods(name, category, source, source_ref, slug) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (entry["name"], entry["category"], SOURCE, fdc_ref,
+                     entry["curated_ref"]),
                 )
                 food_id = cur.lastrowid
                 inserted += 1
