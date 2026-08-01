@@ -189,6 +189,83 @@ def list_cmd(
 
 
 @app.command()
+def best(
+    store: str = typer.Option(None, "--store", "-s", help="Filter by store key."),
+    category: str = typer.Option(None, "--category", "-c", help="Filter by sub-category."),
+    search: str = typer.Option("", "--search", "-q", help="Match item name or description."),
+    deal_type: str = typer.Option("all", "--type", "-t", help="all | weekly | coupon | bogo."),
+    unit: str = typer.Option(
+        None, "--unit", "-u", help="Compare within one base unit: oz, 'fl oz' or each."
+    ),
+    score_with: str = typer.Option(
+        None, "--score", help="Rank by a saved formula instead of cost per unit."
+    ),
+    limit: int = typer.Option(20, "--limit", "-n", help="Max rows (0 = all)."),
+    include_expired: bool = typer.Option(
+        False, "--include-expired", help="Also rank deals that have already lapsed."
+    ),
+) -> None:
+    """Rank deals by value — cheapest per ounce/each, or by your own formula.
+
+    Deals whose size cannot be read from the ad copy are left out: there is no
+    honest cost-per-unit for "Eggo Frozen Waffles".
+    """
+    if deal_type not in service.DEAL_TYPE_GROUPS:
+        typer.secho(f"Unknown --type {deal_type!r}. Choose: "
+                    f"{', '.join(service.DEAL_TYPE_GROUPS)}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    filters = dict(store=store, category=category, search=search,
+                   deal_type=deal_type, hide_expired=not include_expired)
+    try:
+        rows = service.best_deals(limit=0, score_with=score_with, **filters)
+    except KeyError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    matching = service.count_deals(**filters)
+
+    if unit:
+        rows = [r for r in rows if r["unit"] == unit]
+        for position, row in enumerate(rows, start=1):
+            row["rank"] = position  # re-number so the shown list reads 1..N
+    shown = rows[:limit] if limit else rows
+
+    if score_with:
+        _print_table(
+            ["#", "store", "item", "size", "price", "per unit", "score"],
+            [(str(r["rank"]), BY_KEY[r["store"]].display_name, r["item_name"], r["size"],
+              _money(r["price"]), _per_unit(r), f"{r['score']:.4g}") for r in shown],
+        )
+    else:
+        _print_table(
+            ["#", "store", "item", "size", "price", "per unit"],
+            [(str(r["rank"]), BY_KEY[r["store"]].display_name, r["item_name"], r["size"],
+              _money(r["price"]), _per_unit(r)) for r in shown],
+        )
+
+    # A $/oz and a $/fl oz cannot be ordered against each other — say so whether
+    # the ranking came from unit price or from a formula that used it.
+    units = sorted({r["unit"] for r in shown if r["unit"]})
+    if len(units) > 1:
+        typer.secho(
+            f"\nMixing units ({', '.join(units)}) — only rows sharing a unit are "
+            "comparable. Narrow with --unit or --category.",
+            fg=typer.colors.YELLOW,
+        )
+    typer.secho(f"\n{len(shown)} ranked of {len(rows)} comparable deals.",
+                fg=typer.colors.BLUE)
+    # Never let a short ranking imply the ad was short — say what was excluded.
+    skipped = matching - len(rows)
+    if skipped > 0:
+        typer.secho(
+            f"{skipped} of the {matching} matching deals carry no readable size in the "
+            "ad copy, so they cannot be priced per unit. Weekly-ad names often omit "
+            "sizes entirely (\"Ben & Jerry's Ice Cream\"); shelf-price capture (GFP-5) "
+            "is what closes that gap.",
+            fg=typer.colors.YELLOW,
+        )
+
+
+@app.command()
 def categories(
     store: str = typer.Option(None, "--store", "-s", help="Limit to one store key."),
 ) -> None:
@@ -391,6 +468,14 @@ def _is_iso_date(value: str) -> bool:
 
 def _money(value) -> str:
     return f"${value:.2f}" if isinstance(value, (int, float)) else ""
+
+
+def _per_unit(row) -> str:
+    """Render a cost-per-unit with enough precision for cheap-per-ounce items."""
+    value = row.get("unit_price")
+    if value is None:
+        return ""
+    return f"${value:.3f}/{row['unit']}" if value < 1 else f"${value:.2f}/{row['unit']}"
 
 
 def _valid_to(value: str | None, expired: int) -> str:

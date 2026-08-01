@@ -10,7 +10,7 @@ import sqlite3
 from datetime import date, datetime, timezone
 from typing import Any
 
-from . import db, importers
+from . import db, importers, savings
 from .scrapers import SCRAPERS
 
 
@@ -212,6 +212,28 @@ def count_deals(
 # Choices for the filter controls — sourced from the data, not hard-coded, so
 # CSV-only stores (e.g. Whole Foods) show up alongside the scrapable ones.
 # --------------------------------------------------------------------------- #
+def best_deals(
+    limit: int = 20,
+    score_with: str | None = None,
+    conn: sqlite3.Connection | None = None,
+    **filters: Any,
+) -> list[dict[str, Any]]:
+    """Rank the deals matching ``filters`` (GFP-8).
+
+    Ranked by cost per normalized unit, or by a user formula when
+    ``score_with`` names one. ``filters`` are the same keywords
+    :func:`fetch_deals` accepts, so "best deals" and "list deals" always agree
+    on which rows are in play. Defaults to current deals only — ranking stale
+    prices would be actively misleading.
+    """
+    own = conn or db.connect()
+    filters.setdefault("hide_expired", True)
+    rows = fetch_deals(conn=own, **filters)
+    if score_with:
+        return savings.score_deals(own, score_with, rows, limit=limit)
+    return savings.rank_by_unit_price(rows, limit=limit)
+
+
 def stores_with_deals(conn: sqlite3.Connection | None = None) -> list[str]:
     """Store keys that actually have deal rows, scraped or imported."""
     own = conn or db.connect()

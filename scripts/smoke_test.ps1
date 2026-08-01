@@ -111,6 +111,12 @@ try {
     Test-Case "formula eval (profile)"   @("formula", "eval", "target_protein")            0 "131.2"
     Test-Case "formula eval (override)"  @("formula", "eval", "target_protein", "--var", "weight=120") 0 "192"
     Test-Case "formula list"             @("formula", "list")                              0 "target_protein"
+    # GFP-8: value ranking. Sample deals carry no sizes, so nothing is comparable
+    # — the command must say so rather than print an empty table.
+    Test-Case "best (all expired)"       @("best")                                         0 "0 ranked of 0"
+    Test-Case "best (no sizes)"          @("best", "--include-expired")                    0 "no readable size"
+    Test-Case "best --unit oz"           @("best", "-u", "oz", "--include-expired")        0
+    Test-Case "best bad formula"         @("best", "--score", "nope")                      1
     # GFP-7: schedules + job history (no waiting; --once only catches up).
     Test-Case "schedule set"             @("schedule", "set", "foodlion", "--every", "12h") 0 "every 12h"
     Test-Case "schedule list"            @("schedule", "list")                             0 "foodlion"

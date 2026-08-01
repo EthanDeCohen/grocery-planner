@@ -34,8 +34,12 @@ your own savings formulas.
    `gplan schedule run` to keep it fresh by itself. The schedule lives in the
    database, so it survives restarts, and anything missed while the machine was
    asleep is caught up on the next start rather than skipped.
-3. **Compare** — `gplan list deals|prices` to browse/filter; `gplan formula` to
+3. **Compare** — `gplan list deals|prices` to browse/filter; `gplan best` to rank
+   deals by cost per ounce/each (or by your own formula); `gplan formula` to
    evaluate your own savings/nutrition expressions against `gplan profile` values.
+   Cost-per-unit needs a size in the ad copy, and most weekly-ad names don't have
+   one ("Ben & Jerry's Ice Cream"), so `gplan best` reports how many deals it had
+   to leave out rather than implying the ad was short.
    Deals whose `valid_to` has passed are marked `(expired)` rather than silently
    shown as current; `--hide-expired` (or the GUI's "Hide expired" box) drops them.
    Every filter is defined once in `service.fetch_deals()`, so a CLI flag and the
@@ -82,6 +86,8 @@ gplan list deals  [-s STORE] [-n N] [--on-sale] [--hide-expired]
                   [--loyalty] [--valid-on YYYY-MM-DD]
 gplan list prices [-s STORE] [-n N]
 gplan categories  [-s STORE]      sub-categories available to --category
+gplan best [-s STORE] [-c CATEGORY] [-q SEARCH] [-u oz|"fl oz"|each]
+           [--score FORMULA] [-n N]   rank deals by value
 gplan stores                      tracked stores + row counts
 gplan db-path                     print the SQLite database path
 gplan schedule set STORE --every 6h | --cron "0 6 * * *"
