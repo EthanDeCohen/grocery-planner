@@ -152,6 +152,28 @@ without bringing it back.
 
 ---
 
+## Standalone binary
+
+No Python needed on the target machine — one file, no installer.
+
+```powershell
+.venv\Scripts\python -m pip install -e ".[build]"   # installs PyInstaller
+./scripts/build_binary.ps1                          # dist/gplan.exe  (~15 MB)
+./scripts/build_binary.ps1 -IncludeGui              # + dist/gplan-gui.exe (~53 MB)
+```
+
+The script smoke-tests whatever it builds against a throwaway database, because
+a binary that builds but cannot run is not a successful build.
+
+Your data does **not** live next to the executable — it stays in the per-OS
+user-data dir (`gplan db-path`), so replacing the binary never touches it.
+
+PyInstaller cannot cross-compile: a macOS `.app` has to be built on macOS. CI
+builds and smoke-tests both the Windows and macOS binaries on every push and
+uploads them as artifacts.
+
+---
+
 ## Data model
 
 One SQLite file (`gplan db-path`) with tables `stores`, `deals`, `prices`,
