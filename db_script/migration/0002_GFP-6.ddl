@@ -1,0 +1,15 @@
+-- GFP-6: add deals.dollar_price for BOGO/multi-buy deals expressed as a flat
+-- price ("2 for $5") rather than a discount off a regular price.
+--
+-- This is an incremental change against an EXISTING database — the
+-- db_script/init/ baseline (0001_GFP-9.ddl) already includes dollar_price
+-- for brand-new databases, so this file only matters for databases created
+-- before that column existed.
+--
+-- SQLite has no `ADD COLUMN IF NOT EXISTS`, so this statement is not
+-- naturally idempotent at the SQL level. grocery_planner/db.py applies
+-- migration scripts by executing them and treating a "duplicate column
+-- name" (or "already exists") OperationalError as "already applied" rather
+-- than a real failure, which is what makes re-running this file safe on a
+-- database that already has the column (e.g. every db.connect() call).
+ALTER TABLE deals ADD COLUMN dollar_price REAL;

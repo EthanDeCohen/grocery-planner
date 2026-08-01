@@ -14,7 +14,11 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 hiddenimports = collect_submodules("apscheduler")
 # tzdata ships the IANA database as package data. paths/scrapers fall back to a
 # fixed offset without it, but schedules would silently drift.
-datas = collect_data_files("tzdata")
+# db_script ships the .ddl/.dml schema scripts (GFP-59); grocery_planner/db.py
+# resolves their on-disk location via sys._MEIPASS in a frozen build, so they
+# must land at "db_script/..." under the extraction root, not be silently
+# dropped like any other non-code data would be.
+datas = collect_data_files("tzdata") + collect_data_files("db_script")
 
 a = Analysis(
     ["gplan_entry.py"],

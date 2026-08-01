@@ -54,3 +54,26 @@ def test_gui_spec_builds_a_mac_bundle_and_hides_the_console():
     source = (PACKAGING / "gplan-gui.spec").read_text(encoding="utf-8")
     assert "BUNDLE(" in source and 'sys.platform == "darwin"' in source
     assert "console=False" in source
+
+
+@pytest.mark.parametrize("spec", ["gplan.spec", "gplan-gui.spec"])
+def test_specs_bundle_db_script_as_data(spec):
+    """GFP-59: db.py resolves db_script/*.ddl via sys._MEIPASS in a frozen
+    build. Without collect_data_files("db_script") here, a build would
+    "succeed" but the frozen binary would fail to build its schema the
+    first time anyone actually ran it -- exactly the kind of packaging
+    mistake this test file exists to catch before it ships.
+    """
+    source = (PACKAGING / spec).read_text(encoding="utf-8")
+    assert 'collect_data_files("db_script")' in source
+
+
+def test_db_script_ships_as_installed_package_data():
+    """GFP-59: pip install must not silently drop db_script/*.ddl -- it's
+    declared as its own top-level package (with package-data globs) in
+    pyproject.toml specifically so setuptools includes it in the wheel.
+    """
+    pyproject = (PACKAGING.parent / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"db_script*"' in pyproject
+    assert "[tool.setuptools.package-data]" in pyproject
+    assert "db_script = [" in pyproject

@@ -3,96 +3,85 @@
 Single-user, file-based, ACID. The schema mirrors the CSV columns from the
 original Excel pipeline (so imports are loss-less) plus app-state tables
 (profile, formulas, scraping_jobs) for the local-first agent.
+
+The schema itself lives in db_script/ (see db_script/README.md), not inline
+here: db_script/init/ holds the current structure built from scratch, and
+db_script/migration/ holds incremental changes for pre-existing databases.
+This module just locates and executes those .ddl/.dml files in order.
 """
 from __future__ import annotations
 
 import sqlite3
+import sys
 from pathlib import Path
 
 from .paths import db_path
 from .stores import STORES
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS stores (
-    key          TEXT PRIMARY KEY,
-    display_name TEXT NOT NULL,
-    data_folder  TEXT NOT NULL
-);
+SCRIPT_EXTENSIONS = (".ddl", ".dml")
 
-CREATE TABLE IF NOT EXISTS deals (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    store            TEXT NOT NULL,
-    item_name        TEXT,
-    sub_category     TEXT,
-    deal_type        TEXT,
-    deal_description TEXT,
-    regular_price    REAL,
-    sale_price       REAL,
-    dollar_price     REAL,
-    discount_amount  REAL,
-    discount_percent REAL,
-    valid_from       TEXT,
-    valid_to         TEXT,
-    loyalty_required TEXT,
-    notes            TEXT,
-    source           TEXT,
-    imported_at      TEXT
-);
 
-CREATE TABLE IF NOT EXISTS prices (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    store            TEXT NOT NULL,
-    item_name        TEXT,
-    brand            TEXT,
-    category         TEXT,
-    regular_price    REAL,
-    sale_price       REAL,
-    unit             TEXT,
-    price_per_unit   REAL,
-    on_sale          TEXT,
-    loyalty_required TEXT,
-    date_collected   TEXT,
-    notes            TEXT,
-    source           TEXT,
-    imported_at      TEXT
-);
+def _db_script_root() -> Path:
+    """Locate the db_script/ directory across dev, installed, and frozen runs.
 
-CREATE TABLE IF NOT EXISTS profile (
-    key   TEXT PRIMARY KEY,
-    value TEXT
-);
+    Three contexts, in priority order:
+    1. PyInstaller frozen build: data files are extracted next to the
+       executable under ``sys._MEIPASS`` (see packaging/*.spec, which add
+       db_script via collect_data_files("db_script")).
+    2. Installed (or editable) package: db_script is registered as its own
+       top-level package in pyproject.toml specifically so it ships as
+       installed package data; importlib.resources finds it correctly in
+       both cases.
+    3. Fallback: a plain source checkout where, for whatever reason,
+       db_script isn't importable as a package — resolve it relative to
+       this file (grocery_planner/db.py -> repo_root/db_script).
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "db_script"
 
-CREATE TABLE IF NOT EXISTS formulas (
-    name        TEXT PRIMARY KEY,
-    expression  TEXT NOT NULL,
-    description TEXT
-);
+    try:
+        import importlib.resources as ir
 
-CREATE TABLE IF NOT EXISTS scraping_jobs (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    source          TEXT,
-    status          TEXT,
-    last_checkpoint TEXT,
-    started_at      TEXT,
-    finished_at     TEXT,
-    message         TEXT
-);
+        root = Path(str(ir.files("db_script")))
+        if root.is_dir():
+            return root
+    except Exception:
+        pass
 
--- Refresh cadence per store (GFP-7). Kept in our own table rather than an
--- APScheduler job store so the schedule survives restarts without pulling in
--- SQLAlchemy; the scheduler is rebuilt from these rows on every start.
-CREATE TABLE IF NOT EXISTS schedules (
-    store      TEXT PRIMARY KEY,
-    kind       TEXT NOT NULL,   -- 'interval' or 'cron'
-    expression TEXT NOT NULL,   -- '6h' / '0 6 * * *'
-    enabled    INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT,
-    updated_at TEXT
-);
+    return Path(__file__).resolve().parent.parent / "db_script"
 
-CREATE INDEX IF NOT EXISTS idx_deals_store ON deals(store);
-CREATE INDEX IF NOT EXISTS idx_prices_store ON prices(store);
-"""
+
+def _sql_files(subdir: str) -> list[Path]:
+    """Return the .ddl/.dml files under db_script/<subdir>, in filename order.
+
+    Filenames are NNNN_GFP-KEY.{ddl,dml}; the zero-padded prefix is what
+    guarantees deterministic ordering (Jira keys alone don't sort correctly:
+    GFP-9 sorts after GFP-100 lexically).
+    """
+    root = _db_script_root() / subdir
+    if not root.is_dir():
+        return []
+    files = [p for p in root.iterdir() if p.suffix in SCRIPT_EXTENSIONS]
+    return sorted(files, key=lambda p: p.name)
+
+
+def _apply_sql_file(conn: sqlite3.Connection, path: Path) -> None:
+    """Execute one script, treating "already applied" as success.
+
+    init/ scripts use CREATE TABLE/INDEX IF NOT EXISTS and are naturally
+    idempotent. migration/ scripts (e.g. ALTER TABLE ADD COLUMN) have no
+    such conditional form in SQLite, so a "duplicate column name" or
+    "already exists" OperationalError means the change is already present
+    rather than a real failure -- safe to ignore so re-running every
+    connect() stays a no-op on a database that's already current.
+    """
+    try:
+        conn.executescript(path.read_text(encoding="utf-8"))
+    except sqlite3.OperationalError as exc:
+        msg = str(exc).lower()
+        if "duplicate column name" in msg or "already exists" in msg:
+            return
+        raise
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
@@ -105,17 +94,13 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
-def _migrate(conn: sqlite3.Connection) -> None:
-    """Additive, idempotent migrations for DBs created before a column existed."""
-    deal_cols = {r["name"] for r in conn.execute("PRAGMA table_info(deals)")}
-    if "dollar_price" not in deal_cols:
-        conn.execute("ALTER TABLE deals ADD COLUMN dollar_price REAL")
-
-
 def init_db(conn: sqlite3.Connection) -> None:
-    """Create tables (idempotent), migrate, and seed the store registry."""
-    conn.executescript(SCHEMA)
-    _migrate(conn)
+    """Build the schema from db_script/, apply pending migrations, and seed
+    the store registry. Safe to call repeatedly (idempotent)."""
+    for f in _sql_files("init"):
+        _apply_sql_file(conn, f)
+    for f in _sql_files("migration"):
+        _apply_sql_file(conn, f)
     for s in STORES:
         conn.execute(
             "INSERT INTO stores(key, display_name, data_folder) VALUES (?, ?, ?) "
