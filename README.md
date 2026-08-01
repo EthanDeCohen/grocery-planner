@@ -30,6 +30,10 @@ your own savings formulas.
    `gplan import` loads CSVs (`data/<store>/{prices,deals}.csv`) instead.
 2. **Store** — one SQLite file in your user-data dir (`gplan db-path`). Disposable:
    delete that one folder and everything is gone.
+   Set a cadence with `gplan schedule set <store> --every 12h` and run
+   `gplan schedule run` to keep it fresh by itself. The schedule lives in the
+   database, so it survives restarts, and anything missed while the machine was
+   asleep is caught up on the next start rather than skipped.
 3. **Compare** — `gplan list deals|prices` to browse/filter; `gplan formula` to
    evaluate your own savings/nutrition expressions against `gplan profile` values.
    Deals whose `valid_to` has passed are marked `(expired)` rather than silently
@@ -80,6 +84,10 @@ gplan list prices [-s STORE] [-n N]
 gplan categories  [-s STORE]      sub-categories available to --category
 gplan stores                      tracked stores + row counts
 gplan db-path                     print the SQLite database path
+gplan schedule set STORE --every 6h | --cron "0 6 * * *"
+gplan schedule list | remove STORE
+gplan schedule run [--once]       background refresh (Ctrl-C to stop)
+gplan jobs [-n N] [-s STORE]      history of automatic scrape runs
 gplan formula set NAME EXPR [--desc TEXT]
 gplan formula list
 gplan formula eval NAME [-v key=value ...]

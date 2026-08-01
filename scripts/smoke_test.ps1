@@ -111,6 +111,15 @@ try {
     Test-Case "formula eval (profile)"   @("formula", "eval", "target_protein")            0 "131.2"
     Test-Case "formula eval (override)"  @("formula", "eval", "target_protein", "--var", "weight=120") 0 "192"
     Test-Case "formula list"             @("formula", "list")                              0 "target_protein"
+    # GFP-7: schedules + job history (no waiting; --once only catches up).
+    Test-Case "schedule set"             @("schedule", "set", "foodlion", "--every", "12h") 0 "every 12h"
+    Test-Case "schedule list"            @("schedule", "list")                             0 "foodlion"
+    Test-Case "schedule bad cadence"     @("schedule", "set", "foodlion", "--every", "soon") 1
+    Test-Case "schedule unscrapable"     @("schedule", "set", "wholefoods", "--every", "6h") 2
+    Test-Case "jobs (empty)"             @("jobs")                                         0
+    Test-Case "schedule remove"          @("schedule", "remove", "foodlion")               0 "Removed"
+    Test-Case "schedule remove (gone)"   @("schedule", "remove", "foodlion")               1
+    Test-Case "schedule run (none set)"  @("schedule", "run", "--once")                    1 "No schedules"
     Test-Case "scrape guard (unimpl)"    @("scrape", "wholefoods")                         2
     Test-Case "unknown store error"      @("list", "deals", "-s", "bogus")                 1
 

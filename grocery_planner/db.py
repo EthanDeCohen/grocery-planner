@@ -78,6 +78,18 @@ CREATE TABLE IF NOT EXISTS scraping_jobs (
     message         TEXT
 );
 
+-- Refresh cadence per store (GFP-7). Kept in our own table rather than an
+-- APScheduler job store so the schedule survives restarts without pulling in
+-- SQLAlchemy; the scheduler is rebuilt from these rows on every start.
+CREATE TABLE IF NOT EXISTS schedules (
+    store      TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL,   -- 'interval' or 'cron'
+    expression TEXT NOT NULL,   -- '6h' / '0 6 * * *'
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT,
+    updated_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_deals_store ON deals(store);
 CREATE INDEX IF NOT EXISTS idx_prices_store ON prices(store);
 """
