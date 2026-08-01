@@ -11,6 +11,7 @@ Local-first commands over the SQLite store:
 """
 from __future__ import annotations
 
+from datetime import date
 from enum import Enum
 from pathlib import Path
 
@@ -117,6 +118,21 @@ def list_cmd(
     hide_expired: bool = typer.Option(
         False, "--hide-expired", help="Deals: drop rows whose valid_to has passed."
     ),
+    category: str = typer.Option(
+        None, "--category", "-c", help="Deals: filter by sub-category (see `gplan categories`)."
+    ),
+    deal_type: str = typer.Option(
+        "all", "--type", "-t", help="Deals: all | weekly | coupon | bogo."
+    ),
+    search: str = typer.Option(
+        "", "--search", "-q", help="Deals: match item name or description."
+    ),
+    loyalty_only: bool = typer.Option(
+        False, "--loyalty", help="Deals: only rows requiring a loyalty card."
+    ),
+    valid_on: str = typer.Option(
+        None, "--valid-on", help="Deals: only rows on offer on YYYY-MM-DD."
+    ),
 ) -> None:
     """List stored deals or prices."""
     conn = db.connect()
@@ -124,13 +140,22 @@ def list_cmd(
         typer.secho(f"Unknown store {store!r}. Known: {', '.join(BY_KEY)}",
                     fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
+    if deal_type not in service.DEAL_TYPE_GROUPS:
+        typer.secho(f"Unknown --type {deal_type!r}. Choose: "
+                    f"{', '.join(service.DEAL_TYPE_GROUPS)}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    if valid_on and not _is_iso_date(valid_on):
+        typer.secho(f"--valid-on expects YYYY-MM-DD, got {valid_on!r}",
+                    fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
 
     if kind is Kind.deals:
         # Freshness + filtering live in the service layer so the GUI matches.
-        rows = service.fetch_deals(store=store, limit=limit, on_sale=on_sale,
-                                   hide_expired=hide_expired, conn=conn)
-        total = service.count_deals(store=store, on_sale=on_sale,
-                                    hide_expired=hide_expired, conn=conn)
+        filters = dict(store=store, on_sale=on_sale, hide_expired=hide_expired,
+                       category=category, deal_type=deal_type, search=search,
+                       loyalty_only=loyalty_only, valid_on=valid_on)
+        rows = service.fetch_deals(limit=limit, conn=conn, **filters)
+        total = service.count_deals(conn=conn, **filters)
         _print_table(["store", "item", "sub_category", "sale", "price", "valid_to"],
                      [(BY_KEY[r["store"]].display_name, r["item_name"], r["sub_category"],
                        _money(r["sale_price"]), _money(r["dollar_price"]),
@@ -159,6 +184,20 @@ def list_cmd(
                       for r in rows])
 
     typer.secho(f"\n{len(rows)} shown of {total} {kind.value}.", fg=typer.colors.BLUE)
+
+
+@app.command()
+def categories(
+    store: str = typer.Option(None, "--store", "-s", help="Limit to one store key."),
+) -> None:
+    """List the deal sub-categories available to `list deals --category`."""
+    conn = db.connect()
+    names = service.deal_categories(store=store, conn=conn)
+    _print_table(
+        ["category", "deals"],
+        [(name, str(service.count_deals(store=store, category=name, conn=conn)))
+         for name in names],
+    )
 
 
 @app.command()
@@ -227,6 +266,14 @@ def profile_list() -> None:
     """List profile values."""
     rows = db.connect().execute("SELECT key, value FROM profile ORDER BY key").fetchall()
     _print_table(["key", "value"], [(r["key"], r["value"]) for r in rows])
+
+
+def _is_iso_date(value: str) -> bool:
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _money(value) -> str:

@@ -88,3 +88,109 @@ def test_is_expired_helper():
     assert not service.is_expired(TODAY, TODAY)
     assert not service.is_expired("", TODAY)
     assert not service.is_expired(None, TODAY)
+
+
+# --------------------------------------------------------------------------- #
+# GFP-17 — shared filter params (one definition, CLI flags + GUI controls)
+# --------------------------------------------------------------------------- #
+def _seed_filterable(conn):
+    conn.executemany(
+        "INSERT INTO deals(store, item_name, sub_category, deal_type, deal_description, "
+        "sale_price, valid_from, valid_to, loyalty_required, source) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'scrape')",
+        [
+            ("foodlion", "Boneless Chicken Breast", "Meat & Seafood", "Weekly Ad",
+             "$1.99/lb", 1.99, "2026-06-08", "2026-06-16", "Y"),
+            ("foodlion", "Mystery Feature", "Weekly Ad Feature (price not listed)",
+             "Weekly Ad (price not listed)", "Weekly ad item", None,
+             "2026-06-08", "2026-06-16", "Y"),
+            ("foodlion", "Oscar Mayer", "Digital Coupon", "Digital Coupon",
+             "Save $2.00 on bacon", None, "2026-06-08", "2026-06-16", "Y"),
+            ("harristeeter", "Chips BOGO", "Snacks & Chips", "Bogo",
+             "Buy one get one free", None, "2026-06-08", "2026-06-16", "N"),
+            ("wholefoods", "Wild Salmon", "Meat & Seafood", "Weekly Ad",
+             "$9.99/lb", 9.99, "2026-06-20", "2026-06-30", "N"),
+        ],
+    )
+    conn.commit()
+
+
+def test_category_and_store_filters(conn):
+    _seed_filterable(conn)
+    meat = service.fetch_deals(category="Meat & Seafood", today=TODAY, conn=conn)
+    assert {r["store"] for r in meat} == {"foodlion", "wholefoods"}
+    assert service.count_deals(
+        store="foodlion", category="Meat & Seafood", today=TODAY, conn=conn) == 1
+
+
+def test_deal_type_groups(conn):
+    _seed_filterable(conn)
+
+    def names(group):
+        return {r["item_name"] for r in
+                service.fetch_deals(deal_type=group, today=TODAY, conn=conn)}
+
+    # "weekly" spans both the priced and price-not-listed variants.
+    assert names("weekly") == {"Boneless Chicken Breast", "Mystery Feature", "Wild Salmon"}
+    assert names("coupon") == {"Oscar Mayer"}
+    assert names("bogo") == {"Chips BOGO"}
+    assert len(names("all")) == 5
+
+
+def test_unknown_deal_type_group_raises(conn):
+    with pytest.raises(service.UnknownDealTypeError):
+        service.fetch_deals(deal_type="nonsense", conn=conn)
+
+
+def test_search_matches_name_or_description(conn):
+    _seed_filterable(conn)
+
+    def names(term):
+        return {r["item_name"] for r in
+                service.fetch_deals(search=term, today=TODAY, conn=conn)}
+
+    assert names("chicken") == {"Boneless Chicken Breast"}   # item name
+    assert names("bacon") == {"Oscar Mayer"}                  # description only
+    assert names("CHICKEN") == {"Boneless Chicken Breast"}    # LIKE is case-insensitive
+
+
+def test_search_treats_wildcards_literally(conn):
+    _seed_filterable(conn)
+    # A bare "%" would otherwise match every row.
+    assert service.fetch_deals(search="%", today=TODAY, conn=conn) == []
+
+
+def test_loyalty_filter(conn):
+    _seed_filterable(conn)
+    rows = service.fetch_deals(loyalty_only=True, today=TODAY, conn=conn)
+    assert {r["store"] for r in rows} == {"foodlion"}
+
+
+def test_valid_on_picks_deals_live_that_day(conn):
+    _seed_filterable(conn)
+
+    def count(day):
+        return service.count_deals(valid_on=day, today=TODAY, conn=conn)
+
+    assert count("2026-06-10") == 4   # the four June 8-16 deals
+    assert count("2026-06-25") == 1   # only the Whole Foods June 20-30 one
+    assert count("2026-06-17") == 0   # gap between the two windows
+
+
+def test_filters_compose(conn):
+    _seed_filterable(conn)
+    rows = service.fetch_deals(
+        store="foodlion", deal_type="weekly", on_sale=True, search="chicken",
+        loyalty_only=True, valid_on="2026-06-10", today=TODAY, conn=conn,
+    )
+    assert [r["item_name"] for r in rows] == ["Boneless Chicken Breast"]
+
+
+def test_choice_helpers_come_from_the_data(conn):
+    _seed_filterable(conn)
+    # Whole Foods has no scraper but does have rows, so it must still be offered.
+    assert service.stores_with_deals(conn=conn) == ["foodlion", "harristeeter", "wholefoods"]
+    assert "wholefoods" not in service.available_scrapers()
+
+    assert service.deal_categories(store="harristeeter", conn=conn) == ["Snacks & Chips"]
+    assert "Meat & Seafood" in service.deal_categories(conn=conn)

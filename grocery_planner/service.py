@@ -77,20 +77,75 @@ def is_expired(valid_to: str | None, today: str | None = None) -> bool:
     return valid_to < (today or today_iso())
 
 
+# Deal-type groups (GFP-17). The stored deal_type is fine-grained ("Weekly Ad
+# (price not listed)", "Percent Off Coupon", ...); users think in these buckets,
+# so one key maps to one SQL predicate for both the CLI flag and the GUI radio.
+DEAL_TYPE_GROUPS: dict[str, tuple[str, str]] = {
+    "all": ("All", ""),
+    "weekly": ("Weekly Ad", "deal_type LIKE 'Weekly Ad%'"),
+    "coupon": ("Coupon", "deal_type LIKE '%Coupon%'"),
+    "bogo": ("BOGO", "deal_type = 'Bogo'"),
+}
+
+
+class UnknownDealTypeError(ValueError):
+    """Raised for a deal-type group key that is not in :data:`DEAL_TYPE_GROUPS`."""
+
+
+def _like(term: str) -> str:
+    """Wrap a search term for LIKE, neutralizing the wildcards a user may type."""
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def _deal_filters(
-    store: str | None, on_sale: bool, hide_expired: bool, today: str
+    store: str | None = None,
+    category: str | None = None,
+    deal_type: str | None = None,
+    on_sale: bool = False,
+    hide_expired: bool = False,
+    loyalty_only: bool = False,
+    search: str = "",
+    valid_on: str | None = None,
+    today: str = "",
 ) -> tuple[str, list[Any]]:
-    """Build the shared WHERE clause so every front end filters identically."""
+    """Build the shared WHERE clause so every front end filters identically.
+
+    This is the single definition of what each filter *means*; ``fetch_deals``
+    and ``count_deals`` both route through it, and every GUI control maps 1:1
+    onto one of these arguments (GFP-17).
+    """
     clauses: list[str] = []
     params: list[Any] = []
     if store:
         clauses.append("store=?")
         params.append(store)
+    if category:
+        clauses.append("sub_category=?")
+        params.append(category)
+    if deal_type and deal_type != "all":
+        if deal_type not in DEAL_TYPE_GROUPS:
+            raise UnknownDealTypeError(deal_type)
+        clauses.append(DEAL_TYPE_GROUPS[deal_type][1])
     if on_sale:
         clauses.append("sale_price IS NOT NULL")
+    if loyalty_only:
+        clauses.append("loyalty_required='Y'")
+    if search:
+        clauses.append(
+            "(item_name LIKE ? ESCAPE '\\' OR deal_description LIKE ? ESCAPE '\\')"
+        )
+        params += [_like(search), _like(search)]
     if hide_expired:
         clauses.append(f"NOT ({_HAS_END_DATE} AND valid_to < ?)")
         params.append(today)
+    if valid_on:
+        # Undated ends are open-ended, so an absent bound never excludes a row.
+        clauses.append(
+            "(valid_from IS NULL OR valid_from='' OR valid_from<=?) "
+            "AND (valid_to IS NULL OR valid_to='' OR valid_to>=?)"
+        )
+        params += [valid_on, valid_on]
     return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
 
 
@@ -100,17 +155,28 @@ def fetch_deals(
     on_sale: bool = False,
     hide_expired: bool = False,
     today: str | None = None,
+    category: str | None = None,
+    deal_type: str | None = None,
+    loyalty_only: bool = False,
+    search: str = "",
+    valid_on: str | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> list[sqlite3.Row]:
     """Return stored deal rows (``limit`` 0 = all).
 
-    Each row carries an ``expired`` flag (1/0) so a front end can grey out stale
-    deals; pass ``hide_expired=True`` to drop them instead. ``today`` overrides
-    the cutoff date (tests, "what was valid on...").
+    Every argument except ``limit``/``conn`` is a filter shared verbatim with
+    the CLI flags and the GUI controls (GFP-17). Each row carries an ``expired``
+    flag (1/0) so a front end can grey out stale deals; ``hide_expired`` drops
+    them instead. ``today`` overrides the freshness cutoff, ``valid_on`` asks
+    "what was on offer on this date".
     """
     own = conn or db.connect()
     day = today or today_iso()
-    where, params = _deal_filters(store, on_sale, hide_expired, day)
+    where, params = _deal_filters(
+        store=store, category=category, deal_type=deal_type, on_sale=on_sale,
+        hide_expired=hide_expired, loyalty_only=loyalty_only, search=search,
+        valid_on=valid_on, today=day,
+    )
     lim = "" if not limit else f" LIMIT {int(limit)}"
     sql = (
         f"SELECT {_DEAL_COLUMNS}, {_EXPIRED_SQL} AS expired "
@@ -124,10 +190,46 @@ def count_deals(
     on_sale: bool = False,
     hide_expired: bool = False,
     today: str | None = None,
+    category: str | None = None,
+    deal_type: str | None = None,
+    loyalty_only: bool = False,
+    search: str = "",
+    valid_on: str | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> int:
     """Count deals matching the same filters as :func:`fetch_deals`, ignoring ``limit``."""
     own = conn or db.connect()
     day = today or today_iso()
-    where, params = _deal_filters(store, on_sale, hide_expired, day)
+    where, params = _deal_filters(
+        store=store, category=category, deal_type=deal_type, on_sale=on_sale,
+        hide_expired=hide_expired, loyalty_only=loyalty_only, search=search,
+        valid_on=valid_on, today=day,
+    )
     return own.execute(f"SELECT COUNT(*) FROM deals{where}", params).fetchone()[0]
+
+
+# --------------------------------------------------------------------------- #
+# Choices for the filter controls — sourced from the data, not hard-coded, so
+# CSV-only stores (e.g. Whole Foods) show up alongside the scrapable ones.
+# --------------------------------------------------------------------------- #
+def stores_with_deals(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Store keys that actually have deal rows, scraped or imported."""
+    own = conn or db.connect()
+    return [r[0] for r in own.execute(
+        "SELECT DISTINCT store FROM deals WHERE store IS NOT NULL ORDER BY store"
+    )]
+
+
+def deal_categories(
+    store: str | None = None, conn: sqlite3.Connection | None = None
+) -> list[str]:
+    """Distinct sub-categories, optionally within one store."""
+    own = conn or db.connect()
+    where, params = ("", [])
+    if store:
+        where, params = " AND store=?", [store]
+    return [r[0] for r in own.execute(
+        "SELECT DISTINCT sub_category FROM deals "
+        f"WHERE sub_category IS NOT NULL AND sub_category <> ''{where} "
+        "ORDER BY sub_category", params
+    )]

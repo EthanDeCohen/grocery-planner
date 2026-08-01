@@ -1,6 +1,10 @@
 """GUI model tests (GFP-14). Skipped where the optional ``gui`` extra is absent
 (e.g. CI, which installs only ``.[dev]``)."""
+import inspect
+
 import pytest
+
+from grocery_planner import service
 
 pytest.importorskip("PySide6", reason="GUI extra not installed")
 
@@ -62,3 +66,63 @@ def test_expired_rows_are_marked_and_greyed():
 def test_model_tolerates_rows_without_an_expired_column():
     model = DealsTableModel([{k: v for k, v in _row().items() if k != "expired"}])
     assert model.data(model.index(0, 0), Qt.ForegroundRole) is None
+
+
+# --------------------------------------------------------------------------- #
+# GFP-17 — the filter bar must stay in lockstep with the service layer
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def window(env_db, monkeypatch):
+    """A MainWindow over an isolated DB, rendered offscreen."""
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from grocery_planner.gui.app import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow()
+    yield win
+    win.close()
+    app.processEvents()
+
+
+def test_every_control_maps_to_a_real_service_param(window):
+    """The point of GFP-17: no widget may filter in a way the CLI cannot."""
+    accepted = set(inspect.signature(service.fetch_deals).parameters)
+    assert set(window.current_filters()) <= accepted
+    # And the mapping actually drives a query without error.
+    assert isinstance(service.fetch_deals(**window.current_filters()), list)
+
+
+def test_filters_default_to_current_deals_only(window):
+    filters = window.current_filters()
+    assert filters["hide_expired"] is True     # GFP-16 default carries over
+    assert filters["deal_type"] == "all"
+    assert filters["category"] is None
+    assert filters["search"] == ""
+    assert filters["valid_on"] is None         # date picker off until enabled
+
+
+def test_reset_filters_restores_the_defaults(window):
+    window.search_edit.setText("chicken")
+    window.on_sale_box.setChecked(True)
+    window.hide_expired_box.setChecked(False)
+    window.valid_on_box.setChecked(True)
+    assert window.current_filters()["search"] == "chicken"
+
+    window.reset_filters()
+    filters = window.current_filters()
+    assert filters["search"] == ""
+    assert filters["on_sale"] is False
+    assert filters["hide_expired"] is True
+    assert filters["valid_on"] is None
+
+
+def test_scrape_button_disabled_for_stores_without_a_scraper(window):
+    window.store_box.setCurrentIndex(0)  # "All stores"
+    assert window.current_filters()["store"] is None
+    assert not window.scrape_btn.isEnabled()
+
+    scrapable = window.store_box.findData("foodlion")
+    window.store_box.setCurrentIndex(scrapable)
+    assert window.scrape_btn.isEnabled()

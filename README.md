@@ -34,6 +34,8 @@ your own savings formulas.
    evaluate your own savings/nutrition expressions against `gplan profile` values.
    Deals whose `valid_to` has passed are marked `(expired)` rather than silently
    shown as current; `--hide-expired` (or the GUI's "Hide expired" box) drops them.
+   Every filter is defined once in `service.fetch_deals()`, so a CLI flag and the
+   matching GUI control always mean the same thing.
 
 ### Stores
 
@@ -72,7 +74,10 @@ Then run via `.venv\Scripts\gplan.exe` (or activate the venv and use `gplan`).
 gplan scrape <store> [-z ZIP]      fetch fresh weekly ad + coupons into the DB
 gplan import [DATA_DIR]            load data/<store>/{prices,deals}.csv into the DB
 gplan list deals  [-s STORE] [-n N] [--on-sale] [--hide-expired]
+                  [-c CATEGORY] [-t all|weekly|coupon|bogo] [-q SEARCH]
+                  [--loyalty] [--valid-on YYYY-MM-DD]
 gplan list prices [-s STORE] [-n N]
+gplan categories  [-s STORE]      sub-categories available to --category
 gplan stores                      tracked stores + row counts
 gplan db-path                     print the SQLite database path
 gplan formula set NAME EXPR [--desc TEXT]
@@ -90,6 +95,8 @@ gplan scrape foodlion                     # Food Lion weekly ad + coupons
 gplan scrape harristeeter -z 27401
 gplan list deals -s foodlion --on-sale -n 30
 gplan list deals --hide-expired           # only deals still valid today
+gplan list deals -q chicken -t weekly     # search the weekly ad
+gplan list deals -c "Meat & Seafood" --on-sale
 gplan profile set weight 82
 gplan formula set target_protein "weight * 1.6" --desc "grams/day"
 gplan formula eval target_protein         # uses profile[weight]
