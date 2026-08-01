@@ -10,7 +10,9 @@ import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hiddenimports = collect_submodules("apscheduler")
-datas = collect_data_files("tzdata")
+# db_script ships the .ddl/.dml schema scripts (GFP-59); see gplan.spec for
+# why this must be explicit rather than assumed to "just come along".
+datas = collect_data_files("tzdata") + collect_data_files("db_script")
 
 a = Analysis(
     ["gplan_gui_entry.py"],

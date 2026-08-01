@@ -29,7 +29,14 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["grocery_planner*"]
+include = ["grocery_planner*", "db_script*"]
+
+[tool.setuptools.package-data]
+# db_script/ ships as its own top-level package purely so its .ddl/.dml
+# schema scripts (and README) are included as installed package data — see
+# db_script/README.md and grocery_planner/db.py for how they're located
+# and executed at runtime.
+db_script = ["init/*.ddl", "init/*.dml", "migration/*.ddl", "migration/*.dml", "README.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
