@@ -145,8 +145,37 @@ CREATE TABLE IF NOT EXISTS food_nutrients (
     UNIQUE(food_id, nutrient)
 );
 
+-- Customer domain (GFP-28): folded into the baseline so a fresh database
+-- gets this table immediately, in addition to
+-- db_script/migration/0008_GFP-28.ddl which carries it to pre-existing
+-- databases. See that file for the full rationale -- in short: weight_kg is
+-- the canonical column the future protein-target formula (GFP-29) must read
+-- (the existing weight * 1.6 formula is grams-per-KILOGRAM; a pound value
+-- stored there un-converted is a 2.2x dosing error), weight_unit is the
+-- user's originally-entered unit kept only for display, and deleted_at makes
+-- delete() a soft delete because a customer record -- unlike every other
+-- table here -- cannot be re-scraped or re-imported if lost.
+CREATE TABLE IF NOT EXISTS customers (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    name           TEXT NOT NULL,
+    weight_kg      REAL,
+    weight_unit    TEXT,
+    height_cm      REAL,
+    age            INTEGER,
+    sex            TEXT,
+    activity_level TEXT,
+    goal           TEXT,
+    protein_factor REAL NOT NULL DEFAULT 1.6,
+    notes          TEXT,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    deleted_at     TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_deals_store ON deals(store);
 CREATE INDEX IF NOT EXISTS idx_prices_store ON prices(store);
 CREATE INDEX IF NOT EXISTS idx_foods_category ON foods(category);
 CREATE INDEX IF NOT EXISTS idx_food_nutrients_food_id ON food_nutrients(food_id);
 CREATE INDEX IF NOT EXISTS idx_food_nutrients_nutrient ON food_nutrients(nutrient);
+CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(name);
+CREATE INDEX IF NOT EXISTS idx_customers_deleted_at ON customers(deleted_at);
