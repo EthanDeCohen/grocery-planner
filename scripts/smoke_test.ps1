@@ -113,6 +113,10 @@ try {
     Test-Case "formula list"             @("formula", "list")                              0 "target_protein"
     # GFP-8: value ranking. Sample deals carry no sizes, so nothing is comparable
     # — the command must say so rather than print an empty table.
+    # GFP-11: CSV export (the GUI's Export button drives the same service call).
+    $exportPath = Join-Path $work "export.csv"
+    Test-Case "export csv"               @("export", $exportPath, "--include-expired")     0 "Wrote"
+    Test-Case "export -c Produce"        @("export", $exportPath, "-c", "Produce", "--include-expired") 0 "Wrote"
     Test-Case "best (all expired)"       @("best")                                         0 "0 ranked of 0"
     Test-Case "best (no sizes)"          @("best", "--include-expired")                    0 "no readable size"
     Test-Case "best --unit oz"           @("best", "-u", "oz", "--include-expired")        0
