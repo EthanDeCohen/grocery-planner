@@ -88,6 +88,7 @@ gplan list prices [-s STORE] [-n N]
 gplan categories  [-s STORE]      sub-categories available to --category
 gplan best [-s STORE] [-c CATEGORY] [-q SEARCH] [-u oz|"fl oz"|each]
            [--score FORMULA] [-n N]   rank deals by value
+gplan export FILE.csv [-s STORE] [-c CATEGORY] [-q SEARCH]
 gplan stores                      tracked stores + row counts
 gplan db-path                     print the SQLite database path
 gplan schedule set STORE --every 6h | --cron "0 6 * * *"
@@ -122,20 +123,32 @@ Formulas are evaluated with `simpleeval` (a safe expression evaluator — no raw
 
 ---
 
-## Desktop GUI (preview)
+## Desktop GUI
 
-An early cross-platform (Windows + macOS) desktop shell is available behind the
-optional `gui` extra — a minimal window to pick a store, run a scrape, and browse
-the resulting deals without touching the CLI. It drives the same
-`grocery_planner.service` core as `gplan`.
+A cross-platform (Windows + macOS) desktop app behind the optional `gui` extra.
+It drives the same `grocery_planner.service` core as `gplan`, so both front ends
+always agree.
 
 ```powershell
 .venv\Scripts\python -m pip install -e ".[gui]"     # installs PySide6 (Qt)
 .venv\Scripts\python -m grocery_planner.gui          # or: gplan-gui
 ```
 
-This is the MVP shell (GFP-14); the full GUI — formula editor, schedule settings,
-per-job progress, Export to Excel — is GFP-11.
+Three panes:
+
+- **Deals** — pick a store, run a scrape, and filter with the same controls the
+  CLI exposes as flags (category, type, search, on-sale, loyalty, hide expired,
+  valid-on). **Export…** writes what you are looking at to CSV.
+- **Formulas** — write expressions scored against each deal (`price`,
+  `unit_price`, `quantity`, `saved_percent`) plus your profile values. A formula
+  that cannot evaluate is refused at Save, not at use. "Rank deals with this"
+  applies it to the current selection.
+- **Schedule** — set an automatic refresh cadence per store and see recent runs.
+  The cadence is stored in the database; `gplan schedule run` keeps it ticking.
+
+Export is CSV rather than `.xlsx` on purpose: retiring the Excel runtime removed
+the pandas/openpyxl dependency, and a CSV opens in Excel, Sheets and Numbers
+without bringing it back.
 
 ---
 

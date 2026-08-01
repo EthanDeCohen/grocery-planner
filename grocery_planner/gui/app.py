@@ -24,20 +24,40 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDateEdit,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
+    QProgressBar,
     QPushButton,
     QTableView,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
+from simpleeval import simple_eval
 
-from .. import service
+from .. import db, formulas, jobs, scheduler, service
 from ..scrapers import SCRAPERS
 from ..stores import BY_KEY
+
+# Stand-in values used to validate a formula before it is saved: every variable
+# score_deals() supplies, so a typo is caught at Save rather than at Rank.
+_FORMULA_PROBE = {
+    "price": 1.0, "sale_price": 1.0, "unit_price": 1.0,
+    "quantity": 1.0, "saved_percent": 1.0,
+}
+
+
+def _placeholder(text: str) -> QListWidgetItem:
+    """An unselectable "nothing here yet" row, so an empty list explains itself."""
+    item = QListWidgetItem(text)
+    item.setFlags(Qt.NoItemFlags)
+    return item
 
 # (row key, column header). Mirrors service.fetch_deals()'s SELECT.
 DEAL_HEADERS: list[tuple[str, str]] = [
@@ -113,7 +133,9 @@ class ScrapeWorker(QObject):
 
     def run(self) -> None:
         try:
-            result = service.run_scrape(self._store_key)
+            # Tracked, so a GUI scrape lands in `gplan jobs` like a scheduled
+            # one and an interrupted run is visible after a crash (GFP-7).
+            result = jobs.run_tracked_scrape(self._store_key)
         except Exception as exc:  # surface any failure to the UI thread
             self.failed.emit(str(exc))
         else:
@@ -126,8 +148,13 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Grocery Planner")
         self.resize(920, 560)
 
+        # Deals stay the front door; formulas and schedule are their own tabs so
+        # the browsing view never gets crowded out (GFP-11).
+        self.tabs = QTabWidget()
+        self.setCentralWidget(self.tabs)
+
         central = QWidget()
-        self.setCentralWidget(central)
+        self.tabs.addTab(central, "Deals")
         layout = QVBoxLayout(central)
 
         # --- Action bar: pick a store, scrape it, refresh the view ---------- #
@@ -145,6 +172,19 @@ class MainWindow(QMainWindow):
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.clicked.connect(self.reload_deals)
         bar.addWidget(self.refresh_btn)
+
+        self.export_btn = QPushButton("Export…")
+        self.export_btn.setToolTip("Save the deals currently shown to a CSV file.")
+        self.export_btn.clicked.connect(self.on_export)
+        bar.addWidget(self.export_btn)
+
+        # Indeterminate: Flipp gives no progress signal, so a moving bar is the
+        # honest amount of information — "working", not a fake percentage.
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)
+        self.progress.setMaximumWidth(140)
+        self.progress.hide()
+        bar.addWidget(self.progress)
         bar.addStretch(1)
         layout.addLayout(bar)
 
@@ -218,9 +258,240 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QTableView.SelectRows)
         layout.addWidget(self.table)
 
+        self._build_formulas_tab()
+        self._build_schedule_tab()
+
         self._thread: QThread | None = None
         self._worker: ScrapeWorker | None = None
         self.on_store_changed()  # fills categories, sets scrape availability, loads rows
+
+    # ----------------------------------------------------------------- #
+    # Formulas tab (GFP-11) — the GFP-8 scoring engine, made editable
+    # ----------------------------------------------------------------- #
+    def _build_formulas_tab(self) -> None:
+        page = QWidget()
+        self.tabs.addTab(page, "Formulas")
+        layout = QVBoxLayout(page)
+
+        layout.addWidget(QLabel(
+            "Expressions scored against each deal (price, unit_price, quantity, "
+            "saved_percent) and your profile values."
+        ))
+
+        self.formula_list = QListWidget()
+        self.formula_list.setMaximumHeight(220)
+        self.formula_list.currentItemChanged.connect(self.on_formula_selected)
+        layout.addWidget(self.formula_list)
+
+        form = QHBoxLayout()
+        form.addWidget(QLabel("Name:"))
+        self.formula_name = QLineEdit()
+        self.formula_name.setMaximumWidth(200)
+        form.addWidget(self.formula_name)
+        form.addWidget(QLabel("Expression:"))
+        self.formula_expression = QLineEdit()
+        self.formula_expression.setPlaceholderText("1 / unit_price")
+        form.addWidget(self.formula_expression, 1)
+        layout.addLayout(form)
+
+        actions = QHBoxLayout()
+        self.formula_save_btn = QPushButton("Save")
+        self.formula_save_btn.clicked.connect(self.on_formula_save)
+        actions.addWidget(self.formula_save_btn)
+        self.formula_delete_btn = QPushButton("Delete")
+        self.formula_delete_btn.clicked.connect(self.on_formula_delete)
+        actions.addWidget(self.formula_delete_btn)
+        self.formula_rank_btn = QPushButton("Rank deals with this")
+        self.formula_rank_btn.clicked.connect(self.on_formula_rank)
+        actions.addWidget(self.formula_rank_btn)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+
+        self.formula_message = QLabel("")
+        self.formula_message.setWordWrap(True)
+        layout.addWidget(self.formula_message)
+        self.reload_formulas()
+
+    def reload_formulas(self) -> None:
+        self.formula_list.clear()
+        rows = formulas.list_formulas(db.connect())
+        if not rows:
+            self.formula_list.addItem(_placeholder(
+                "No formulas yet — name one below and Save."
+            ))
+            return
+        for row in rows:
+            item = QListWidgetItem(f"{row['name']}  =  {row['expression']}")
+            item.setData(Qt.UserRole, (row["name"], row["expression"]))
+            self.formula_list.addItem(item)
+
+    def on_formula_selected(self, current, _previous=None) -> None:
+        if current is None or current.data(Qt.UserRole) is None:
+            return  # the placeholder row carries no formula
+        name, expression = current.data(Qt.UserRole)
+        self.formula_name.setText(name)
+        self.formula_expression.setText(expression)
+
+    def on_formula_save(self) -> None:
+        name = self.formula_name.text().strip()
+        expression = self.formula_expression.text().strip()
+        if not name or not expression:
+            self.formula_message.setText("Give the formula a name and an expression.")
+            return
+        # Validate before storing: a formula that cannot evaluate is not saved.
+        try:
+            simple_eval(expression, names=_FORMULA_PROBE)
+        except Exception as exc:
+            self.formula_message.setText(f"Not saved — {type(exc).__name__}: {exc}")
+            return
+        formulas.set_formula(db.connect(), name, expression)
+        self.formula_message.setText(f"Saved {name!r}.")
+        self.reload_formulas()
+
+    def on_formula_delete(self) -> None:
+        name = self.formula_name.text().strip()
+        if not name:
+            return
+        conn = db.connect()
+        conn.execute("DELETE FROM formulas WHERE name=?", (name,))
+        conn.commit()
+        self.formula_name.clear()
+        self.formula_expression.clear()
+        self.formula_message.setText(f"Deleted {name!r}.")
+        self.reload_formulas()
+
+    def on_formula_rank(self) -> None:
+        """Score the current deal selection with this formula and show it."""
+        name = self.formula_name.text().strip()
+        if not name:
+            return
+        try:
+            ranked = service.best_deals(
+                limit=200, score_with=name, **self.current_filters()
+            )
+        except KeyError:
+            self.formula_message.setText(f"Save {name!r} first.")
+            return
+        self.model.set_rows(ranked)
+        self.tabs.setCurrentIndex(0)
+        self.statusBar().showMessage(
+            f"{len(ranked)} deals ranked by {name!r}. Refresh returns to the full list."
+        )
+
+    # ----------------------------------------------------------------- #
+    # Schedule tab (GFP-11 over GFP-7)
+    # ----------------------------------------------------------------- #
+    def _build_schedule_tab(self) -> None:
+        page = QWidget()
+        self.tabs.addTab(page, "Schedule")
+        layout = QVBoxLayout(page)
+
+        layout.addWidget(QLabel(
+            "Automatic refresh. The cadence is stored in the database, so it "
+            "survives restarts; run `gplan schedule run` to keep it ticking."
+        ))
+
+        form = QHBoxLayout()
+        form.addWidget(QLabel("Store:"))
+        self.schedule_store_box = QComboBox()
+        for key in service.available_scrapers():
+            store = BY_KEY.get(key)
+            self.schedule_store_box.addItem(store.display_name if store else key, key)
+        form.addWidget(self.schedule_store_box)
+
+        form.addWidget(QLabel("Every:"))
+        self.schedule_every = QLineEdit("12h")
+        self.schedule_every.setMaximumWidth(90)
+        self.schedule_every.setToolTip("Interval such as 30m, 6h or 2d.")
+        form.addWidget(self.schedule_every)
+
+        self.schedule_save_btn = QPushButton("Save schedule")
+        self.schedule_save_btn.clicked.connect(self.on_schedule_save)
+        form.addWidget(self.schedule_save_btn)
+        self.schedule_remove_btn = QPushButton("Remove")
+        self.schedule_remove_btn.clicked.connect(self.on_schedule_remove)
+        form.addWidget(self.schedule_remove_btn)
+        form.addStretch(1)
+        layout.addLayout(form)
+
+        self.schedule_list = QListWidget()
+        layout.addWidget(self.schedule_list)
+
+        layout.addWidget(QLabel("Recent automatic runs:"))
+        self.jobs_list = QListWidget()
+        layout.addWidget(self.jobs_list, 1)
+
+        self.schedule_message = QLabel("")
+        self.schedule_message.setWordWrap(True)
+        layout.addWidget(self.schedule_message)
+        self.reload_schedules()
+
+    def reload_schedules(self) -> None:
+        conn = db.connect()
+        self.schedule_list.clear()
+        rows = scheduler.list_schedules(conn)
+        if not rows:
+            self.schedule_list.addItem(_placeholder(
+                "No automatic refresh set — pick a store and an interval above."
+            ))
+        for row in rows:
+            upcoming = scheduler.next_run(row["kind"], row["expression"])
+            last = jobs.last_success(conn, row["store"])
+            parts = [f"{row['store']} — {scheduler.describe(row['kind'], row['expression'])}"]
+            parts.append(f"next {upcoming:%Y-%m-%d %H:%M}" if upcoming else "next unknown")
+            parts.append(
+                f"last success {last:%Y-%m-%d %H:%M}" if last else "never run"
+            )
+            self.schedule_list.addItem("; ".join(parts))
+        self.jobs_list.clear()
+        history = jobs.recent_jobs(conn, limit=15)
+        if not history:
+            self.jobs_list.addItem(_placeholder("Nothing has run automatically yet."))
+        for row in history:
+            self.jobs_list.addItem(
+                f"[{row['status']}] {row['source']} — {(row['started_at'] or '')[:16]}"
+                f" — {row['message'] or row['last_checkpoint'] or ''}"
+            )
+
+    def on_schedule_save(self) -> None:
+        store = self.schedule_store_box.currentData()
+        expression = self.schedule_every.text().strip()
+        try:
+            scheduler.set_schedule(db.connect(), store, scheduler.INTERVAL, expression)
+        except (scheduler.ScheduleError, service.UnknownStoreError) as exc:
+            self.schedule_message.setText(f"Not saved — {exc}")
+            return
+        self.schedule_message.setText(f"{store} will refresh every {expression}.")
+        self.reload_schedules()
+
+    def on_schedule_remove(self) -> None:
+        store = self.schedule_store_box.currentData()
+        removed = scheduler.remove_schedule(db.connect(), store)
+        self.schedule_message.setText(
+            f"Removed the schedule for {store}." if removed else f"No schedule for {store}."
+        )
+        self.reload_schedules()
+
+    # ----------------------------------------------------------------- #
+    # Export (GFP-11)
+    # ----------------------------------------------------------------- #
+    def on_export(self) -> None:
+        """Write the current filtered view to CSV.
+
+        CSV, not .xlsx: GFP-13 retired the Excel dependency and a CSV opens in
+        Excel anyway.
+        """
+        path, _selected = QFileDialog.getSaveFileName(
+            self, "Export deals", "deals.csv", "CSV files (*.csv)"
+        )
+        if not path:
+            return
+        try:
+            written = service.export_deals(path, **self.current_filters())
+        except OSError as exc:
+            self.statusBar().showMessage(f"Export failed: {exc}", 10000)
+            return
+        self.statusBar().showMessage(f"Exported {written} deals to {path}.", 8000)
 
     # ----------------------------------------------------------------- #
     # Filter plumbing (GFP-17)
@@ -310,6 +581,7 @@ class MainWindow(QMainWindow):
         if not store:
             return
         self.scrape_btn.setEnabled(False)
+        self.progress.show()
         self.statusBar().showMessage(f"Scraping {self.store_box.currentText()} …")
 
         self._thread = QThread(self)
@@ -332,12 +604,16 @@ class MainWindow(QMainWindow):
             8000,
         )
         self.scrape_btn.setEnabled(True)
+        self.progress.hide()
         self._populate_categories()  # a fresh ad can introduce new categories
         self.reload_deals()
+        self.reload_schedules()      # the run shows up in the job history
 
     def _on_scrape_failed(self, message: str) -> None:
         self.statusBar().showMessage(f"Scrape failed: {message}", 10000)
         self.scrape_btn.setEnabled(True)
+        self.progress.hide()
+        self.reload_schedules()      # the failure is on the record too
 
     def reload_deals(self) -> None:
         filters = self.current_filters()

@@ -266,6 +266,29 @@ def best(
 
 
 @app.command()
+def export(
+    path: Path = typer.Argument(..., help="Destination .csv file."),
+    store: str = typer.Option(None, "--store", "-s", help="Filter by store key."),
+    category: str = typer.Option(None, "--category", "-c", help="Filter by sub-category."),
+    search: str = typer.Option("", "--search", "-q", help="Match item name or description."),
+    deal_type: str = typer.Option("all", "--type", "-t", help="all | weekly | coupon | bogo."),
+    include_expired: bool = typer.Option(
+        False, "--include-expired", help="Also export deals that have lapsed."
+    ),
+) -> None:
+    """Export the matching deals to CSV (opens in Excel, Sheets or Numbers)."""
+    if deal_type not in service.DEAL_TYPE_GROUPS:
+        typer.secho(f"Unknown --type {deal_type!r}. Choose: "
+                    f"{', '.join(service.DEAL_TYPE_GROUPS)}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    written = service.export_deals(
+        path, store=store, category=category, search=search, deal_type=deal_type,
+        hide_expired=not include_expired,
+    )
+    typer.secho(f"Wrote {written} deals to {path}.", fg=typer.colors.GREEN)
+
+
+@app.command()
 def categories(
     store: str = typer.Option(None, "--store", "-s", help="Limit to one store key."),
 ) -> None:

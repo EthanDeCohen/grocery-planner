@@ -6,8 +6,10 @@ plain data and never print — the front end owns all presentation.
 """
 from __future__ import annotations
 
+import csv
 import sqlite3
 from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from . import db, importers, savings
@@ -232,6 +234,39 @@ def best_deals(
     if score_with:
         return savings.score_deals(own, score_with, rows, limit=limit)
     return savings.rank_by_unit_price(rows, limit=limit)
+
+
+EXPORT_COLUMNS = [
+    "store", "item_name", "sub_category", "deal_type", "size", "price",
+    "unit_price", "unit", "sale_price", "dollar_price", "valid_from", "valid_to",
+    "expired",
+]
+
+
+def export_deals(
+    path: str | Path,
+    conn: sqlite3.Connection | None = None,
+    **filters: Any,
+) -> int:
+    """Write the deals matching ``filters`` to a CSV file; returns the row count.
+
+    CSV rather than .xlsx on purpose: GFP-13 retired the Excel runtime and its
+    pandas/openpyxl dependency, and a CSV opens in Excel, Sheets and Numbers
+    without dragging that back in. Rows carry the GFP-8 size/unit-price columns
+    so a spreadsheet can sort on value directly.
+    """
+    own = conn or db.connect()
+    rows = savings.annotate(fetch_deals(conn=own, **filters))
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=EXPORT_COLUMNS, extrasaction="ignore"
+        )
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in EXPORT_COLUMNS})
+    return len(rows)
 
 
 def stores_with_deals(conn: sqlite3.Connection | None = None) -> list[str]:

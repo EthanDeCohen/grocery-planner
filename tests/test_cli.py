@@ -119,6 +119,30 @@ def test_best_rejects_unknown_formula_and_type(env_db):
     assert runner.invoke(app, ["best", "--type", "nonsense"]).exit_code == 1
 
 
+def test_export_writes_csv(env_db, sample_data, tmp_path):
+    """GFP-11: CSV rather than .xlsx — GFP-13 retired the Excel dependency."""
+    assert runner.invoke(app, ["import", str(sample_data)]).exit_code == 0
+    target = tmp_path / "deals.csv"
+
+    result = runner.invoke(app, ["export", str(target), "--include-expired"])
+    assert result.exit_code == 0, result.stdout
+    assert "Wrote" in result.stdout
+
+    lines = target.read_text(encoding="utf-8").splitlines()
+    assert "item_name" in lines[0] and "unit_price" in lines[0]
+    assert any("Boneless Chicken Breast" in line for line in lines[1:])
+
+
+def test_export_respects_filters(env_db, sample_data, tmp_path):
+    assert runner.invoke(app, ["import", str(sample_data)]).exit_code == 0
+    target = tmp_path / "produce.csv"
+    runner.invoke(app, ["export", str(target), "-c", "Produce", "--include-expired"])
+
+    text = target.read_text(encoding="utf-8")
+    assert "Gala Apples" in text
+    assert "Boneless Chicken Breast" not in text
+
+
 def test_schedule_set_list_remove(env_db):
     """GFP-7: cadence round-trips through the CLI."""
     created = runner.invoke(app, ["schedule", "set", "foodlion", "--every", "12h"])
