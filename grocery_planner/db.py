@@ -236,8 +236,14 @@ def _adoption_point(conn: sqlite3.Connection, scripts: list[tuple[int, str, Path
     highest = 0
     try:
         for seq, _key, path in scripts:
-            for stmt in _split_statements(path.read_text(encoding="utf-8")):
-                reference.execute(stmt)
+            try:
+                for stmt in _split_statements(path.read_text(encoding="utf-8")):
+                    reference.execute(stmt)
+            except sqlite3.Error:
+                # A broken script. We cannot learn anything past it, so stop
+                # here rather than propagating: the real application pass will
+                # hit it too and report it properly.
+                break
             if not _covers(_schema_fingerprint(reference), actual):
                 break
             highest = seq
@@ -348,11 +354,11 @@ def _apply_pending_migrations(conn: sqlite3.Connection) -> None:
     # to that point are recorded without being replayed (replaying them would
     # collide); everything after it is executed normally, which is what brings
     # the database up to date.
-    adopt_through = (
-        _adoption_point(conn, scripts)
-        if not recorded and _schema_fingerprint(conn)
-        else 0
-    )
+    # Deliberately NOT gated on schema_version being empty. A run that failed
+    # part-way leaves rows behind, and gating on "no rows yet" would then skip
+    # adoption forever and retry the collision on every open. Structure is the
+    # honest signal; scripts already recorded are skipped below regardless.
+    adopt_through = _adoption_point(conn, scripts) if _schema_fingerprint(conn) else 0
 
     for seq, jira_key, path in scripts:
         if seq in recorded:

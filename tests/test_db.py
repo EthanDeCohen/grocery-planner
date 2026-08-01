@@ -732,3 +732,44 @@ def test_a_partially_migrated_database_adopts_then_catches_up(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM foods").fetchone()[0] > 0
     assert conn.execute("SELECT COUNT(*) FROM deals").fetchone()[0] == 1
     conn.close()
+
+
+def test_adoption_still_runs_after_a_partially_recorded_failed_upgrade(tmp_path):
+    """The state the real database was actually left in.
+
+    A failed upgrade commits the scripts that DID apply before it dies, so
+    schema_version ends up non-empty while the database is still mid-history.
+    Gating adoption on "no rows recorded yet" skipped it in exactly that case
+    and re-raised the same collision on every open, forever.
+    """
+    import sqlite3
+
+    from grocery_planner import db
+
+    p = tmp_path / "poisoned.sqlite3"
+    db.connect(p).close()
+
+    raw = sqlite3.connect(p)
+    for stmt in (
+        "DROP TABLE IF EXISTS price_history",
+        "DROP TABLE IF EXISTS food_nutrients",
+        "DROP TABLE IF EXISTS foods",
+        "DROP TABLE IF EXISTS customers",
+        "ALTER TABLE deals DROP COLUMN postal_code",
+        # Mid-history AND partially recorded: 0001 landed, nothing after it.
+        "DELETE FROM schema_version WHERE seq > 1",
+    ):
+        raw.execute(stmt)
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(p)  # must not raise
+    modes = {r["seq"]: r["mode"] for r in
+             conn.execute("SELECT seq, mode FROM schema_version")}
+    assert modes[1] == db.EXECUTED      # kept from the earlier run
+    assert modes[2] == db.BASELINED     # already present, adopted
+    assert modes[3] == db.EXECUTED      # genuinely missing, applied
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(deals)")}
+    assert "postal_code" in cols
+    assert conn.execute("SELECT COUNT(*) FROM foods").fetchone()[0] > 0
+    conn.close()
