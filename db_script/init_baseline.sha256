@@ -1,0 +1,19 @@
+# GFP-61: pins db_script/init/0001_GFP-9.ddl as a FROZEN baseline (GFP-60).
+#
+# Deliberately NOT stored inside init/ itself: GFP-61 also asserts init/
+# contains exactly one file (the frozen baseline), so a checksum sidecar
+# has to live here instead, next to db_script/README.md and
+# db_script/schema_snapshot.txt.
+#
+# tests/test_schema_guard.py fails CI if db_script/init/0001_GFP-9.ddl's
+# hash drifts from the one below -- see db_script/README.md ("init/ is
+# FROZEN -- do not fold changes back into it") for why that file must never
+# change: every change since GFP-60 belongs in db_script/migration/
+# instead, so a fresh database is always "init + every migration replayed",
+# which is what makes a migration failure always a real failure.
+#
+# If you are deliberately re-baselining init/ (this should be exceedingly
+# rare -- read the README section above first), regenerate this hash with:
+#   .venv/Scripts/python.exe -c "import hashlib,pathlib; print(hashlib.sha256(pathlib.Path('db_script/init/0001_GFP-9.ddl').read_bytes()).hexdigest())"
+# and paste the new hash below.
+c9fe27c7534b3814c27f7b250bcab0af0473046d190a0cdcf664aa3dd9325542  init/0001_GFP-9.ddl

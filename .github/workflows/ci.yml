@@ -28,6 +28,11 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run pytest
+        # tests/test_schema_guard.py (GFP-61) runs here too -- it pins
+        # db_script/init/0001_GFP-9.ddl's checksum, checks the committed
+        # schema snapshot against a freshly built database, and asserts
+        # db_script/ script hygiene. No separate job needed: it's plain
+        # pytest, already collected under testpaths (pyproject.toml).
         run: pytest
 
       - name: Run PowerShell smoke test
