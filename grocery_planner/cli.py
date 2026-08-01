@@ -17,15 +17,17 @@ from pathlib import Path
 
 import typer
 
-from . import __version__, db, formulas, importers, service
+from . import __version__, db, formulas, importers, jobs, scheduler, service
 from .scrapers import SCRAPERS
 from .stores import BY_KEY
 
 app = typer.Typer(add_completion=False, help="Local-first grocery price/deal planner.")
 formula_app = typer.Typer(help="Manage user-defined formulas.")
 profile_app = typer.Typer(help="Set/get profile values (used as formula variables).")
+schedule_app = typer.Typer(help="Automatic background refresh (GFP-7).")
 app.add_typer(formula_app, name="formula")
 app.add_typer(profile_app, name="profile")
+app.add_typer(schedule_app, name="schedule")
 
 
 class Kind(str, Enum):
@@ -210,6 +212,117 @@ def stores() -> None:
         p = conn.execute("SELECT COUNT(*) FROM prices WHERE store=?", (r["key"],)).fetchone()[0]
         rows.append((r["key"], r["display_name"], str(d), str(p)))
     _print_table(["key", "store", "deals", "prices"], rows)
+
+
+@schedule_app.command("set")
+def schedule_set(
+    store: str = typer.Argument(..., help="Store key to refresh automatically."),
+    every: str = typer.Option(None, "--every", "-e", help="Interval, e.g. 30m, 6h, 2d."),
+    cron: str = typer.Option(None, "--cron", help="Cron expression, e.g. \"0 6 * * *\"."),
+) -> None:
+    """Refresh a store on a cadence: gplan schedule set foodlion --every 12h."""
+    if bool(every) == bool(cron):
+        typer.secho("Pass exactly one of --every or --cron.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    kind = scheduler.INTERVAL if every else scheduler.CRON
+    expression = every or cron
+    try:
+        scheduler.set_schedule(db.connect(), store, kind, expression)
+    except service.UnknownStoreError:
+        typer.secho(f"No scraper for {store!r}. Available: "
+                    f"{', '.join(service.available_scrapers())}.",
+                    fg=typer.colors.RED, err=True)
+        raise typer.Exit(2)
+    except scheduler.ScheduleError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    upcoming = scheduler.next_run(kind, expression)
+    typer.secho(
+        f"{store} will refresh {scheduler.describe(kind, expression)}"
+        + (f"; next run {upcoming:%Y-%m-%d %H:%M}." if upcoming else "."),
+        fg=typer.colors.GREEN,
+    )
+    typer.echo("Run `gplan schedule run` to start the scheduler.")
+
+
+@schedule_app.command("list")
+def schedule_list() -> None:
+    """Show the configured refresh cadences."""
+    conn = db.connect()
+    rows = scheduler.list_schedules(conn)
+    table = []
+    for r in rows:
+        upcoming = scheduler.next_run(r["kind"], r["expression"])
+        last = jobs.last_success(conn, r["store"])
+        table.append((
+            r["store"],
+            scheduler.describe(r["kind"], r["expression"]),
+            "yes" if r["enabled"] else "no",
+            f"{upcoming:%Y-%m-%d %H:%M}" if upcoming else "-",
+            f"{last:%Y-%m-%d %H:%M}" if last else "never",
+        ))
+    _print_table(["store", "cadence", "enabled", "next run", "last success"], table)
+
+
+@schedule_app.command("remove")
+def schedule_remove(store: str = typer.Argument(..., help="Store key to stop refreshing.")) -> None:
+    """Delete a store's refresh cadence."""
+    if not scheduler.remove_schedule(db.connect(), store):
+        typer.secho(f"No schedule for {store!r}.", fg=typer.colors.YELLOW, err=True)
+        raise typer.Exit(1)
+    typer.secho(f"Removed the schedule for {store}.", fg=typer.colors.GREEN)
+
+
+@schedule_app.command("run")
+def schedule_run(
+    once: bool = typer.Option(
+        False, "--once", help="Do the catch-up pass and exit instead of waiting."
+    ),
+) -> None:
+    """Run the background scheduler (Ctrl-C to stop).
+
+    Catches up anything overdue first — a machine that was asleep through its
+    window refreshes now rather than waiting for the next one.
+    """
+    conn = db.connect()
+    if not scheduler.list_schedules(conn, enabled_only=True):
+        typer.secho("No schedules configured. Try: gplan schedule set foodlion --every 12h",
+                    fg=typer.colors.YELLOW)
+        raise typer.Exit(1)
+
+    summary = scheduler.run_catch_up(conn, on_event=lambda m: typer.echo(f"  {m}"))
+    typer.secho(
+        f"Catch-up: {len(summary['ran'])} scraped, {len(summary['failed'])} failed, "
+        f"{summary['reaped']} interrupted job(s) reaped.",
+        fg=typer.colors.BLUE,
+    )
+    if once:
+        raise typer.Exit(1 if summary["failed"] else 0)
+
+    engine = scheduler.build_scheduler(conn, blocking=True)
+    for job in engine.get_jobs():
+        typer.echo(f"  scheduled: {job.name}")
+    typer.secho("Scheduler running — press Ctrl-C to stop.", fg=typer.colors.GREEN)
+    try:
+        engine.start()
+    except (KeyboardInterrupt, SystemExit):
+        typer.secho("\nScheduler stopped.", fg=typer.colors.YELLOW)
+
+
+@app.command("jobs")
+def jobs_cmd(
+    limit: int = typer.Option(20, "--limit", "-n", help="Max rows (0 = all)."),
+    store: str = typer.Option(None, "--store", "-s", help="Filter by store key."),
+) -> None:
+    """Show the history of automatic scrape runs."""
+    rows = jobs.recent_jobs(db.connect(), limit=limit, store=store)
+    _print_table(
+        ["id", "store", "status", "started", "finished", "message"],
+        [(str(r["id"]), r["source"], r["status"], (r["started_at"] or "")[:16],
+          (r["finished_at"] or "")[:16], r["message"] or r["last_checkpoint"] or "")
+         for r in rows],
+    )
 
 
 @formula_app.command("set")

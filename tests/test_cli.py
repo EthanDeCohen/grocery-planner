@@ -74,6 +74,53 @@ def test_categories_command(env_db, sample_data):
     assert "Produce" in result.stdout
 
 
+def test_schedule_set_list_remove(env_db):
+    """GFP-7: cadence round-trips through the CLI."""
+    created = runner.invoke(app, ["schedule", "set", "foodlion", "--every", "12h"])
+    assert created.exit_code == 0, created.stdout
+    assert "every 12h" in created.stdout
+
+    listed = runner.invoke(app, ["schedule", "list"])
+    assert listed.exit_code == 0
+    assert "foodlion" in listed.stdout
+    assert "never" in listed.stdout  # no successful run yet
+
+    removed = runner.invoke(app, ["schedule", "remove", "foodlion"])
+    assert removed.exit_code == 0
+    assert runner.invoke(app, ["schedule", "remove", "foodlion"]).exit_code == 1
+
+
+def test_schedule_set_rejects_bad_input(env_db):
+    # Exactly one of --every / --cron.
+    assert runner.invoke(app, ["schedule", "set", "foodlion"]).exit_code == 1
+    assert runner.invoke(
+        app, ["schedule", "set", "foodlion", "--every", "6h", "--cron", "0 6 * * *"]
+    ).exit_code == 1
+    # Unparseable cadence, and a store with no scraper.
+    assert runner.invoke(app, ["schedule", "set", "foodlion", "--every", "soon"]).exit_code == 1
+    assert runner.invoke(
+        app, ["schedule", "set", "wholefoods", "--every", "6h"]).exit_code == 2
+
+
+def test_schedule_run_once_needs_a_schedule(env_db):
+    result = runner.invoke(app, ["schedule", "run", "--once"])
+    assert result.exit_code == 1
+    assert "No schedules configured" in result.stdout
+
+
+def test_jobs_command_shows_history(env_db):
+    from grocery_planner import db as _db, jobs as _jobs
+
+    conn = _db.connect()
+    job_id = _jobs.start_job(conn, "foodlion")
+    _jobs.finish_job(conn, job_id, "stored 5 deals")
+
+    result = runner.invoke(app, ["jobs"])
+    assert result.exit_code == 0
+    assert "succeeded" in result.stdout
+    assert "stored 5 deals" in result.stdout
+
+
 def test_list_deals_marks_and_hides_expired(env_db, sample_data):
     """Sample deals end 2026-06-16, so they are stale by the time this runs (GFP-16)."""
     assert runner.invoke(app, ["import", str(sample_data)]).exit_code == 0
