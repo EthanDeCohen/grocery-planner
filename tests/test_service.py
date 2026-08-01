@@ -3,6 +3,35 @@ import pytest
 
 from grocery_planner import service
 
+# --------------------------------------------------------------------------- #
+# GFP-43 — service.py became the service/ package; every name a front end
+# imports must still resolve from grocery_planner.service so the split stays
+# invisible to cli.py, gui/app.py, jobs.py and scheduler.py. A future re-split
+# that silently drops an export should fail here, not in a call site.
+# --------------------------------------------------------------------------- #
+PUBLIC_API = [
+    "DEAL_TYPE_GROUPS",
+    "EXPORT_COLUMNS",
+    "UnknownDealTypeError",
+    "UnknownStoreError",
+    "available_scrapers",
+    "best_deals",
+    "count_deals",
+    "deal_categories",
+    "export_deals",
+    "fetch_deals",
+    "is_expired",
+    "run_scrape",
+    "stores_with_deals",
+    "today_iso",
+]
+
+
+def test_public_api_surface_is_unchanged():
+    for name in PUBLIC_API:
+        assert hasattr(service, name), f"grocery_planner.service lost {name!r}"
+    assert set(service.__all__) == set(PUBLIC_API)
+
 
 def test_available_scrapers_lists_known_stores():
     scrapers = service.available_scrapers()
