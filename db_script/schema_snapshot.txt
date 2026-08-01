@@ -26,6 +26,17 @@ TABLE customers
   weight_kg: REAL
   weight_unit: TEXT
 
+TABLE deal_food_match
+  confidence: REAL
+  created_at: TEXT NOT NULL DEFAULT datetime('now')
+  food_id: INTEGER
+  id: INTEGER PK
+  item_name: TEXT NOT NULL
+  match_source: TEXT NOT NULL DEFAULT 'auto'
+  method: TEXT NOT NULL
+  store: TEXT NOT NULL
+  updated_at: TEXT NOT NULL DEFAULT datetime('now')
+
 TABLE deals
   deal_description: TEXT
   deal_type: TEXT
