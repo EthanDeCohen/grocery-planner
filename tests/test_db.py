@@ -685,3 +685,50 @@ def test_a_database_genuinely_behind_is_migrated_not_baselined(tmp_path):
     modes = {r["mode"] for r in conn.execute("SELECT mode FROM schema_version")}
     assert modes == {db.EXECUTED}
     conn.close()
+
+
+def test_a_partially_migrated_database_adopts_then_catches_up(tmp_path):
+    """The realistic upgrade path, and the one that actually broke.
+
+    A real database is neither empty nor fully current -- it stopped wherever
+    its owner last upgraded. Scripts it already satisfies must be baselined;
+    the rest must still execute. Treating adoption as all-or-nothing made a
+    real database raise "duplicate column name: dollar_price" on open.
+    """
+    import sqlite3
+
+    from grocery_planner import db
+
+    p = tmp_path / "partial.sqlite3"
+    conn = db.connect(p)
+    conn.close()
+
+    # Rewind to a mid-history state: keep 0002's dollar_price, drop everything
+    # 0003 onward introduced, and remove the tracking table entirely.
+    raw = sqlite3.connect(p)
+    for stmt in (
+        "DROP TABLE IF EXISTS schema_version",
+        "DROP TABLE IF EXISTS price_history",
+        "DROP TABLE IF EXISTS food_nutrients",
+        "DROP TABLE IF EXISTS foods",
+        "DROP TABLE IF EXISTS customers",
+        "ALTER TABLE deals DROP COLUMN postal_code",
+    ):
+        raw.execute(stmt)
+    raw.execute("INSERT INTO deals(store, item_name) VALUES ('foodlion', 'Chicken Breast')")
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(p)  # must not raise
+    modes = {r["seq"]: r["mode"] for r in
+             conn.execute("SELECT seq, mode FROM schema_version")}
+    # Already satisfied through 0002; the rest had to run.
+    assert modes[1] == db.BASELINED
+    assert modes[2] == db.BASELINED
+    assert modes[3] == db.EXECUTED
+    # And it actually caught up, without losing data.
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(deals)")}
+    assert "postal_code" in cols and "dollar_price" in cols
+    assert conn.execute("SELECT COUNT(*) FROM foods").fetchone()[0] > 0
+    assert conn.execute("SELECT COUNT(*) FROM deals").fetchone()[0] == 1
+    conn.close()

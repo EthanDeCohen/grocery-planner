@@ -207,21 +207,43 @@ def _schema_fingerprint(conn: sqlite3.Connection) -> dict[str, set[str]]:
     }
 
 
-def _reference_fingerprint() -> dict[str, set[str]]:
-    """The schema every script on disk produces, built in memory.
+def _covers(expected: dict[str, set[str]], actual: dict[str, set[str]]) -> bool:
+    """True when ``actual`` contains every table and column ``expected`` has.
 
-    Used only when adopting a database that predates schema_version, to tell
-    "already fully migrated" from "genuinely behind" without inspecting error
-    text. Cheap, and it happens at most once per database.
+    Deliberately a subset test, not equality: a database part-way through
+    history legitimately has more than an early script produced.
     """
-    ref = sqlite3.connect(":memory:")
+    return all(
+        table in actual and columns <= actual[table]
+        for table, columns in expected.items()
+    )
+
+
+def _adoption_point(conn: sqlite3.Connection, scripts: list[tuple[int, str, Path]]) -> int:
+    """Highest sequence number this database already satisfies.
+
+    Replays the scripts against an in-memory reference one at a time and
+    compares after each. A real database is usually neither empty nor fully
+    current -- it stopped wherever its owner last upgraded -- so the answer
+    is a point in the sequence, not a yes/no. Everything up to that point is
+    baselined; everything after it is executed for real.
+
+    Migrations are cumulative, so once the reference outgrows the database it
+    never fits again: the first miss ends the search.
+    """
+    actual = _schema_fingerprint(conn)
+    reference = sqlite3.connect(":memory:")
+    highest = 0
     try:
-        for _seq, _key, path in _all_scripts():
+        for seq, _key, path in scripts:
             for stmt in _split_statements(path.read_text(encoding="utf-8")):
-                ref.execute(stmt)
-        return _schema_fingerprint(ref)
+                reference.execute(stmt)
+            if not _covers(_schema_fingerprint(reference), actual):
+                break
+            highest = seq
+        return highest
     finally:
-        ref.close()
+        reference.close()
 
 
 def _ensure_schema_version_table(conn: sqlite3.Connection) -> None:
@@ -321,20 +343,25 @@ def _apply_pending_migrations(conn: sqlite3.Connection) -> None:
         }
 
     # One-time adoption. A database with application tables but no
-    # schema_version rows predates this tracking. If it already matches what
-    # the scripts produce, replaying them would collide, so record them as
-    # baselined instead. If it does NOT match, it is genuinely behind and the
-    # pending scripts are executed normally -- which is what repairs it.
-    if not recorded and _schema_fingerprint(conn):
-        if _schema_fingerprint(conn) == _reference_fingerprint():
-            for seq, jira_key, path in scripts:
-                _record(seq, jira_key, path, _checksum(path), BASELINED)
-            return
+    # schema_version rows predates this tracking, and stopped wherever its
+    # owner last upgraded -- so work out how far it actually got. Scripts up
+    # to that point are recorded without being replayed (replaying them would
+    # collide); everything after it is executed normally, which is what brings
+    # the database up to date.
+    adopt_through = (
+        _adoption_point(conn, scripts)
+        if not recorded and _schema_fingerprint(conn)
+        else 0
+    )
 
     for seq, jira_key, path in scripts:
         if seq in recorded:
             continue
         checksum = _checksum(path)
+
+        if seq <= adopt_through:
+            _record(seq, jira_key, path, checksum, BASELINED)
+            continue
         statements = _split_statements(path.read_text(encoding="utf-8"))
 
         conn.execute("BEGIN")
