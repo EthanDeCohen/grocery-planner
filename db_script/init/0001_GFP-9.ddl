@@ -39,8 +39,35 @@ CREATE TABLE IF NOT EXISTS deals (
     loyalty_required TEXT,
     notes            TEXT,
     source           TEXT,
-    imported_at      TEXT
+    imported_at      TEXT,
+    postal_code      TEXT  -- GFP-54: ZIP code the deal was scraped for
 );
+
+-- GFP-39: append-only price-history log. `deals` above stays a
+-- current-snapshot table (a scrape replaces its prior rows); this is where
+-- price movement over time actually lives. One row per (store, postal_code,
+-- item_name, deal_type) per calendar day -- see
+-- db_script/migration/0004_GFP-39.ddl for the upsert grain this depends on.
+CREATE TABLE IF NOT EXISTS price_history (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    store            TEXT NOT NULL,
+    postal_code      TEXT NOT NULL,
+    item_name        TEXT NOT NULL,
+    sub_category     TEXT,
+    deal_type        TEXT,
+    regular_price    REAL,
+    sale_price       REAL,
+    dollar_price     REAL,
+    discount_amount  REAL,
+    discount_percent REAL,
+    source           TEXT,
+    captured_at      TEXT NOT NULL,
+    updated_at       TEXT,
+    UNIQUE(store, postal_code, item_name, deal_type, captured_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_history_lookup
+    ON price_history(store, postal_code, item_name, captured_at);
 
 CREATE TABLE IF NOT EXISTS prices (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,

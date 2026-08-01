@@ -44,6 +44,150 @@ def test_run_scrape_unknown_store_raises(conn):
         service.run_scrape("wholefoods", conn=conn)
 
 
+# --------------------------------------------------------------------------- #
+# GFP-54/GFP-55/GFP-39 — postal_code on deals, scoped DELETE, price_history
+# --------------------------------------------------------------------------- #
+def _fake_row(item_name, sale_price):
+    return {
+        "item_name": item_name, "sub_category": "Produce", "deal_type": "Weekly Ad",
+        "deal_description": "", "regular_price": None, "sale_price": sale_price,
+        "dollar_price": sale_price, "discount_amount": None, "discount_percent": None,
+        "valid_from": "2026-06-08", "valid_to": "2026-06-16", "loyalty_required": "Y",
+        "notes": "",
+    }
+
+
+class _FakeScraperModule:
+    """Stands in for a grocery_planner.scrapers.<store> module so run_scrape
+    can be exercised without any network access."""
+
+    DEFAULT_POSTAL_CODE = "27401"
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def scrape(self, postal_code=None, include_coupons=True):
+        return list(self.rows), {"id": 1}, {"total": len(self.rows)}
+
+
+@pytest.fixture
+def fake_scraper(monkeypatch):
+    """Registers a fake 'foodlion' scraper for the duration of one test."""
+    from grocery_planner.service import ingest
+
+    fake = _FakeScraperModule([])
+    monkeypatch.setitem(ingest.SCRAPERS, "foodlion", fake)
+    return fake
+
+
+def test_run_scrape_writes_the_postal_code_it_scraped_for(conn, fake_scraper):
+    fake_scraper.rows = [_fake_row("Apples", 0.99)]
+    service.run_scrape("foodlion", postal_code="27409", conn=conn)
+
+    row = conn.execute(
+        "SELECT postal_code FROM deals WHERE store='foodlion' AND item_name='Apples'"
+    ).fetchone()
+    assert row["postal_code"] == "27409"
+
+
+def test_run_scrape_delete_is_scoped_by_postal_code(conn, fake_scraper):
+    """GFP-55 regression: scraping a second ZIP must not wipe the first ZIP's
+    rows for the same store. Before this fix the DELETE only scoped on
+    (store, source), so the second scrape below would have deleted 27401's
+    'Apples' row along with replacing anything at 27409."""
+    fake_scraper.rows = [_fake_row("Apples", 0.99)]
+    service.run_scrape("foodlion", postal_code="27401", conn=conn)
+
+    fake_scraper.rows = [_fake_row("Bananas", 0.59)]
+    service.run_scrape("foodlion", postal_code="27409", conn=conn)
+
+    rows = conn.execute(
+        "SELECT item_name, postal_code FROM deals WHERE store='foodlion' ORDER BY postal_code"
+    ).fetchall()
+    assert [(r["item_name"], r["postal_code"]) for r in rows] == [
+        ("Apples", "27401"),
+        ("Bananas", "27409"),
+    ]
+
+
+def test_run_scrape_rescoped_delete_still_replaces_same_zip(conn, fake_scraper):
+    """A second scrape of the *same* ZIP still replaces that ZIP's prior rows
+    (the pre-existing "replace on rescrape" behavior must survive the new
+    postal_code scoping)."""
+    fake_scraper.rows = [_fake_row("Apples", 0.99)]
+    service.run_scrape("foodlion", postal_code="27401", conn=conn)
+
+    fake_scraper.rows = [_fake_row("Bananas", 0.59)]
+    service.run_scrape("foodlion", postal_code="27401", conn=conn)
+
+    rows = conn.execute(
+        "SELECT item_name FROM deals WHERE store='foodlion' AND postal_code='27401'"
+    ).fetchall()
+    assert [r["item_name"] for r in rows] == ["Bananas"]
+
+
+def test_run_scrape_appends_to_price_history(conn, fake_scraper):
+    fake_scraper.rows = [_fake_row("Apples", 0.99)]
+    service.run_scrape("foodlion", postal_code="27401", conn=conn)
+
+    row = conn.execute(
+        "SELECT store, postal_code, item_name, sale_price FROM price_history "
+        "WHERE store='foodlion' AND item_name='Apples'"
+    ).fetchone()
+    assert row["postal_code"] == "27401"
+    assert row["sale_price"] == 0.99
+
+
+def test_price_history_survives_the_deal_being_replaced(conn, fake_scraper):
+    """GFP-39: `deals` stays a current-snapshot table, so a rescrape drops
+    'Apples' from it -- but its price_history row must not disappear."""
+    fake_scraper.rows = [_fake_row("Apples", 0.99)]
+    service.run_scrape("foodlion", postal_code="27401", conn=conn)
+
+    fake_scraper.rows = [_fake_row("Bananas", 0.59)]
+    service.run_scrape("foodlion", postal_code="27401", conn=conn)
+
+    assert conn.execute(
+        "SELECT item_name FROM deals WHERE store='foodlion' AND item_name='Apples'"
+    ).fetchone() is None
+    assert conn.execute(
+        "SELECT item_name FROM price_history WHERE store='foodlion' AND item_name='Apples'"
+    ).fetchone() is not None
+
+
+def test_run_scrape_twice_same_day_does_not_fabricate_price_movement(conn, fake_scraper):
+    """Re-running a scrape twice in one day must update today's price_history
+    row in place, not append a second data point for the same day."""
+    fake_scraper.rows = [_fake_row("Apples", 0.99)]
+    service.run_scrape("foodlion", postal_code="27401", conn=conn)
+
+    fake_scraper.rows = [_fake_row("Apples", 1.29)]
+    service.run_scrape("foodlion", postal_code="27401", conn=conn)
+
+    rows = conn.execute(
+        "SELECT sale_price FROM price_history WHERE store='foodlion' AND item_name='Apples'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["sale_price"] == 1.29
+
+
+def test_price_history_keeps_zips_separate(conn, fake_scraper):
+    fake_scraper.rows = [_fake_row("Apples", 0.99)]
+    service.run_scrape("foodlion", postal_code="27401", conn=conn)
+
+    fake_scraper.rows = [_fake_row("Apples", 1.49)]
+    service.run_scrape("foodlion", postal_code="27409", conn=conn)
+
+    rows = conn.execute(
+        "SELECT postal_code, sale_price FROM price_history "
+        "WHERE store='foodlion' AND item_name='Apples' ORDER BY postal_code"
+    ).fetchall()
+    assert [(r["postal_code"], r["sale_price"]) for r in rows] == [
+        ("27401", 0.99),
+        ("27409", 1.49),
+    ]
+
+
 def test_fetch_deals_empty_and_filtered(conn):
     assert service.fetch_deals(conn=conn) == []
 
