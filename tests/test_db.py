@@ -14,7 +14,8 @@ from grocery_planner.stores import STORES
 # Every table/column the current baseline (db_script/init/0001_GFP-9.ddl)
 # must produce in a brand-new database.
 EXPECTED_TABLES = {"stores", "deals", "prices", "profile", "formulas",
-                    "scraping_jobs", "schedules", "foods", "food_nutrients"}
+                    "scraping_jobs", "schedules", "foods", "food_nutrients",
+                    "customers"}
 EXPECTED_FOOD_COLUMNS = {
     "id", "name", "category", "source", "source_ref", "created_at", "updated_at",
 }
@@ -35,6 +36,11 @@ EXPECTED_PRICE_COLUMNS = {
     "id", "store", "item_name", "brand", "category", "regular_price",
     "sale_price", "unit", "price_per_unit", "on_sale", "loyalty_required",
     "date_collected", "notes", "source", "imported_at",
+}
+EXPECTED_CUSTOMER_COLUMNS = {
+    "id", "name", "weight_kg", "weight_unit", "height_cm", "age", "sex",
+    "activity_level", "goal", "protein_factor", "notes", "created_at",
+    "updated_at", "deleted_at",
 }
 
 SCRIPT_NAME_RE = re.compile(r"^\d{4}_GFP-\d+\.(ddl|dml)$")
@@ -109,8 +115,47 @@ def test_fresh_db_built_from_scripts_has_every_expected_table_and_column(tmp_pat
         nutrient_cols = {r["name"] for r in
                           conn.execute("PRAGMA table_info(food_nutrients)")}
         assert EXPECTED_FOOD_NUTRIENT_COLUMNS <= nutrient_cols
+
+        customer_cols = {r["name"] for r in
+                          conn.execute("PRAGMA table_info(customers)")}
+        assert EXPECTED_CUSTOMER_COLUMNS <= customer_cols
     finally:
         conn.close()
+
+
+def test_customers_table_created_with_default_protein_factor(conn):
+    names = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "customers" in names
+
+    conn.execute("INSERT INTO customers(name) VALUES ('Jamie')")
+    conn.commit()
+    row = conn.execute(
+        "SELECT protein_factor, deleted_at FROM customers WHERE name='Jamie'"
+    ).fetchone()
+    assert row["protein_factor"] == 1.6
+    assert row["deleted_at"] is None
+
+
+def test_customers_migration_adds_table_to_old_db(tmp_path):
+    # Simulate a DB created before GFP-28's customers table existed.
+    import sqlite3
+
+    from grocery_planner import db
+
+    p = tmp_path / "old.sqlite3"
+    raw = sqlite3.connect(p)
+    raw.execute("CREATE TABLE deals (id INTEGER PRIMARY KEY, store TEXT, sale_price REAL)")
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(p)  # runs init_db -> applies db_script/migration/0008_GFP-28.ddl
+    names = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "customers" in names
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(customers)")}
+    assert EXPECTED_CUSTOMER_COLUMNS <= cols
+    conn.close()
 
 
 def test_foods_and_food_nutrients_created(conn):

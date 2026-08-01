@@ -177,10 +177,11 @@ uploads them as artifacts.
 ## Data model
 
 One SQLite file (`gplan db-path`) with tables `stores`, `deals`, `prices`,
-`profile`, `formulas`, `scraping_jobs`, `schedules`, `foods`, and
-`food_nutrients`. The `deals` and `prices` schemas mirror the CSV layout
-below, so imports are loss-less. Schema is defined in `db_script/` (see
-`db_script/README.md`), not inline in `grocery_planner/db.py`.
+`profile`, `formulas`, `scraping_jobs`, `schedules`, `foods`,
+`food_nutrients`, and `customers`. The `deals` and `prices` schemas mirror
+the CSV layout below, so imports are loss-less. Schema is defined in
+`db_script/` (see `db_script/README.md`), not inline in
+`grocery_planner/db.py`.
 
 ### Nutrition foundation (`foods` / `food_nutrients`)
 
@@ -198,6 +199,24 @@ curated rows. Deal-to-food matching is GFP-25. Read access is in
 `grocery_planner/nutrition.py` (`list_foods`, `get_food`, `list_categories`,
 `protein_per_100g`), following the same "module functions + optional `conn`"
 convention as `grocery_planner/service/deals.py`.
+
+### Customer domain (`customers`)
+
+The client record (GFP-28) -- the first hand-entered, irreplaceable data in
+a database that until now held only re-scrapable/re-importable rows. Weight
+is split into `weight_kg` (canonical, always kilograms -- the only column
+the protein-target math, GFP-29, may read) and `weight_unit` (`'kg'`/`'lb'`
+exactly as the customer entered it, display-only), because the existing
+`weight * 1.6` protein formula is grams-per-*kilogram*: a pound value stored
+un-converted would be a 2.2x dosing error. Conversion happens once, at
+`Customer.create()`/`CustomerRepository.save()` time
+(`grocery_planner/customers.py`); `weight_unit` is never read for math.
+Deletion is soft (`deleted_at`), not destructive, since a customer record
+can't be re-derived from anything else in the database if a delete is
+accidental -- `CustomerRepository.restore()` undoes it. Per GFP-28, this
+ticket is schema + domain object only: protein-target calculation (GFP-29),
+per-client protein preferences (GFP-30), `postal_code` (GFP-57), and
+GUI/CLI wiring (GFP-33) are separate tickets.
 
 ### `data/<store>/deals.csv`
 
