@@ -48,7 +48,11 @@ TABLE deals
   discount_amount: REAL
   discount_percent: REAL
   dollar_price: REAL
+  flipp_coupon_id: INTEGER
+  flipp_flyer_id: INTEGER
+  flipp_item_id: INTEGER
   id: INTEGER PK
+  image_url: TEXT
   imported_at: TEXT
   item_name: TEXT
   loyalty_required: TEXT
@@ -57,6 +61,7 @@ TABLE deals
   regular_price: REAL
   sale_price: REAL
   source: TEXT
+  source_url: TEXT
   store: TEXT NOT NULL
   sub_category: TEXT
   valid_from: TEXT

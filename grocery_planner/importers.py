@@ -19,6 +19,11 @@ DEAL_COLUMNS = [
     "item_name", "sub_category", "deal_type", "deal_description",
     "regular_price", "sale_price", "dollar_price", "discount_amount", "discount_percent",
     "valid_from", "valid_to", "loyalty_required", "notes",
+    # GFP-15: per-deal "View ad" link + ad-clipping image, plus the Flipp
+    # identifiers promoted out of `notes` into queryable columns. Always
+    # NULL for csv-import rows (the legacy Excel export never had these) --
+    # only grocery_planner/scrapers/base.py's row builders populate them.
+    "source_url", "image_url", "flipp_flyer_id", "flipp_item_id", "flipp_coupon_id",
 ]
 PRICE_COLUMNS = [
     "item_name", "brand", "category", "regular_price", "sale_price", "unit",
@@ -27,6 +32,7 @@ PRICE_COLUMNS = [
 NUMERIC = {
     "regular_price", "sale_price", "dollar_price", "discount_amount",
     "discount_percent", "price_per_unit",
+    "flipp_flyer_id", "flipp_item_id", "flipp_coupon_id",
 }
 
 
