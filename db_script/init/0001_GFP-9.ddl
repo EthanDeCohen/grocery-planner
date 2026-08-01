@@ -120,5 +120,33 @@ CREATE TABLE IF NOT EXISTS schedules (
     updated_at TEXT
 );
 
+-- Nutrition foundation (GFP-23): folded into the baseline so a fresh
+-- database gets these tables immediately, in addition to
+-- db_script/migration/0005_GFP-23.ddl which carries them to pre-existing
+-- databases. See that file for the full rationale (nutrients are DATA, not
+-- columns; category is data-driven, not a UI enum).
+CREATE TABLE IF NOT EXISTS foods (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    category   TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    source_ref TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(source, source_ref)
+);
+
+CREATE TABLE IF NOT EXISTS food_nutrients (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    food_id         INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,
+    nutrient        TEXT NOT NULL,
+    amount_per_100g REAL,
+    unit            TEXT,
+    UNIQUE(food_id, nutrient)
+);
+
 CREATE INDEX IF NOT EXISTS idx_deals_store ON deals(store);
 CREATE INDEX IF NOT EXISTS idx_prices_store ON prices(store);
+CREATE INDEX IF NOT EXISTS idx_foods_category ON foods(category);
+CREATE INDEX IF NOT EXISTS idx_food_nutrients_food_id ON food_nutrients(food_id);
+CREATE INDEX IF NOT EXISTS idx_food_nutrients_nutrient ON food_nutrients(nutrient);

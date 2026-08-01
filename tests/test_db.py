@@ -14,7 +14,17 @@ from grocery_planner.stores import STORES
 # Every table/column the current baseline (db_script/init/0001_GFP-9.ddl)
 # must produce in a brand-new database.
 EXPECTED_TABLES = {"stores", "deals", "prices", "profile", "formulas",
-                    "scraping_jobs", "schedules"}
+                    "scraping_jobs", "schedules", "foods", "food_nutrients"}
+EXPECTED_FOOD_COLUMNS = {
+    "id", "name", "category", "source", "source_ref", "created_at", "updated_at",
+}
+EXPECTED_FOOD_NUTRIENT_COLUMNS = {
+    "id", "food_id", "nutrient", "amount_per_100g", "unit",
+}
+# The v1 client UI offers exactly these six categories as checkboxes
+# (GFP-23); the list itself is data-driven (grocery_planner.nutrition.
+# list_categories), this constant just pins what the seed catalog covers.
+CURATED_CATEGORIES = {"beef", "pork", "chicken", "fish", "tofu", "whey"}
 EXPECTED_DEAL_COLUMNS = {
     "id", "store", "item_name", "sub_category", "deal_type",
     "deal_description", "regular_price", "sale_price", "dollar_price",
@@ -92,8 +102,74 @@ def test_fresh_db_built_from_scripts_has_every_expected_table_and_column(tmp_pat
         schedule_cols = {r["name"] for r in conn.execute("PRAGMA table_info(schedules)")}
         assert {"store", "kind", "expression", "enabled", "created_at",
                 "updated_at"} <= schedule_cols
+
+        food_cols = {r["name"] for r in conn.execute("PRAGMA table_info(foods)")}
+        assert EXPECTED_FOOD_COLUMNS <= food_cols
+
+        nutrient_cols = {r["name"] for r in
+                          conn.execute("PRAGMA table_info(food_nutrients)")}
+        assert EXPECTED_FOOD_NUTRIENT_COLUMNS <= nutrient_cols
     finally:
         conn.close()
+
+
+def test_foods_and_food_nutrients_created(conn):
+    names = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"foods", "food_nutrients"} <= names
+
+
+def test_curated_catalog_seeded_across_all_six_categories(conn):
+    rows = conn.execute(
+        "SELECT category FROM foods WHERE source='curated'"
+    ).fetchall()
+    assert 20 <= len(rows) <= 40
+    assert {r["category"] for r in rows} == CURATED_CATEGORIES
+
+
+def test_curated_foods_have_protein_values(conn):
+    # Every curated food should carry a protein fact -- that's the whole
+    # point of food_nutrients existing (cost-per-gram-of-protein downstream).
+    missing = conn.execute(
+        "SELECT f.name FROM foods f "
+        "LEFT JOIN food_nutrients n ON n.food_id = f.id AND n.nutrient = 'protein' "
+        "WHERE f.source = 'curated' AND n.id IS NULL"
+    ).fetchall()
+    assert missing == []
+
+    proteins = conn.execute(
+        "SELECT n.amount_per_100g FROM food_nutrients n "
+        "JOIN foods f ON f.id = n.food_id "
+        "WHERE f.source = 'curated' AND n.nutrient = 'protein'"
+    ).fetchall()
+    assert all(0 < r["amount_per_100g"] <= 100 for r in proteins)
+
+
+def test_seed_catalog_is_idempotent_across_repeated_connects(tmp_path):
+    # connect() re-applies every migration script (including the DML seed)
+    # on every call; re-running must not duplicate curated rows.
+    from grocery_planner import db
+
+    p = tmp_path / "seed.sqlite3"
+    conn1 = db.connect(p)
+    before = conn1.execute(
+        "SELECT COUNT(*) FROM foods WHERE source='curated'"
+    ).fetchone()[0]
+    conn1.close()
+
+    conn2 = db.connect(p)  # second full init_db pass against the same file
+    try:
+        after = conn2.execute(
+            "SELECT COUNT(*) FROM foods WHERE source='curated'"
+        ).fetchone()[0]
+        assert after == before
+
+        nutrient_count = conn2.execute(
+            "SELECT COUNT(*) FROM food_nutrients"
+        ).fetchone()[0]
+        assert nutrient_count == before  # one protein row per curated food
+    finally:
+        conn2.close()
 
 
 def test_dollar_price_migration_is_idempotent_on_a_current_db(conn):
