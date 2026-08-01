@@ -37,6 +37,9 @@ include = ["grocery_planner*", "db_script*"]
 # db_script/README.md and grocery_planner/db.py for how they're located
 # and executed at runtime.
 db_script = ["init/*.ddl", "init/*.dml", "migration/*.ddl", "migration/*.dml", "README.md"]
+# GFP-24: the vendored USDA FoodData Central protein snapshot grocery_planner/usda.py
+# reads at runtime (no network dependency) -- must ship as installed package data too.
+grocery_planner = ["data/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

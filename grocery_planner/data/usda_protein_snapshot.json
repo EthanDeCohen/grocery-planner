@@ -1,0 +1,80 @@
+{
+  "source": "USDA FoodData Central (fdc.nal.usda.gov)",
+  "license": "U.S. Public Domain (17 U.S.C. 105); USDA FDC data is not copyrighted",
+  "fetched": "2026-08-01",
+  "note": "Focused snapshot: protein-per-100g for the raw/generic foods GFP-23 curated, not the full USDA database. Each entry supersedes its curated counterpart via curated_ref (see grocery_planner/usda.py). Fetched via api.nal.usda.gov/fdc/v1/foods/search (dataType=SR Legacy,Foundation) using the public DEMO_KEY, whose shared rate limit (10 req/hr, ~2hr Retry-After once exhausted) was hit before every GFP-23 curated item could be matched -- see the GFP-24 PR description for exactly which curated_ref values still have no entry here. Extend this file with a real (free, personal) FDC API key from api.data.gov/signup; the remaining entries are still source='curated' and untouched by gplan nutrition sync until then.",
+  "foods": [
+    {
+      "curated_ref": "beef-ground-80-20",
+      "fdc_id": 174036,
+      "name": "Ground beef, 80/20, raw",
+      "category": "beef",
+      "protein_per_100g": 17.2,
+      "description": "Beef, ground, 80% lean meat / 20% fat, raw",
+      "data_type": "SR Legacy"
+    },
+    {
+      "curated_ref": "beef-ground-93-7",
+      "fdc_id": 173110,
+      "name": "Ground beef, 93/7, raw",
+      "category": "beef",
+      "protein_per_100g": 20.8,
+      "description": "Beef, ground, 93% lean meat / 7% fat, raw",
+      "data_type": "SR Legacy"
+    },
+    {
+      "curated_ref": "beef-sirloin-steak",
+      "fdc_id": 168728,
+      "name": "Beef sirloin steak, raw",
+      "category": "beef",
+      "protein_per_100g": 19.9,
+      "description": "Beef, top sirloin, steak, separable lean and fat, trimmed to 1/8\" fat, choice, raw",
+      "data_type": "SR Legacy"
+    },
+    {
+      "curated_ref": "beef-ribeye-steak",
+      "fdc_id": 2646172,
+      "name": "Beef ribeye steak, raw",
+      "category": "beef",
+      "protein_per_100g": 18.7,
+      "description": "Beef, ribeye, steak, boneless, choice, raw",
+      "data_type": "Foundation"
+    },
+    {
+      "curated_ref": "beef-chuck-roast",
+      "fdc_id": 2646174,
+      "name": "Beef chuck roast, raw",
+      "category": "beef",
+      "protein_per_100g": 18.4,
+      "description": "Beef, chuck, roast, boneless, choice, raw",
+      "data_type": "Foundation"
+    },
+    {
+      "curated_ref": "beef-brisket",
+      "fdc_id": 168607,
+      "name": "Beef brisket, raw",
+      "category": "beef",
+      "protein_per_100g": 20.7,
+      "description": "Beef, brisket, whole, separable lean only, all grades, raw",
+      "data_type": "SR Legacy"
+    },
+    {
+      "curated_ref": "chicken-breast-skinless-boneless",
+      "fdc_id": 171077,
+      "name": "Chicken breast, skinless/boneless, raw",
+      "category": "chicken",
+      "protein_per_100g": 22.5,
+      "description": "Chicken, broiler or fryers, breast, skinless, boneless, meat only, raw",
+      "data_type": "SR Legacy"
+    },
+    {
+      "curated_ref": "chicken-ground",
+      "fdc_id": 171116,
+      "name": "Ground chicken, raw",
+      "category": "chicken",
+      "protein_per_100g": 17.4,
+      "description": "Chicken, ground, raw",
+      "data_type": "SR Legacy"
+    }
+  ]
+}

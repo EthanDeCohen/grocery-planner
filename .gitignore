@@ -1,5 +1,11 @@
 # Local grocery price/deal data (never commit personal shopping data)
 data/
+# ...but not grocery_planner/data/ (GFP-24): that's vendored, committed
+# package data (the USDA snapshot grocery_planner/usda.py reads at
+# runtime), not a personal data/ folder -- the bare "data/" pattern above
+# would otherwise match it at any depth and silently drop it.
+!grocery_planner/data/
+!grocery_planner/data/**
 
 # Your personal working copy of the planner workbook
 GroceryPlanner.xlsm

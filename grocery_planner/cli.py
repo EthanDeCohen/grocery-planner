@@ -17,7 +17,7 @@ from pathlib import Path
 
 import typer
 
-from . import __version__, db, formulas, importers, jobs, scheduler, service
+from . import __version__, db, formulas, importers, jobs, scheduler, service, usda
 from .scrapers import SCRAPERS
 from .stores import BY_KEY
 
@@ -25,9 +25,11 @@ app = typer.Typer(add_completion=False, help="Local-first grocery price/deal pla
 formula_app = typer.Typer(help="Manage user-defined formulas.")
 profile_app = typer.Typer(help="Set/get profile values (used as formula variables).")
 schedule_app = typer.Typer(help="Automatic background refresh (GFP-7).")
+nutrition_app = typer.Typer(help="Nutrition catalog (protein data): GFP-23/GFP-24.")
 app.add_typer(formula_app, name="formula")
 app.add_typer(profile_app, name="profile")
 app.add_typer(schedule_app, name="schedule")
+app.add_typer(nutrition_app, name="nutrition")
 
 
 class Kind(str, Enum):
@@ -479,6 +481,42 @@ def profile_list() -> None:
     """List profile values."""
     rows = db.connect().execute("SELECT key, value FROM profile ORDER BY key").fetchall()
     _print_table(["key", "value"], [(r["key"], r["value"]) for r in rows])
+
+
+@nutrition_app.command("sync")
+def nutrition_sync() -> None:
+    """Load the vendored USDA FoodData Central snapshot (GFP-24).
+
+    Supersedes curated (hand-entered, source='curated') protein figures with
+    sourced USDA ones (source='usda', source_ref=FDC id) wherever the
+    snapshot has a match; leaves anything else curated and clearly marked.
+    Reads a small vendored JSON file, not the network -- offline-capable by
+    design. Safe to run more than once.
+    """
+    try:
+        result = usda.sync()
+    except usda.SnapshotError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    typer.secho(
+        f"USDA sync: {result.superseded} curated food(s) superseded with sourced "
+        f"data, {result.already_usda} already sourced, {result.inserted} new "
+        f"USDA food(s) added.",
+        fg=typer.colors.GREEN,
+    )
+    counts = usda.source_counts()
+    typer.echo(
+        f"foods table now: {counts.get('usda', 0)} sourced (usda), "
+        f"{counts.get('curated', 0)} estimated (curated)."
+    )
+    if result.unmatched_curated:
+        typer.secho(
+            f"{len(result.unmatched_curated)} curated food(s) have no USDA match "
+            f"in the vendored snapshot and remain estimates: "
+            f"{', '.join(result.unmatched_curated)}.",
+            fg=typer.colors.YELLOW,
+        )
 
 
 def _is_iso_date(value: str) -> bool:
