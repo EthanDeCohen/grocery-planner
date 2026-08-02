@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from .. import db, importers
+from .. import db, importers, records
 from ..scrapers import SCRAPERS
 
 
@@ -252,9 +252,15 @@ def run_scrape(
     day updates today's history row rather than fabricating a second data
     point.
 
-    Returns ``{"flyer": ..., "stats": ..., "postal_code": ...}``. Raises
-    :class:`UnknownStoreError` for an unregistered store. When called from a
-    worker thread, pass no ``conn`` so a thread-local connection is opened.
+    Each scrape also folds its rows into ``price_records`` (GFP-75), the
+    durable all-time low/high per item. That happens on write rather than
+    being queried out of history later, because GFP-42's retention will prune
+    the history and a record derived from pruned rows cannot be recomputed.
+
+    Returns ``{"flyer": ..., "stats": ..., "postal_code": ..., "records": ...}``.
+    Raises :class:`UnknownStoreError` for an unregistered store. When called
+    from a worker thread, pass no ``conn`` so a thread-local connection is
+    opened.
     """
     scraper = SCRAPERS.get(store_key)
     if scraper is None:
@@ -282,5 +288,15 @@ def run_scrape(
         [{**r, "store": store_key, "postal_code": zip_code, "source": "scrape",
           "captured_at": today, "updated_at": now} for r in rows],
     )
+    # GFP-75: fold this scrape into the durable records BEFORE committing, so
+    # records and the history rows they summarise land in the same
+    # transaction. Done after the guards, so a scrape refused as broken never
+    # moves a record -- a record low set by a bad parse would be permanent.
+    record_summary = records.update_records(own, store_key, zip_code, rows, today)
     own.commit()
-    return {"flyer": flyer, "stats": stats, "postal_code": zip_code}
+    return {
+        "flyer": flyer,
+        "stats": stats,
+        "postal_code": zip_code,
+        "records": record_summary,
+    }

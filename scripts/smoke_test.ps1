@@ -158,6 +158,11 @@ try {
         Test-Case "scrape guard (needs setup)" @("scrape", "wholefoods")                    2 "session cookie"
     }
     Test-Case "jobs (empty)"             @("jobs")                                         0
+    # GFP-75: durable records. A fresh throwaway DB has no price_history at
+    # all, so the empty case must say so rather than print a bare table --
+    # and --backfill on nothing must be a clean no-op, not a crash.
+    Test-Case "records (empty)"          @("records")                                      0 "No records yet"
+    Test-Case "records --backfill (none)" @("records", "--backfill")                       0 "Backfilled 0"
     Test-Case "schedule remove"          @("schedule", "remove", "foodlion")               0 "Removed"
     Test-Case "schedule remove (gone)"   @("schedule", "remove", "foodlion")               1
     Test-Case "schedule run (none set)"  @("schedule", "run", "--once")                    1 "No schedules"

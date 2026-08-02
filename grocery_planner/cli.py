@@ -5,6 +5,7 @@ Local-first commands over the SQLite store:
     gplan scrape STORE      fetch fresh deals (Food Lion implemented)
     gplan list deals|prices query stored rows
     gplan stores            show tracked stores + row counts
+    gplan records           all-time record low/high per item (GFP-75)
     gplan db-path           print the database location
     gplan formula ...       manage user-defined formulas
     gplan profile ...       set/get profile values used by formulas
@@ -18,6 +19,7 @@ from pathlib import Path
 import typer
 
 from . import __version__, db, formulas, importers, jobs, scheduler, service, usda
+from . import records as rec
 from .scrapers import SCRAPERS
 from .stores import BY_KEY
 
@@ -337,6 +339,89 @@ def categories(
         [(name, str(service.count_deals(store=store, category=name, conn=conn)))
          for name in names],
     )
+
+
+@app.command()
+def records(
+    store: str = typer.Option(None, "--store", "-s", help="Filter by store key."),
+    postal_code: str = typer.Option(None, "--postal-code", "-z", help="Filter by ZIP."),
+    search: str = typer.Option(None, "--search", "-q", help="Match item name."),
+    by: str = typer.Option("cpgp", "--by", help="Rank by 'cpgp' or 'price'."),
+    limit: int = typer.Option(20, "--limit", "-n", help="Max rows (0 = all)."),
+    window: int = typer.Option(
+        0, "--window", "-w", help="Also show a rolling low/high over N days (e.g. 30)."
+    ),
+    backfill: bool = typer.Option(
+        False, "--backfill", help="Seed records from existing price history, then show them."
+    ),
+) -> None:
+    """All-time record low/high per item (GFP-75).
+
+    Records are kept on write and never pruned, so they answer "is this
+    genuinely a good price, ever?" long after the observation behind them has
+    been retired by the retention policy.
+    """
+    conn = db.connect()
+
+    if backfill:
+        totals = rec.backfill_from_history(conn)
+        typer.echo(
+            f"Backfilled {totals['days']} store-days of history: "
+            f"{totals['created']} items created, {totals['updated']} updated."
+        )
+
+    summary = rec.count_records(conn)
+    if summary["items"] == 0:
+        typer.echo(
+            "No records yet. They accumulate as scrapes run — or seed them from "
+            "the history already captured with `gplan records --backfill`."
+        )
+        raise typer.Exit()
+
+    typer.echo(
+        f"{summary['items']} items tracked · {summary['with_cpgp']} with a $/g protein "
+        f"record · {summary['established']} with 3+ observations"
+    )
+
+    try:
+        found = rec.fetch_records(
+            conn, store=store, postal_code=postal_code, search=search,
+            order_by=by, limit=limit,
+        )
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}")
+        raise typer.Exit(code=2)
+
+    headers = ["item", "store", "low", "on", "high", "$/g low", "obs"]
+    if window:
+        headers += [f"{window}d low", f"{window}d high"]
+
+    rows = []
+    for r in found:
+        # A record built on one or two sightings is today's price wearing a
+        # hat; mark it rather than let it read as authoritative.
+        marker = " ?" if r.is_thin else ""
+        row = [
+            r.item_name[:44],
+            r.store,
+            _money(r.record_low_price),
+            (r.record_low_price_at or "-"),
+            _money(r.record_high_price),
+            f"{r.record_low_cpgp:.4f}" if r.record_low_cpgp is not None else "-",
+            f"{r.observations}{marker}",
+        ]
+        if window:
+            w = rec.rolling_window(conn, r.store, r.postal_code, r.item_name, days=window)
+            row += [_money(w.low_price), _money(w.high_price)]
+        rows.append(tuple(row))
+
+    _print_table(headers, rows)
+    if any(r.is_thin for r in found):
+        typer.echo("? = fewer than 3 observations, so the 'record' is barely a record yet.")
+
+
+def _money(value: float | None) -> str:
+    return f"${value:.2f}" if value is not None else "-"
 
 
 @app.command()
