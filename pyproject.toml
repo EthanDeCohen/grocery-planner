@@ -39,7 +39,10 @@ include = ["grocery_planner*", "db_script*"]
 db_script = ["init/*.ddl", "init/*.dml", "migration/*.ddl", "migration/*.dml", "README.md"]
 # GFP-24: the vendored USDA FoodData Central protein snapshot grocery_planner/usda.py
 # reads at runtime (no network dependency) -- must ship as installed package data too.
-grocery_planner = ["data/*.json"]
+# GFP-47: the default client avatar the GUI shows when a client has no photo.
+# Package data for the same reason as the USDA snapshot -- it is read at
+# runtime and must survive an install, not just exist in a source checkout.
+grocery_planner = ["data/*.json", "assets/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

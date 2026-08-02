@@ -17,6 +17,8 @@ datas = (
     collect_data_files("tzdata")
     + collect_data_files("db_script")
     + collect_data_files("grocery_planner", includes=["data/*.json"])
+    # GFP-47's default client avatar. GUI-only, so it is not in gplan.spec.
+    + collect_data_files("grocery_planner", includes=["assets/*.png"])
 )
 
 a = Analysis(
