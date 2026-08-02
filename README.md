@@ -41,9 +41,8 @@ your own savings formulas.
    one ("Ben & Jerry's Ice Cream"), so `gplan best` reports how many deals it had
    to leave out rather than implying the ad was short.
    Deals whose `valid_to` has passed are marked `(expired)` rather than silently
-   shown as current; `--hide-expired` (or the GUI's "Hide expired" box) drops them.
-   Every filter is defined once in `service.fetch_deals()`, so a CLI flag and the
-   matching GUI control always mean the same thing.
+   shown as current; `--hide-expired` drops them. Every filter is defined once in
+   `service.fetch_deals()`, so both front ends always mean the same thing by one.
 
 ### Stores
 
@@ -134,21 +133,28 @@ always agree.
 .venv\Scripts\python -m grocery_planner.gui          # or: gplan-gui
 ```
 
-Three panes:
+The window's centre is where the client roster and client detail page are being
+built. Everything else lives on the menu bar:
 
-- **Deals** — pick a store, run a scrape, and filter with the same controls the
-  CLI exposes as flags (category, type, search, on-sale, loyalty, hide expired,
-  valid-on). **Export…** writes what you are looking at to CSV.
-- **Formulas** — write expressions scored against each deal (`price`,
-  `unit_price`, `quantity`, `saved_percent`) plus your profile values. A formula
-  that cannot evaluate is refused at Save, not at use. "Rank deals with this"
-  applies it to the current selection.
-- **Schedule** — set an automatic refresh cadence per store and see recent runs.
-  The cadence is stored in the database; `gplan schedule run` keeps it ticking.
+- **Data ▸ Run scrape…** — pick a store and pull its fresh weekly ad on a
+  background thread. The run is tracked, so it shows up in `gplan jobs` like a
+  scheduled one. **Force** overrides the guards that reject an empty or
+  implausibly small scrape.
+- **Settings ▸ Formulas…** — write expressions scored against each deal
+  (`price`, `unit_price`, `quantity`, `saved_percent`) plus your profile values,
+  and the client's daily protein target (`weight_kg`, `protein_factor`). A
+  formula that cannot evaluate is refused at Save, not at use. "Rank deals with
+  this" previews the deals it scores highest.
+- **Settings ▸ Automatic refresh…** — set a cadence per store and see recent
+  runs. The cadence is stored in the database; `gplan schedule run` keeps it
+  ticking.
+- **File ▸ Export deals…** — write the current (non-expired) deals to CSV.
 
-Export is CSV rather than `.xlsx` on purpose: retiring the Excel runtime removed
-the pandas/openpyxl dependency, and a CSV opens in Excel, Sheets and Numbers
-without bringing it back.
+Deal browsing itself is a CLI job: `gplan list` and `gplan best` take every
+filter the retired Deals tab had as a flag, and `gplan export` narrows the CSV
+the same way. Export is CSV rather than `.xlsx` on purpose: retiring the Excel
+runtime removed the pandas/openpyxl dependency, and a CSV opens in Excel, Sheets
+and Numbers without bringing it back.
 
 ---
 
