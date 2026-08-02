@@ -85,16 +85,27 @@ behaviour regardless of what is on file (useful for GFP-49's baseline side --
 see below), or a non-empty list to narrow to specific categories for a
 one-off "what if" query without touching the stored preference rows.
 
+Baseline vs preference-constrained (GFP-49)
+--------------------------------------------
+:func:`compare_bills` solves the bill twice -- once unconstrained, once inside
+the client's stated preferences -- so a nutritionist can see what a preference
+actually costs per day. The baseline is a genuine unconstrained optimum (the
+same allocation run over every priced deal), not the cheapest single item.
+
+**The delta's sign is not assumed**, per the ticket. It is also not the whole
+story, which is the trap this comparison has to avoid: because a constrained
+pool can fail to *cover* the target, a preference-narrowed bill can come out
+CHEAPER simply by buying less protein. Comparing two totals that stand for
+different numbers of grams is not a price comparison at all. So
+:attr:`BillComparison.is_comparable` reports whether both sides actually
+reached the target, and :attr:`BillComparison.caveat` gives a UI the words for
+the case where they did not -- the figures are still shown, but never as a
+clean "your preference costs $0.88 more" when the truth is "your preference
+could not feed them."
+
 What is explicitly out of scope
 ---------------------------------
-GFP-49's baseline-vs-constrained comparison (an unconstrained bill next to a
-preference-narrowed one, to show a nutritionist what a preference costs) is a
-different ticket and is not built here. Nothing about this module makes it
-hard: ``daily_bill_for(customer, categories=[], conn=conn)`` already produces
-the unconstrained baseline, and ``daily_bill_for(customer, conn=conn)``
-(``categories=None``) already produces the preference-constrained plan, so
-GFP-49 is two calls into this module, not a rewrite of it. Also out of scope:
-any GUI/CLI wiring (another agent owns that), and anything about how many
+Any GUI/CLI wiring (GFP-52 owns the panel), and anything about how many
 DISTINCT packages of one item a client would physically need to buy -- this
 module prices grams continuously (see point 1 above and the amortisation
 note), matching the "amortised daily figure" framing rather than a literal
@@ -201,6 +212,80 @@ class Bill:
         reach. Never negative -- floored at 0 so float rounding on a
         just-barely-complete bill can't report a tiny negative shortfall."""
         return max(0.0, self.target_grams - self.covered_grams)
+
+
+@dataclass(frozen=True)
+class BillComparison:
+    """An unconstrained baseline beside a preference-constrained plan (GFP-49).
+
+    Both halves are full :class:`Bill` objects, so a caller can show the
+    itemised lines of either. ``constrained`` is the plan built inside the
+    client's stated preferences; when they have stated none it is the same
+    unconstrained solve as ``baseline`` (see :attr:`is_constrained`).
+    """
+
+    baseline: Bill
+    constrained: Bill
+
+    @property
+    def delta_cost(self) -> float:
+        """``constrained - baseline``: what the preference costs per day.
+
+        Deliberately signed and deliberately not clamped. A preference is not
+        always more expensive -- it can land on exactly the same deals (0.00)
+        or, when it narrows the field to a pool that cannot cover the target,
+        come out negative. A negative delta is a red flag to explain, not a
+        saving to celebrate: see :attr:`is_comparable`.
+        """
+        return self.constrained.total_cost - self.baseline.total_cost
+
+    @property
+    def is_constrained(self) -> bool:
+        """Whether a preference filter actually applied at all.
+
+        ``False`` for a client with no stated preferences -- the two bills are
+        then the same solve, and a UI should show one figure rather than a
+        meaningless "+$0.00 for your preferences".
+        """
+        return bool(self.constrained.categories)
+
+    @property
+    def is_comparable(self) -> bool:
+        """Whether the two totals stand for the same amount of protein.
+
+        Both bills must have reached the target. If either fell short, the
+        totals price different numbers of grams and their difference is not a
+        cost-of-preference figure -- see :attr:`caveat`.
+        """
+        return self.baseline.is_complete and self.constrained.is_complete
+
+    @property
+    def caveat(self) -> str:
+        """Why the delta cannot be read at face value, or ``""`` when it can.
+
+        The specific failure this exists to prevent: a preference that starves
+        the bill produces a *lower* total, which reads as "this preference is
+        cheaper" when it actually means "this preference cannot feed them
+        from what is on offer this week."
+        """
+        if self.is_comparable:
+            return ""
+        if not self.constrained.is_complete and self.baseline.is_complete:
+            return (
+                f"These are not comparable: the preferred categories cover only "
+                f"{self.constrained.covered_grams:.0f} g of the "
+                f"{self.constrained.target_grams:.0f} g target from what is on "
+                f"offer, so the lower figure buys less protein rather than the "
+                f"same protein for less."
+            )
+        if not self.baseline.is_complete:
+            return (
+                f"These are not comparable: even unconstrained, the current deals "
+                f"cover only {self.baseline.covered_grams:.0f} g of the "
+                f"{self.baseline.target_grams:.0f} g target. Run a scrape "
+                f"(Data ▸ Run scrape…) for fresher prices."
+            )
+        return "These are not comparable: at least one plan fell short of the target."
 
 
 def _category_lookup(
@@ -343,6 +428,46 @@ def daily_bill_for(
     if target is None:
         return None
     return _build_bill(customer.id, target.daily_grams, categories, own)
+
+
+def compare_bills_for(
+    customer: Customer,
+    categories: Iterable[str] | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> BillComparison | None:
+    """Unconstrained baseline beside the preference-constrained plan (GFP-49).
+
+    ``None`` on the same terms as :func:`daily_bill_for` -- no ``weight_kg``,
+    no target, no bill, and therefore nothing to compare.
+
+    The baseline is a genuine unconstrained optimum: the same allocation run
+    over every priced deal (``categories=[]``), not the cheapest single item.
+    ``categories`` overrides the constrained side only, so a caller can price
+    a hypothetical preference set without writing it to the client's record --
+    which is exactly what GFP-52's checkboxes need, since a checkbox is a
+    filter and should not require a save step.
+    """
+    own = conn or db.connect()
+    target = targets.protein_target_for(customer, conn=own)
+    if target is None:
+        return None
+    return BillComparison(
+        baseline=_build_bill(customer.id, target.daily_grams, [], own),
+        constrained=_build_bill(customer.id, target.daily_grams, categories, own),
+    )
+
+
+def compare_bills(
+    customer_id: int,
+    categories: Iterable[str] | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> BillComparison | None:
+    """:func:`compare_bills_for` for a customer looked up by id."""
+    own = conn or db.connect()
+    customer = CustomerRepository.get(customer_id, conn=own)
+    if customer is None:
+        return None
+    return compare_bills_for(customer, categories=categories, conn=own)
 
 
 def daily_bill(
