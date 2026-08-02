@@ -227,6 +227,129 @@ def test_cheapest_source_is_preferred_over_a_more_expensive_one(conn):
 # Store-agnostic: the same data under two different store keys produces the
 # same totals -- store is a label carried through, never a code branch.
 # --------------------------------------------------------------------------- #
+def test_a_bill_is_not_just_the_cheapest_single_item(conn):
+    """The baseline must be a real optimum over the pool, not one lucky row."""
+    cheap_id = _insert_food(conn, "Cheap Protein", "chicken", 25.0)
+    next_id = _insert_food(conn, "Next Protein", "beef", 25.0)
+    # The cheapest deal's own package holds ~113 g of protein; the target is
+    # 160 g, so a correct bill must move on to the second-cheapest for the
+    # remainder rather than stopping at one line.
+    _insert_priced_deal(conn, "foodlion", "Cheap Chicken 16 oz", 2.00, cheap_id)
+    _insert_priced_deal(conn, "foodlion", "Next Beef 16 oz", 4.00, next_id)
+    conn.commit()
+
+    customer = _make_customer(conn, weight_kg=100.0)  # 160 g/day
+    result = bill.daily_bill_for(customer, conn=conn)
+
+    assert [line.item_name for line in result.lines] == [
+        "Cheap Chicken 16 oz", "Next Beef 16 oz",
+    ]
+    assert result.is_complete is True
+
+
+# --------------------------------------------------------------------------- #
+# GFP-49 — baseline vs preference-constrained, side by side
+# --------------------------------------------------------------------------- #
+def test_comparison_prices_what_a_preference_costs(conn):
+    cheap_id = _insert_food(conn, "Cheap Beef", "beef", 25.0)
+    pricey_id = _insert_food(conn, "Pricey Chicken", "chicken", 25.0)
+    _insert_priced_deal(conn, "foodlion", "Cheap Beef 16 oz", 2.00, cheap_id)
+    _insert_priced_deal(conn, "foodlion", "Pricey Chicken 16 oz", 8.00, pricey_id)
+    conn.commit()
+
+    customer = _make_customer(conn, weight_kg=50.0, save=True)   # 80 g/day
+    result = bill.compare_bills(customer.id, categories=["chicken"], conn=conn)
+
+    assert result is not None
+    # Baseline takes the cheaper beef; the preference forces the pricier chicken.
+    assert [line.item_name for line in result.baseline.lines] == ["Cheap Beef 16 oz"]
+    assert [line.item_name for line in result.constrained.lines] == ["Pricey Chicken 16 oz"]
+    assert result.delta_cost > 0
+    assert result.is_constrained is True
+    assert result.is_comparable is True
+    assert result.caveat == ""
+
+
+def test_a_preference_that_costs_nothing_extra_has_a_zero_delta(conn):
+    """A preference landing on the same deals is not a penalty. Do not assume a sign."""
+    food_id = _insert_food(conn, "Test Chicken", "chicken", 25.0)
+    _insert_priced_deal(conn, "foodlion", "Chicken Breast 16 oz", 5.00, food_id)
+    conn.commit()
+
+    customer = _make_customer(conn, weight_kg=50.0, save=True)
+    result = bill.compare_bills(customer.id, categories=["chicken"], conn=conn)
+
+    assert result.delta_cost == pytest.approx(0.0)
+    assert result.is_comparable is True
+
+
+def test_no_stated_preference_is_not_reported_as_a_constrained_plan(conn):
+    food_id = _insert_food(conn, "Test Chicken", "chicken", 25.0)
+    _insert_priced_deal(conn, "foodlion", "Chicken Breast 16 oz", 5.00, food_id)
+    conn.commit()
+
+    customer = _make_customer(conn, weight_kg=50.0, save=True)
+    result = bill.compare_bills(customer.id, conn=conn)   # nothing on file
+
+    assert result.is_constrained is False       # so a UI shows one figure, not "+$0.00"
+    assert result.delta_cost == pytest.approx(0.0)
+    assert result.constrained.categories == []
+
+
+def test_a_starving_preference_is_cheaper_but_flagged_as_not_comparable(conn):
+    """The trap: a preference that cannot feed the client produces a LOWER total.
+
+    Read naively that says "this preference saves money", when it actually
+    means "this preference buys less protein". The delta stays negative and
+    honest; is_comparable/caveat are what stop a UI presenting it as a saving.
+    """
+    beef_id = _insert_food(conn, "Test Beef", "beef", 25.0)
+    tofu_id = _insert_food(conn, "Test Tofu", "tofu", 8.0)
+    _insert_priced_deal(conn, "foodlion", "Beef Roast 16 oz", 4.00, beef_id)
+    # One small tofu package: far too little protein to cover the target alone.
+    _insert_priced_deal(conn, "foodlion", "Tofu Block 4 oz", 2.00, tofu_id)
+    conn.commit()
+
+    customer = _make_customer(conn, weight_kg=60.0, save=True)   # 96 g/day
+    result = bill.compare_bills(customer.id, categories=["tofu"], conn=conn)
+
+    assert result.baseline.is_complete is True
+    assert result.constrained.is_complete is False
+    assert result.delta_cost < 0                  # cheaper, but only because it is short
+    assert result.is_comparable is False
+    assert "buys less protein" in result.caveat
+
+
+def test_an_incomplete_baseline_says_the_deals_are_thin_not_the_preference(conn):
+    """When even unconstrained falls short, the caveat must not blame the preference."""
+    tofu_id = _insert_food(conn, "Test Tofu", "tofu", 8.0)
+    _insert_priced_deal(conn, "foodlion", "Tofu Block 4 oz", 2.00, tofu_id)
+    conn.commit()
+
+    customer = _make_customer(conn, weight_kg=60.0, save=True)
+    result = bill.compare_bills(customer.id, categories=["tofu"], conn=conn)
+
+    assert result.baseline.is_complete is False
+    assert result.is_comparable is False
+    assert "even unconstrained" in result.caveat
+
+
+def test_comparison_is_none_without_a_weight(conn):
+    assert bill.compare_bills_for(Customer.create("No Weight"), conn=conn) is None
+
+
+def test_comparison_categories_do_not_touch_stored_preferences(conn):
+    """GFP-52's checkboxes are a filter, so they must not need a save step."""
+    food_id = _insert_food(conn, "Test Chicken", "chicken", 25.0)
+    _insert_priced_deal(conn, "foodlion", "Chicken Breast 16 oz", 5.00, food_id)
+    conn.commit()
+
+    customer = _make_customer(conn, weight_kg=50.0, save=True)
+    bill.compare_bills(customer.id, categories=["chicken"], conn=conn)
+
+    assert preferences.list_preferences(customer.id, conn=conn) == []
+
+
 @pytest.mark.parametrize("store", ["foodlion", "harristeeter", "wholefoods"])
 def test_result_does_not_depend_on_which_store_the_deal_came_from(conn, store):
     food_id = _insert_food(conn, "Test Chicken", "chicken", 25.0)
