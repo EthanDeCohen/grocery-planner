@@ -1,0 +1,31 @@
+# Normalise line endings in the repository (GFP-98).
+#
+# Development happens on Windows with core.autocrlf=true and there was no
+# .gitattributes, so a file authored with LF was committed and checked back out
+# with CRLF. For db_script/ that was not cosmetic: grocery_planner/db.py hashes
+# each script to detect a migration edited after it was applied, and the
+# LF -> CRLF round trip changed the hash. The result was a hard refusal to open
+# the database ("a previously-applied migration was edited after the fact"),
+# triggered by nothing more than writing a migration and then committing it.
+#
+# db.py's checksum is now line-ending independent, which is the real fix. This
+# file stops the churn at source as well, so the working tree matches what is
+# committed and diffs stay clean.
+* text=auto
+
+# SQL schema scripts: always LF in the working tree. These are hashed, and are
+# only ever read by Python, never by a Windows tool that needs CRLF.
+*.ddl text eol=lf
+*.dml text eol=lf
+
+# PowerShell is the one place CRLF genuinely matters -- older Windows
+# PowerShell hosts can mis-parse an LF-only script.
+*.ps1 text eol=crlf
+
+# Binary-ish assets git should not touch.
+*.png binary
+*.jpg binary
+*.ico binary
+*.sqlite3 binary
+*.xlsm binary
+*.xlsx binary

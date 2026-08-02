@@ -132,6 +132,30 @@ def _all_scripts() -> list[tuple[int, str, Path]]:
 
 
 def _checksum(path: Path) -> str:
+    """Content hash of a script, INDEPENDENT of line endings (GFP-98).
+
+    Hashing raw bytes looked right and was a real bug. This repo is developed
+    on Windows with ``core.autocrlf=true`` and had no ``.gitattributes``, so a
+    script is authored with LF, applied locally (recording the LF hash), then
+    committed and checked back out with CRLF -- at which point its hash no
+    longer matches and :func:`_apply_pending_migrations` refuses to open the
+    database at all, reporting a "previously-applied migration was edited
+    after the fact" that never happened.
+
+    That is a hard failure on a developer's real database, triggered by the
+    ordinary sequence of writing a migration and then committing it. Newlines
+    are not content for these purposes, so they are normalised out.
+
+    :func:`_legacy_checksum` still recognises databases whose rows were
+    recorded under the old byte-exact scheme -- see its use in
+    ``_apply_pending_migrations``.
+    """
+    raw = path.read_bytes()
+    return hashlib.sha256(raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).hexdigest()
+
+
+def _legacy_checksum(path: Path) -> str:
+    """The pre-GFP-98 byte-exact hash, for recognising already-recorded rows."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -313,6 +337,10 @@ def _apply_pending_migrations(conn: sqlite3.Connection) -> None:
             "the table may have been edited by hand."
         )
 
+    # Rows recorded under the pre-GFP-98 byte-exact checksum, to be rewritten
+    # with the line-ending-independent one once verification finishes.
+    rehash: list[tuple[str, int]] = []
+
     # Refuse to run if a recorded script's checksum (or filename) changed,
     # or if the file it refers to has disappeared entirely -- history was
     # edited after being applied.
@@ -325,6 +353,15 @@ def _apply_pending_migrations(conn: sqlite3.Connection) -> None:
             )
         jira_key, path = scripts_by_seq[seq]
         checksum = _checksum(path)
+        if row["filename"] == path.name and row["checksum"] == _legacy_checksum(path):
+            # Recorded under the pre-GFP-98 byte-exact scheme. The script is
+            # unchanged; only the hashing rule moved. Heal the row rather than
+            # accusing the developer of editing history. Deferred to after this
+            # loop and committed on its own: writing here would open an
+            # implicit transaction that the migration loop's explicit BEGIN
+            # then collides with.
+            rehash.append((checksum, seq))
+            continue
         if row["filename"] != path.name or row["checksum"] != checksum:
             raise SchemaVersionError(
                 f"db_script/{path.name} (seq {seq}) does not match what "
@@ -335,6 +372,16 @@ def _apply_pending_migrations(conn: sqlite3.Connection) -> None:
                 "refusing to continue rather than silently re-applying a "
                 "changed script."
             )
+
+    # Applied only after every recorded row has been verified, so a database
+    # that IS genuinely inconsistent raises without having been written to.
+    if rehash:
+        conn.executemany("UPDATE schema_version SET checksum=? WHERE seq=?", rehash)
+        conn.commit()
+        for checksum, seq in rehash:
+            # sqlite3.Row is read-only, so replace the entry rather than
+            # mutating it -- later code only reads filename/checksum.
+            recorded[seq] = {**dict(recorded[seq]), "checksum": checksum}
 
     def _record(seq: int, jira_key: str, path: Path, checksum: str, mode: str) -> None:
         conn.execute(
