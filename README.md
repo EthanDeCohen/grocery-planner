@@ -90,6 +90,7 @@ gplan best [-s STORE] [-c CATEGORY] [-q SEARCH] [-u oz|"fl oz"|each]
 gplan export FILE.csv [-s STORE] [-c CATEGORY] [-q SEARCH]
 gplan stores                      tracked stores + row counts
 gplan db-path                     print the SQLite database path
+gplan credentials                 which credentials are set up, and where
 gplan schedule set STORE --every 6h | --cron "0 6 * * *"
 gplan schedule list | remove STORE
 gplan schedule run [--once]       background refresh (Ctrl-C to stop)
@@ -212,6 +213,37 @@ user-data dir (`gplan db-path`), so replacing the binary never touches it.
 PyInstaller cannot cross-compile: a macOS `.app` has to be built on macOS. CI
 builds and smoke-tests both the Windows and macOS binaries on every push and
 uploads them as artifacts.
+
+---
+
+## Credentials
+
+Two stores need a credential before they can be scraped: Harris Teeter via the
+Kroger API (`client_id`/`client_secret` from developer.kroger.com) and Whole
+Foods (a hand-minted session cookie). Both live as files in your user-data dir
+next to the database — **never in the repo or beside the executable**: a file
+next to the binary is destroyed by the next update, and a file in the repo is
+one `git add -f` away from being published forever, which a later delete commit
+does not undo.
+
+```powershell
+gplan credentials                 # what is configured, and which file it reads
+```
+
+That command prints presence and location only, never a value — it is meant to
+be safe to run while someone is looking over your shoulder, and to be the thing
+you ask a remote user to paste when their scrape will not start.
+
+Credential lookup goes through one seam (`grocery_planner/credentials.py`), so
+where secrets come from is a single decision rather than a habit repeated per
+scraper. Today there is exactly one provider — local files. A hosted token
+broker is **deliberately not built**: there is one operator, so it would be
+infrastructure with no user. It is scaffolded for, because the reasons it will
+eventually be needed are already true — an OAuth secret compiled into a
+PyInstaller binary is recoverable with `strings`, one abuser gets the key
+revoked for everybody, and Kroger's 10,000 calls/day ceiling is *per
+credential*, so a shared key means every install draws down one pool. When that
+day comes it is a new provider class and a config value, not a rewrite.
 
 ---
 

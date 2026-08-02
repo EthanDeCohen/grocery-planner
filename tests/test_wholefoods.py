@@ -125,8 +125,26 @@ def test_load_session_reads_cookie_and_optional_minted_at(tmp_path):
 
 
 def test_session_path_lives_in_the_user_data_dir(monkeypatch, tmp_path):
-    monkeypatch.setattr(wf, "data_dir", lambda: tmp_path)
+    """Unchanged intent; GFP-97 moved the mechanism behind the credential seam.
+
+    This used to patch ``wf.data_dir``. wholefoods.py no longer resolves the
+    path itself -- it asks ``credentials.LocalFileProvider`` -- so the patch
+    now goes where the resolution actually happens. If that indirection ever
+    breaks, this test fails, which is the point of keeping it.
+    """
+    from grocery_planner import credentials
+
+    monkeypatch.setattr(credentials, "data_dir", lambda: tmp_path)
     assert wf.session_path() == tmp_path / "wholefoods_session.json"
+
+
+def test_session_path_honours_its_environment_override(monkeypatch, tmp_path):
+    """GFP-97 gave Whole Foods the same override Kroger already had."""
+    from grocery_planner import credentials
+
+    target = tmp_path / "elsewhere.json"
+    monkeypatch.setenv(credentials.WHOLEFOODS.env_var, str(target))
+    assert wf.session_path() == target
 
 
 # --------------------------------------------------------------------------- #

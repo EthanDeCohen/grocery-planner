@@ -254,8 +254,7 @@ from typing import Any, Iterable
 
 import httpx
 
-from .. import db, matching
-from ..paths import data_dir
+from .. import credentials, db, matching
 from . import base
 
 STORE_KEY = "wholefoods"
@@ -272,7 +271,9 @@ BASE_URL = "https://www.wholefoodsmarket.com"
 SEARCH_HTML_PATH = "/grocery/search"
 SEARCH_DATA_PATH = "/_next/data/{build_id}/grocery/search.json"
 
-SESSION_FILENAME = "wholefoods_session.json"
+# From the GFP-97 credential registry, not restated, so the filename cannot
+# drift from what the seam looks at.
+SESSION_FILENAME = credentials.WHOLEFOODS.filename
 
 # One search per existing protein category (GFP-23/GFP-30 vocabulary) -- see
 # the "Scope of search" section above for why these six and not an attempt to
@@ -338,8 +339,13 @@ class Session:
 
 
 def session_path() -> Path:
-    """Where the human-minted cookie config lives (next to the database)."""
-    return data_dir() / SESSION_FILENAME
+    """Where the human-minted cookie config lives (next to the database).
+
+    Resolved through the GFP-97 credential seam rather than computed here, so
+    there is one definition of where this credential comes from. Still a
+    function on this module because callers and tests already use it.
+    """
+    return credentials.LocalFileProvider().path(credentials.WHOLEFOODS)
 
 
 def readiness(session_file: Path | None = None) -> tuple[bool, str]:
