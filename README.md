@@ -133,8 +133,24 @@ always agree.
 .venv\Scripts\python -m grocery_planner.gui          # or: gplan-gui
 ```
 
-The window's centre is where the client roster and client detail page are being
-built. Everything else lives on the menu bar:
+The main view is the **client roster** on the left and **price trends** on the
+right.
+
+- **Roster** — searchable and keyboard-navigable: type to filter, Down to step
+  into the list, Enter to open a client (or the only match, straight from the
+  search box). Each row shows the client's daily protein target beside the
+  weight it was derived from, in the unit it was entered in. A client with no
+  weight on file says so rather than showing a target computed from a guess.
+  **Add client…** takes a name, an optional weight with an explicit unit, and
+  the protein factor.
+- **Trends** — the cheapest $/g protein each store offered per day. The minimum,
+  not an average: a nutritionist buys the best available option, so that is the
+  figure that reaches the shopping list. Below two days of history there is no
+  chart — the pane says which of "nothing scraped yet" and "come back tomorrow"
+  it is, and still lists the latest known price per store.
+
+Selecting a client opens their detail page; `Alt+Left` or **← Clients** goes
+back. Everything else lives on the menu bar:
 
 - **Data ▸ Run scrape…** — pick a store and pull its fresh weekly ad on a
   background thread. The run is tracked, so it shows up in `gplan jobs` like a

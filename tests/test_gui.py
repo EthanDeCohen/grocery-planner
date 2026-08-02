@@ -69,13 +69,6 @@ def test_the_deal_browsing_table_is_gone(window):
     assert not hasattr(gui_app, "DEAL_HEADERS")
 
 
-def test_the_empty_centre_says_what_it_is_and_where_the_controls_went(window):
-    text = window.placeholder_label.text()
-    assert "client roster" in text
-    for pointer in ("Run scrape", "Formulas", "Automatic refresh", "Export deals"):
-        assert pointer in text
-
-
 def test_every_retired_control_is_reachable_from_the_menu_bar(window):
     """The GFP-35 acceptance criterion, asserted directly."""
     titles = [a.text().replace("&", "") for a in window.menuBar().actions()]
@@ -319,3 +312,324 @@ def test_export_cancelled_writes_nothing(window, tmp_path, monkeypatch):
     )
     window.on_export()
     assert list(tmp_path.glob("*.csv")) == []
+
+
+# --------------------------------------------------------------------------- #
+# GFP-36 — client roster, price trends, and navigation between them
+# --------------------------------------------------------------------------- #
+def _add(name, weight=None, unit=None, **kwargs):
+    from grocery_planner import db
+    from grocery_planner.customers import Customer, CustomerRepository
+
+    return CustomerRepository.save(
+        Customer.create(name, weight=weight, weight_unit=unit, **kwargs),
+        conn=db.connect(),
+    )
+
+
+def test_the_centre_is_the_roster_and_the_trends_pane(window):
+    assert window.stack.currentWidget() is window.split
+    assert window.split.widget(0) is window.roster
+    assert window.split.widget(1) is window.trends
+
+
+def test_empty_roster_explains_itself(window):
+    assert _entries(window.roster.client_list) == []
+    assert "No clients yet" in window.roster.client_list.item(0).text()
+
+
+def test_roster_lists_clients_with_their_protein_target(window):
+    _add("Ana Ruiz", 62.0, "kg")
+    window.roster.reload()
+    assert _entries(window.roster.client_list) == ["Ana Ruiz — 99 g/day  (62 kg)"]
+
+
+def test_roster_shows_the_weight_in_the_unit_it_was_entered_in(window):
+    """GFP-28's rule reaches the screen: never silently redisplay lb as kg."""
+    _add("Ben Okafor", 195.0, "lb")
+    window.roster.reload()
+    assert "(195 lb)" in _entries(window.roster.client_list)[0]
+
+
+def test_a_client_with_no_weight_gets_no_invented_target(window):
+    _add("Dev Patel")
+    window.roster.reload()
+    assert _entries(window.roster.client_list) == ["Dev Patel — weight not on file"]
+
+
+def test_roster_search_filters(window):
+    _add("Ana Ruiz", 62.0, "kg")
+    _add("Ben Okafor", 88.0, "kg")
+
+    window.roster.search_edit.setText("ruiz")
+    assert len(_entries(window.roster.client_list)) == 1
+
+    window.roster.search_edit.setText("zzz")
+    assert _entries(window.roster.client_list) == []
+    assert "No clients match" in window.roster.client_list.item(0).text()
+
+
+# --- keyboard navigation (the ticket names it) ----------------------------- #
+def _press(widget, key):
+    """Deliver a real key press to a widget, event filters and all."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.sendEvent(widget, QKeyEvent(QEvent.KeyPress, key, Qt.NoModifier))
+
+
+def test_down_from_the_search_field_steps_into_the_list(window):
+    _add("Ana Ruiz", 62.0, "kg")
+    _add("Ben Okafor", 88.0, "kg")
+    roster = window.roster
+    roster.reload()
+    roster.search_edit.setFocus()
+
+    _press(roster.search_edit, Qt.Key_Down)
+    # focusWidget(), not hasFocus(): the window is never activated offscreen,
+    # so nothing holds real keyboard focus — but the window still tracks which
+    # widget it would go to, which is what this behaviour is about.
+    assert window.focusWidget() is roster.client_list
+    assert roster.client_list.currentRow() == 0
+
+
+def test_down_in_an_empty_roster_leaves_the_search_field_alone(window):
+    """Nothing to step into, so the key stays with the field it was typed in."""
+    roster = window.roster
+    roster.search_edit.setFocus()
+
+    _press(roster.search_edit, Qt.Key_Down)
+    assert window.focusWidget() is roster.search_edit
+
+
+def test_enter_on_a_single_match_opens_that_client(window):
+    ana = _add("Ana Ruiz", 62.0, "kg")
+    _add("Ben Okafor", 88.0, "kg")
+
+    window.roster.search_edit.setText("ruiz")
+    window.roster.on_search_entered()
+
+    assert window.stack.currentWidget() is window.client_page
+    assert window.client_page.customer_id == ana.id
+
+
+def test_enter_on_several_matches_moves_into_the_list_instead_of_guessing(window):
+    _add("Ana Ruiz", 62.0, "kg")
+    _add("Ana Silva", 70.0, "kg")
+
+    window.roster.search_edit.setText("ana")
+    window.roster.on_search_entered()
+
+    assert window.stack.currentWidget() is window.split   # nothing was opened
+    assert window.focusWidget() is window.roster.client_list
+
+
+def test_the_placeholder_row_is_never_selectable(window):
+    """Enter on "No clients yet" must not emit a selection."""
+    seen = []
+    window.roster.client_selected.connect(seen.append)
+    window.roster.on_item_activated(window.roster.client_list.item(0))
+    assert seen == []
+
+
+# --- navigation ------------------------------------------------------------ #
+def test_selecting_a_client_opens_the_detail_page(window):
+    ana = _add("Ana Ruiz", 62.0, "kg")
+    window.roster.reload()
+    window.roster.client_selected.emit(ana.id)
+
+    assert window.stack.currentWidget() is window.client_page
+    assert window.client_page.name_label.text() == "Ana Ruiz"
+    assert "99 g/day" in window.client_page.target_label.text()
+
+
+def test_back_returns_to_the_roster(window):
+    ana = _add("Ana Ruiz", 62.0, "kg")
+    window.roster.reload()
+    window.show_client(ana.id)
+
+    window.client_page.back_btn.click()
+    assert window.stack.currentWidget() is window.split
+
+
+def test_opening_a_deleted_client_stays_on_the_roster(window):
+    from grocery_planner import db
+    from grocery_planner.customers import CustomerRepository
+
+    ana = _add("Ana Ruiz", 62.0, "kg")
+    CustomerRepository.delete(ana.id, conn=db.connect())
+
+    assert window.show_client(ana.id) is False
+    assert window.stack.currentWidget() is window.split
+    assert "no longer on file" in window.statusBar().currentMessage()
+
+
+def test_a_client_with_no_weight_gets_no_target_on_the_detail_page(window):
+    dev = _add("Dev Patel")
+    window.show_client(dev.id)
+    assert "no protein target" in window.client_page.target_label.text()
+
+
+# --- add client ------------------------------------------------------------ #
+def test_add_client_dialog_saves_and_converts_pounds(window):
+    from grocery_planner.customers import KG_PER_LB
+    from grocery_planner.gui.roster import AddClientDialog
+
+    dialog = AddClientDialog(window)
+    dialog.name_edit.setText("Ben Okafor")
+    dialog.weight_spin.setValue(195.0)
+    dialog.unit_box.setCurrentIndex(dialog.unit_box.findData("lb"))
+    dialog.on_save()
+
+    assert dialog.saved is not None
+    # Stored canonical, echoed back in the unit that was typed.
+    assert dialog.saved.weight_kg == pytest.approx(195.0 * KG_PER_LB)
+    assert dialog.saved.weight_display == pytest.approx(195.0)
+
+
+def test_add_client_requires_a_name(window):
+    from grocery_planner.gui.roster import AddClientDialog
+
+    dialog = AddClientDialog(window)
+    dialog.weight_spin.setValue(70.0)
+    dialog.on_save()
+
+    assert dialog.saved is None
+    assert "needs a name" in dialog.message.text()
+
+
+def test_a_weightless_client_can_still_be_added(window):
+    """Intake often starts before a weigh-in; the roster must not require one."""
+    from grocery_planner.gui.roster import AddClientDialog
+
+    dialog = AddClientDialog(window)
+    dialog.name_edit.setText("Dev Patel")
+    dialog.on_save()                      # weight left at 0 == "not on file"
+
+    assert dialog.saved.weight_kg is None
+    assert dialog.saved.weight_unit is None
+
+
+def test_adding_a_client_clears_the_search_so_they_are_visible(window, monkeypatch):
+    from PySide6.QtWidgets import QDialog
+
+    from grocery_planner.gui import roster as roster_module
+
+    _add("Ana Ruiz", 62.0, "kg")
+    window.roster.search_edit.setText("zzz")   # a filter that hides everything
+
+    def fake_exec(self):
+        self.name_edit.setText("Ben Okafor")
+        self.on_save()
+        return QDialog.Accepted
+
+    monkeypatch.setattr(roster_module.AddClientDialog, "exec", fake_exec)
+    window.roster.on_add_client()
+
+    assert window.roster.search_edit.text() == ""
+    assert len(_entries(window.roster.client_list)) == 2
+    assert "Added Ben Okafor" in window.roster.message.text()
+
+
+# --- trends ---------------------------------------------------------------- #
+def _seed_protein_history(days):
+    """One priced, protein-resolvable item per day for Food Lion."""
+    from datetime import date, timedelta
+
+    from grocery_planner import db
+
+    conn = db.connect()
+    cur = conn.execute(
+        "INSERT INTO foods(name, slug, category, source) "
+        "VALUES ('Test chicken', 'test-chicken-gui', 'chicken', 'usda')"
+    )
+    food_id = int(cur.lastrowid)
+    conn.execute(
+        "INSERT INTO food_nutrients(food_id, nutrient, amount_per_100g) "
+        "VALUES (?, 'protein', 25.0)", (food_id,)
+    )
+    conn.execute(
+        "INSERT INTO deal_food_match(store, item_name, food_id, confidence, method) "
+        "VALUES ('foodlion', 'Chicken Breast 16 oz', ?, 0.9, 'test')", (food_id,)
+    )
+    for offset in range(days):
+        conn.execute(
+            "INSERT INTO price_history"
+            "(store, postal_code, item_name, deal_type, dollar_price, source, captured_at) "
+            "VALUES ('foodlion', '27401', 'Chicken Breast 16 oz', 'Weekly Ad', ?, 'test', ?)",
+            (5.0 + offset * 0.25,
+             (date.today() - timedelta(days=offset)).isoformat()),
+        )
+    conn.commit()
+
+
+def test_trends_pane_hides_the_chart_when_there_is_nothing_to_plot(window):
+    """The ticket's second acceptance criterion."""
+    assert not window.trends.trend.is_plottable
+    assert not window.trends.chart.isVisible()
+    assert "No protein prices on record yet" in window.trends.subtitle.text()
+
+
+def test_trends_pane_plots_once_there_are_enough_days(window):
+    _seed_protein_history(days=4)
+    window.trends.reload()
+
+    assert window.trends.trend.is_plottable
+    assert window.trends.chart.isVisibleTo(window.trends)
+    assert "Lower is better" in window.trends.subtitle.text()
+    assert "foodlion" in [s.store for s in window.trends.trend.plottable]
+
+
+def test_the_latest_prices_are_listed_even_when_the_chart_cannot_be_drawn(window):
+    """Refusing to plot is not a reason to withhold the number we do have."""
+    _seed_protein_history(days=1)
+    window.trends.reload()
+
+    assert not window.trends.trend.is_plottable
+    assert "Only 1 day" in window.trends.subtitle.text()
+    assert "Food Lion" in window.trends.latest.text()
+    assert window.trends.latest.isVisible() or window.trends.latest.isVisibleTo(window.trends)
+
+
+def test_one_series_needs_no_legend_box(window):
+    _seed_protein_history(days=4)
+    window.trends.reload()
+    assert not window.trends.legend.isVisibleTo(window.trends)
+
+
+def test_series_colour_follows_the_store_not_its_rank(window):
+    """A store that becomes cheapest must not repaint itself a different colour."""
+    chart = window.trends.chart
+    before = {key: chart.colour_for(key).name()
+              for key in ("foodlion", "wholefoods", "harristeeter")}
+    assert len(set(before.values())) == 3          # distinct per store
+
+    _seed_protein_history(days=4)
+    window.trends.reload()
+    after = {key: chart.colour_for(key).name()
+             for key in ("foodlion", "wholefoods", "harristeeter")}
+    assert after == before
+
+
+def test_endpoint_labels_are_pushed_apart_when_values_nearly_coincide():
+    """Two stores a fraction of a cent apart must not print on top of each other."""
+    from grocery_planner.gui.trends import _spread
+
+    spread = _spread([100.0, 101.0, 102.0], gap=14.0, top=0.0, bottom=300.0)
+    assert all(b - a >= 14.0 - 1e-9 for a, b in zip(sorted(spread), sorted(spread)[1:]))
+
+
+def test_spread_keeps_labels_inside_the_plot(window):
+    from grocery_planner.gui.trends import _spread
+
+    spread = _spread([0.0, 1.0, 2.0], gap=20.0, top=0.0, bottom=50.0)
+    assert min(spread) >= 0.0 - 1e-9
+    assert max(spread) <= 50.0 + 1e-9
+
+
+def test_spread_preserves_input_order(window):
+    from grocery_planner.gui.trends import _spread
+
+    spread = _spread([200.0, 100.0, 150.0], gap=14.0, top=0.0, bottom=300.0)
+    assert spread[0] > spread[2] > spread[1]   # same relative order as the input

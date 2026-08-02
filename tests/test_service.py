@@ -11,6 +11,15 @@ from grocery_planner import service
 # --------------------------------------------------------------------------- #
 PUBLIC_API = [
     "DEAL_TYPE_GROUPS",
+    # GFP-36: the price-trends pane needs the numbers behind its chart from the
+    # same front-end-agnostic layer as everything else, so service.trends is
+    # re-exported here like deals/ingest rather than reached into directly.
+    "DEFAULT_WINDOW_DAYS",
+    "MIN_POINTS_TO_PLOT",
+    "ProteinTrend",
+    "StoreTrend",
+    "TrendPoint",
+    "protein_price_trend",
     "EXPORT_COLUMNS",
     # GFP-71: EmptyScrapeError/ImplausibleCollapseError (and their shared base,
     # ScrapeGuardError) were previously reachable only via service.ingest,
