@@ -13,6 +13,12 @@ nutrition and ingest:
 This module re-exports the full public API so existing call sites
 (``service.fetch_deals``, ``service.run_scrape``, ``service.UnknownStoreError``,
 ``service.DEAL_TYPE_GROUPS``, ...) keep working unchanged.
+
+GFP-71: ``ScrapeGuardError`` (and its two subclasses, ``EmptyScrapeError`` /
+``ImplausibleCollapseError``) are re-exported here too, same as
+``UnknownStoreError`` already was -- so a front end can catch
+``service.ScrapeGuardError`` without reaching into ``service.ingest``
+directly, which was the inconsistency this ticket flagged.
 """
 from __future__ import annotations
 
@@ -30,7 +36,10 @@ from .deals import (
     today_iso,
 )
 from .ingest import (
+    EmptyScrapeError,
+    ImplausibleCollapseError,
     ScraperStatus,
+    ScrapeGuardError,
     UnknownStoreError,
     all_scrapers,
     available_scrapers,
@@ -41,6 +50,9 @@ from .ingest import (
 __all__ = [
     "DEAL_TYPE_GROUPS",
     "EXPORT_COLUMNS",
+    "EmptyScrapeError",
+    "ImplausibleCollapseError",
+    "ScrapeGuardError",
     "ScraperStatus",
     "UnknownDealTypeError",
     "UnknownStoreError",

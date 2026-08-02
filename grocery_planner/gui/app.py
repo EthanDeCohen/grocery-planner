@@ -146,15 +146,21 @@ class ScrapeWorker(QObject):
     finished = Signal(dict)
     failed = Signal(str)
 
-    def __init__(self, store_key: str) -> None:
+    def __init__(self, store_key: str, force: bool = False) -> None:
         super().__init__()
         self._store_key = store_key
+        # GFP-71: threaded through so a future "force" checkbox/retry
+        # affordance in the GUI has somewhere to plug in without touching
+        # this worker again. No such control exists yet (GFP-35 owns the
+        # GUI rebuild) -- on_scrape() below always constructs this with the
+        # default, so today's behavior is unchanged.
+        self._force = force
 
     def run(self) -> None:
         try:
             # Tracked, so a GUI scrape lands in `gplan jobs` like a scheduled
             # one and an interrupted run is visible after a crash (GFP-7).
-            result = jobs.run_tracked_scrape(self._store_key)
+            result = jobs.run_tracked_scrape(self._store_key, force=self._force)
         except Exception as exc:  # surface any failure to the UI thread
             self.failed.emit(str(exc))
         else:
