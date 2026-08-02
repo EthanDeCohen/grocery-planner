@@ -17,7 +17,11 @@ Optional Smart Commit directives in the commit body: `GFP-9 #comment <text>`, `G
 
 ## Testing (as we go)
 
-Every code change ships with tests. **Verification is local and Windows-side; GitHub Actions is macOS-only and runs on demand** (GFP-94 — Actions minutes ran out on 2026-08-01 after 98 runs in one day, and re-running Windows tests on a 2x-billed runner was buying nothing over running them here).
+Every code change ships with tests.
+
+> **⏸️ TEMPORARY (GFP-94):** PR-time CI is **paused** to get through an unusually heavy development push that burned the entire 2,000-minute monthly free allowance in one day (98 runs on 2026-08-01). For now, **verification is local and Windows-side, and GitHub Actions is macOS-only and dispatched by hand.**
+>
+> The real CI is parked intact at `.github/workflows/ci-full.yml.disabled`. Restoring it is one command — `git mv .github/workflows/ci-full.yml.disabled .github/workflows/ci.yml` — tracked as **GFP-95**. Do it once merge volume returns to normal; the allowance resets monthly and is comfortably sufficient at that pace. **While the pause is on, any CI change must be made in both files** or the restore will silently roll it back.
 
 **The pre-merge gate — one command, one exit code:**
 
@@ -48,7 +52,7 @@ gh workflow run ci.yml --ref <branch>
 gh run watch $(gh run list --workflow=ci.yml -L1 --json databaseId --jq '.[0].databaseId')
 ```
 
-The accepted tradeoff: a macOS-only break is found when someone dispatches that, not at PR time.
+The accepted tradeoff, for the duration of the pause only: a macOS-only break is found when someone dispatches that, not at PR time. Restoring full CI (GFP-95) removes this tradeoff and the need for `verify.ps1` to be the gate.
 
 Add `pytest` cases under `tests/` for new logic; add a `Test-Case` line to `scripts/smoke_test.ps1` for new CLI commands. Keep unit tests network-free (scraper *parsing* is tested via pure functions, not live calls).
 

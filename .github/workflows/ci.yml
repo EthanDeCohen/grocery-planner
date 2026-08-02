@@ -1,16 +1,31 @@
-# macOS CI -- ON DEMAND ONLY (GFP-94).
+# macOS CI -- ON DEMAND ONLY. **TEMPORARY** (GFP-94; undo via GFP-95).
 #
-# Why there is no push/pull_request trigger
-# -----------------------------------------
-# This workflow used to run on `push: ["**"]` AND `pull_request`, on Windows
-# plus macOS. Measured on 2026-08-01: ~26 allowance-minutes per run (GitHub
-# bills Windows at 2x and macOS at 10x), two runs per PR commit because both
-# triggers fired, and 98 runs in a single day -- which burned the entire
-# 2,000-minute monthly free allowance in that one day and hard-blocked CI.
+# ---------------------------------------------------------------------------
+# THIS IS A COST PAUSE, NOT THE INTENDED END STATE.
 #
-# The split is by platform, not by cost alone. Development happens on Windows,
-# so everything Windows-testable is verified LOCALLY before merge, in one
-# command:
+# The real CI -- full Windows + macOS, on push and pull_request -- is parked
+# intact next to this file as `ci-full.yml.disabled`, byte-for-byte as it ran
+# on main at eb2ed92. Restoring it is one command, no reconstruction:
+#
+#     git mv .github/workflows/ci-full.yml.disabled .github/workflows/ci.yml
+#
+# Do that once the current development push winds down. The 2,000-minute
+# monthly free allowance resets every month and is comfortably sufficient at a
+# normal pace -- PR-time CI is affordable and worth having. Tracked as GFP-95.
+#
+# While this pause is in effect: if you change CI, change ci-full.yml.disabled
+# too, or the restore will silently roll your change back.
+# ---------------------------------------------------------------------------
+#
+# Why the pause was needed
+# ------------------------
+# Measured on 2026-08-01: ~26 allowance-minutes per run (GitHub bills Windows
+# at 2x and macOS at 10x), two runs per PR commit because `push: ["**"]` and
+# `pull_request` both fired, and 98 runs in a single day -- which burned the
+# entire monthly allowance in that one day and hard-blocked CI.
+#
+# The pause splits by platform. Development happens on Windows, so everything
+# Windows-testable is verified LOCALLY for the duration, in one command:
 #
 #     powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
 #
@@ -31,15 +46,16 @@
 # on macOS -- paths, filesystem case-sensitivity, timezones, subprocess or
 # shell invocation, PyInstaller spec/hidden imports, or a new dependency.
 #
-# TRADEOFF, accepted deliberately: a macOS-only break is found when someone
-# dispatches this, not at PR time. If that stops being an acceptable trade,
-# the one-line fix is to add back:
+# TRADEOFF, accepted deliberately and only for the duration of the pause: a
+# macOS-only break is found when someone dispatches this, not at PR time.
 #
-#     push:
-#       branches: [main]
-#
-# which costs ~40 allowance-minutes per merge to main and nothing per PR.
-name: CI (macOS)
+# Two ways out, in increasing order of cost:
+#   1. Add `push: branches: [main]` here -- ~40 allowance-minutes per merge to
+#      main, still nothing per PR. A middle setting if dispatch-only turns out
+#      to be too loose before the push is over.
+#   2. Restore the real thing (GFP-95, the git mv above). This is the one that
+#      should eventually happen.
+name: CI (macOS, TEMPORARY -- see GFP-95)
 
 on:
   workflow_dispatch:
