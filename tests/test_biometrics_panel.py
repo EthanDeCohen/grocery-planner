@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from grocery_planner import db  # noqa: E402
 from grocery_planner.customers import KG_PER_LB, Customer, CustomerRepository, kg_to_lb  # noqa: E402
+from grocery_planner.gui import biometrics  # noqa: E402
 from grocery_planner.gui.biometrics import BiometricsPanel  # noqa: E402
 
 
@@ -211,6 +212,50 @@ def test_a_blank_name_is_refused_rather_than_erasing_the_client(panel):
     assert "needs a name" in panel.message.text()
     assert seen == []                                     # nothing broadcast
     assert CustomerRepository.get(ana.id, conn=db.connect()).name == "Ana Ruiz"
+
+
+# --------------------------------------------------------------------------- #
+# GFP-47 (partial) — the shipped default avatar
+# --------------------------------------------------------------------------- #
+def test_the_default_avatar_ships_as_package_data():
+    """An asset missing from package-data is an asset that vanishes on install."""
+    from importlib import resources
+
+    package, name = biometrics.DEFAULT_AVATAR_RESOURCE
+    assert resources.files(package).joinpath(name).is_file()
+
+
+def test_the_default_avatar_loads_and_is_square(panel):
+    pixmap = biometrics.default_avatar_pixmap(56)
+    assert pixmap is not None
+    assert not pixmap.isNull()
+    assert pixmap.width() == pixmap.height() == 56
+
+
+def test_every_client_shows_the_default_avatar_until_photos_exist(panel):
+    ana = _add("Ana Ruiz", 62.0, "kg")
+    panel.set_client(ana.id)
+    shown = panel.avatar_label.pixmap()
+    assert shown is not None and not shown.isNull()
+    assert shown.toImage() == biometrics.default_avatar_pixmap().toImage()
+
+
+def test_a_missing_asset_degrades_to_the_initials_disc(panel, monkeypatch):
+    """A packaging mistake must cost a nicety, not leave an empty hole."""
+    monkeypatch.setattr(biometrics, "default_avatar_pixmap", lambda *a, **k: None)
+    ana = _add("Ana Ruiz", 62.0, "kg")
+    panel.set_client(ana.id)
+
+    shown = panel.avatar_label.pixmap()
+    assert shown is not None and not shown.isNull()
+    assert shown.toImage() == biometrics._initials_pixmap("AR").toImage()
+
+
+def test_initials_handle_the_awkward_names():
+    assert biometrics._initials("Ana Ruiz") == "AR"
+    assert biometrics._initials("Cher") == "CH"
+    assert biometrics._initials("") == "?"          # mid-intake, no name yet
+    assert biometrics._initials("Ana de la Cruz") == "AC"
 
 
 def test_saving_without_a_loaded_client_does_nothing(panel):
