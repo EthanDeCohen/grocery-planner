@@ -331,6 +331,39 @@ def session_path() -> Path:
     return data_dir() / SESSION_FILENAME
 
 
+def readiness(session_file: Path | None = None) -> tuple[bool, str]:
+    """Is this registered scraper actually usable right now?
+
+    Registered-in-``SCRAPERS`` and ready-to-scrape are NOT the same thing for
+    this store (unlike the Flipp-sourced ones, which need no setup at all):
+    Whole Foods needs the out-of-band, human session-mint step described in
+    this module's docstring before a scrape can do anything useful.
+    ``service/ingest.py::available_scrapers()`` calls this (any scraper
+    module MAY define it; one that doesn't is simply always ready) so the
+    CLI/GUI can decline to offer this store as scrapable -- instead of
+    presenting it as ready-to-go and only failing on click/run -- and so
+    ``gplan scrape``/``gplan schedule set`` can reject it with a clear,
+    friendly message up front rather than an unhandled
+    :class:`SessionMissingError` traceback.
+
+    Deliberately a cheap existence check, not full validation -- malformed
+    JSON or a missing ``wfm_store_d8`` key inside an existing file still
+    report "ready" here; :func:`load_session` (run at actual scrape time) is
+    what does full validation and raises the detailed, authoritative error.
+    Keeping this check cheap and side-effect-light is what makes it safe to
+    call from places like `gplan stores` that list every store on every
+    invocation.
+    """
+    target = session_file or session_path()
+    if target.exists():
+        return True, ""
+    return False, (
+        f"needs a one-time session cookie at {target} -- see the "
+        "'Minting the session cookie' section of this module's docstring "
+        "(grocery_planner/scrapers/wholefoods.py)"
+    )
+
+
 def load_session(path: Path | None = None) -> Session:
     """Read and validate the session config file.
 
@@ -387,6 +420,13 @@ def _decode_store_cookie(value: str) -> dict[str, Any]:
 
 
 def _check_zip(cookie_data: dict[str, Any], requested_zip: str) -> None:
+    # deliveryZip ONLY -- never name/state/geometry. Confirmed against a real
+    # minted cookie during this ticket's review: it decoded to
+    # deliveryZip="27401" (correct) alongside name="Lamar"/state="TX" and
+    # Austin, TX coordinates (stale placeholders -- see the module
+    # docstring's cookie-shape section, also GFP-74). Comparing against
+    # anything but deliveryZip here would compare against those stale
+    # fields instead of the real, live-updating one.
     cookie_zip = str(cookie_data.get("deliveryZip") or "").strip()
     if cookie_zip and requested_zip and cookie_zip != requested_zip:
         raise ZipMismatchError(
@@ -503,14 +543,16 @@ class WholeFoodsClient:
 # Payload -> row/food extraction
 # --------------------------------------------------------------------------- #
 def _iter_products(products_info: Any) -> list[dict[str, Any]]:
-    """``productsInfo`` observed in the GFP-70 spike as a single representative
-    entry, not the full collection shape -- handles it as either a dict
-    keyed by asin/id (the more likely shape for this kind of payload) or a
-    plain list, rather than assuming one over the other."""
-    if isinstance(products_info, dict):
-        return [p for p in products_info.values() if isinstance(p, dict)]
+    """``productsInfo`` is a plain list of product dicts -- confirmed against
+    a real, live search (30 results, matching the GFP-70 spike's transcribed
+    example byte-for-byte) during this ticket's review. The dict-keyed-by-
+    asin branch is kept as a defensive fallback rather than removed -- it
+    costs nothing and this is a private, undocumented endpoint free to
+    change shape without notice."""
     if isinstance(products_info, list):
         return [p for p in products_info if isinstance(p, dict)]
+    if isinstance(products_info, dict):
+        return [p for p in products_info.values() if isinstance(p, dict)]
     return []
 
 

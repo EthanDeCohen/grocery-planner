@@ -129,6 +129,36 @@ def test_session_path_lives_in_the_user_data_dir(monkeypatch, tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# readiness() -- "registered" and "ready to scrape" are different questions
+# (the bug this whole section exists to prevent: CI/a fresh install has no
+# session cookie yet, so registering wholefoods must not make it look
+# scrapable until it actually is).
+# --------------------------------------------------------------------------- #
+def test_readiness_false_without_a_session_file(tmp_path):
+    ready, reason = wf.readiness(tmp_path / "nope.json")
+    assert ready is False
+    assert "session cookie" in reason
+
+
+def test_readiness_true_once_a_session_file_exists(tmp_path):
+    # A cheap existence check, deliberately not full validation -- even a
+    # trivial/malformed file counts as "ready" here; load_session() (run at
+    # actual scrape time) is what does full validation and raises the
+    # detailed error. See the readiness() docstring for why.
+    path = tmp_path / "wholefoods_session.json"
+    path.write_text("not even valid json", encoding="utf-8")
+    ready, reason = wf.readiness(path)
+    assert ready is True
+    assert reason == ""
+
+
+def test_readiness_uses_the_default_session_path_when_unspecified(monkeypatch, tmp_path):
+    monkeypatch.setattr(wf, "session_path", lambda: tmp_path / "wholefoods_session.json")
+    assert wf.readiness() == (False, wf.readiness()[1])
+    assert "session cookie" in wf.readiness()[1]
+
+
+# --------------------------------------------------------------------------- #
 # Cookie decoding + ZIP check (GFP-53)
 # --------------------------------------------------------------------------- #
 def test_decode_store_cookie_url_encoded():
@@ -157,6 +187,17 @@ def test_check_zip_mismatch_raises():
 
 def test_check_zip_tolerates_a_cookie_with_no_zip_field():
     wf._check_zip({}, "27401")  # nothing to disagree with -> no raise
+
+
+def test_check_zip_ignores_the_stale_name_and_state_fields():
+    # A real minted cookie was confirmed (during this ticket's review) to
+    # decode with a CORRECT deliveryZip alongside a STALE name="Lamar"/
+    # state="TX" (Austin, TX placeholder coordinates) -- GFP-74/the module
+    # docstring both call this out. The check must key off deliveryZip only.
+    stale_cookie = {"id": 10426, "name": "Lamar", "state": "TX", "deliveryZip": "27401"}
+    wf._check_zip(stale_cookie, "27401")  # matches on deliveryZip -> no raise
+    with pytest.raises(wf.ZipMismatchError):
+        wf._check_zip(stale_cookie, "90210")  # still compares deliveryZip, not name/state
 
 
 # --------------------------------------------------------------------------- #

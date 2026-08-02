@@ -65,7 +65,7 @@ foreach ($store in $sample.Keys) {
 }
 
 # --- Test harness ---
-$pass = 0; $fail = 0; $failed = @()
+$pass = 0; $fail = 0; $skip = 0; $failed = @()
 function Test-Case {
     param([string]$Name, [string[]]$CmdArgs, [int]$ExpectedExit = 0, [string]$Contains)
     # Native tools write to stderr on guard/error paths; don't let that throw.
@@ -82,8 +82,25 @@ function Test-Case {
         Write-Host ($out.Trim()) -ForegroundColor DarkGray
     }
 }
+function Skip-Case {
+    # GFP-4: a registered scraper can be "not ready" (needs manual, out-of-
+    # band setup -- e.g. Whole Foods' hand-minted session cookie) rather than
+    # unimplemented. A store that requires that kind of setup must never make
+    # this smoke test (and therefore CI, on every fresh runner with no such
+    # setup) red -- it's skipped and called out here, not silently ignored.
+    param([string]$Name, [string]$Reason)
+    $script:skip++
+    Write-Host ("  SKIP  " + $Name + "  (" + $Reason + ")") -ForegroundColor Yellow
+}
 
 Write-Host "`n=== gplan smoke test ===`n" -ForegroundColor Cyan
+
+# GFP-4: is Whole Foods actually configured on THIS machine (a hand-minted
+# wholefoods_session.json)? Every fresh CI runner answers "no" -- that must
+# not be a failure, just a fact the store-specific cases below branch on.
+$storesProbe = (& $gplan stores 2>&1 | Out-String)
+$wholefoodsReady = -not ($storesProbe -match "(?m)^wholefoods\b.*needs setup")
+
 try {
     Test-Case "version"                  @("version")                                      0 "grocery-planner"
     Test-Case "db-path"                  @("db-path")                                      0
@@ -125,12 +142,25 @@ try {
     Test-Case "schedule set"             @("schedule", "set", "foodlion", "--every", "12h") 0 "every 12h"
     Test-Case "schedule list"            @("schedule", "list")                             0 "foodlion"
     Test-Case "schedule bad cadence"     @("schedule", "set", "foodlion", "--every", "soon") 1
-    Test-Case "schedule unscrapable"     @("schedule", "set", "wholefoods", "--every", "6h") 2
+    # GFP-4: wholefoods is a REGISTERED scraper that needs a hand-minted
+    # session cookie before it's usable (scrapers/wholefoods.py). On a fresh
+    # machine (no cookie) both of these must be rejected up front, cleanly --
+    # that's a real, deterministic assertion, not a guess about the future.
+    # On a machine that HAS been configured, forcing that same rejection
+    # would itself be wrong (and forcing a live network scrape here would be
+    # its own bug -- this smoke test is offline by default) -- skip instead
+    # of failing either way.
+    if ($wholefoodsReady) {
+        Skip-Case "schedule unscrapable (wholefoods)" "session cookie already configured on this machine"
+        Skip-Case "scrape guard (wholefoods)"         "session cookie already configured on this machine"
+    } else {
+        Test-Case "schedule unscrapable" @("schedule", "set", "wholefoods", "--every", "6h") 2 "not ready"
+        Test-Case "scrape guard (needs setup)" @("scrape", "wholefoods")                    2 "session cookie"
+    }
     Test-Case "jobs (empty)"             @("jobs")                                         0
     Test-Case "schedule remove"          @("schedule", "remove", "foodlion")               0 "Removed"
     Test-Case "schedule remove (gone)"   @("schedule", "remove", "foodlion")               1
     Test-Case "schedule run (none set)"  @("schedule", "run", "--once")                    1 "No schedules"
-    Test-Case "scrape guard (unimpl)"    @("scrape", "wholefoods")                         2
     Test-Case "unknown store error"      @("list", "deals", "-s", "bogus")                 1
 
     if ($IncludeScrape) {
@@ -146,6 +176,6 @@ finally {
     }
 }
 
-Write-Host "`n=== $pass passed, $fail failed ===" -ForegroundColor Cyan
+Write-Host "`n=== $pass passed, $fail failed, $skip skipped ===" -ForegroundColor Cyan
 if ($fail -gt 0) { Write-Host ("Failed: " + ($failed -join ", ")) -ForegroundColor Red; exit 1 }
 exit 0

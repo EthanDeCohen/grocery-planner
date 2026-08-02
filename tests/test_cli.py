@@ -2,6 +2,7 @@
 from typer.testing import CliRunner
 
 from grocery_planner.cli import app
+from grocery_planner.scrapers import wholefoods as wf
 
 runner = CliRunner()
 
@@ -35,6 +36,31 @@ def test_scrape_rejects_unimplemented_store(env_db):
     # here per the GFP-4 PR description.
     result = runner.invoke(app, ["scrape", "not-a-real-store"])
     assert result.exit_code == 2
+
+
+def test_scrape_rejects_a_registered_but_unready_store(env_db, monkeypatch, tmp_path):
+    # GFP-4: wholefoods IS registered, but with no hand-minted session
+    # cookie it isn't usable yet -- the CLI must reject this cleanly (exit
+    # 2, a clear message) rather than let an unhandled SessionMissingError
+    # traceback out of run_scrape(). This is the exact scenario that made CI
+    # red on a fresh runner before this fix.
+    monkeypatch.setattr(wf, "session_path", lambda: tmp_path / "wholefoods_session.json")
+    result = runner.invoke(app, ["scrape", "wholefoods"])
+    assert result.exit_code == 2
+    assert "not ready" in result.stderr
+    assert "session cookie" in result.stderr
+
+
+def test_stores_shows_scraper_readiness(env_db, monkeypatch, tmp_path):
+    monkeypatch.setattr(wf, "session_path", lambda: tmp_path / "wholefoods_session.json")
+    result = runner.invoke(app, ["stores"])
+    assert result.exit_code == 0
+    assert "ready" in result.stdout        # foodlion/harristeeter
+    assert "needs setup" in result.stdout  # wholefoods, unconfigured
+
+    (tmp_path / "wholefoods_session.json").write_text('{"wfm_store_d8": "x"}', encoding="utf-8")
+    configured = runner.invoke(app, ["stores"])
+    assert "needs setup" not in configured.stdout
 
 
 def test_unknown_store_filter_errors(env_db):

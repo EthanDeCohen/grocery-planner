@@ -72,6 +72,18 @@ def test_set_schedule_validates_before_writing(conn):
     assert scheduler.list_schedules(conn) == []  # nothing persisted
 
 
+def test_set_schedule_rejects_a_registered_but_unready_store(conn, monkeypatch, tmp_path):
+    # GFP-4: wholefoods IS registered, but scheduling automatic refresh for a
+    # store with no session cookie yet would just fail on every single run --
+    # available_scrapers() (and therefore set_schedule's guard) excludes it
+    # until it's configured. See scrapers/wholefoods.py::readiness().
+    from grocery_planner.scrapers import wholefoods as wf
+    monkeypatch.setattr(wf, "session_path", lambda: tmp_path / "wholefoods_session.json")
+    with pytest.raises(service.UnknownStoreError):
+        scheduler.set_schedule(conn, "wholefoods", "interval", "6h")
+    assert scheduler.list_schedules(conn) == []
+
+
 def test_disabled_schedules_are_skipped(conn):
     scheduler.set_schedule(conn, "foodlion", "interval", "6h", enabled=False)
     assert len(scheduler.list_schedules(conn)) == 1
