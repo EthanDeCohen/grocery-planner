@@ -29,13 +29,22 @@ from .deals import (
     stores_with_deals,
     today_iso,
 )
-from .ingest import UnknownStoreError, available_scrapers, run_scrape
+from .ingest import (
+    ScraperStatus,
+    UnknownStoreError,
+    all_scrapers,
+    available_scrapers,
+    run_scrape,
+    scraper_status,
+)
 
 __all__ = [
     "DEAL_TYPE_GROUPS",
     "EXPORT_COLUMNS",
+    "ScraperStatus",
     "UnknownDealTypeError",
     "UnknownStoreError",
+    "all_scrapers",
     "available_scrapers",
     "best_deals",
     "count_deals",
@@ -44,6 +53,7 @@ __all__ = [
     "fetch_deals",
     "is_expired",
     "run_scrape",
+    "scraper_status",
     "stores_with_deals",
     "today_iso",
 ]

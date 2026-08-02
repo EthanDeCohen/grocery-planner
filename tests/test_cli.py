@@ -2,6 +2,7 @@
 from typer.testing import CliRunner
 
 from grocery_planner.cli import app
+from grocery_planner.scrapers import wholefoods as wf
 
 runner = CliRunner()
 
@@ -29,8 +30,37 @@ def test_import_then_list(env_db, sample_data):
 
 
 def test_scrape_rejects_unimplemented_store(env_db):
+    # GFP-4 registered a real "wholefoods" scraper, so this test (which
+    # predates that ticket and used "wholefoods" as its example of an
+    # unimplemented store) now uses a key guaranteed not to exist -- flagged
+    # here per the GFP-4 PR description.
+    result = runner.invoke(app, ["scrape", "not-a-real-store"])
+    assert result.exit_code == 2
+
+
+def test_scrape_rejects_a_registered_but_unready_store(env_db, monkeypatch, tmp_path):
+    # GFP-4: wholefoods IS registered, but with no hand-minted session
+    # cookie it isn't usable yet -- the CLI must reject this cleanly (exit
+    # 2, a clear message) rather than let an unhandled SessionMissingError
+    # traceback out of run_scrape(). This is the exact scenario that made CI
+    # red on a fresh runner before this fix.
+    monkeypatch.setattr(wf, "session_path", lambda: tmp_path / "wholefoods_session.json")
     result = runner.invoke(app, ["scrape", "wholefoods"])
     assert result.exit_code == 2
+    assert "not ready" in result.stderr
+    assert "session cookie" in result.stderr
+
+
+def test_stores_shows_scraper_readiness(env_db, monkeypatch, tmp_path):
+    monkeypatch.setattr(wf, "session_path", lambda: tmp_path / "wholefoods_session.json")
+    result = runner.invoke(app, ["stores"])
+    assert result.exit_code == 0
+    assert "ready" in result.stdout        # foodlion/harristeeter
+    assert "needs setup" in result.stdout  # wholefoods, unconfigured
+
+    (tmp_path / "wholefoods_session.json").write_text('{"wfm_store_d8": "x"}', encoding="utf-8")
+    configured = runner.invoke(app, ["stores"])
+    assert "needs setup" not in configured.stdout
 
 
 def test_unknown_store_filter_errors(env_db):
@@ -167,8 +197,12 @@ def test_schedule_set_rejects_bad_input(env_db):
     ).exit_code == 1
     # Unparseable cadence, and a store with no scraper.
     assert runner.invoke(app, ["schedule", "set", "foodlion", "--every", "soon"]).exit_code == 1
+    # GFP-4 registered a real "wholefoods" scraper, so this test (which
+    # predates that ticket and used "wholefoods" as its example of a store
+    # with no scraper) now uses a key guaranteed not to exist -- flagged here
+    # per the GFP-4 PR description.
     assert runner.invoke(
-        app, ["schedule", "set", "wholefoods", "--every", "6h"]).exit_code == 2
+        app, ["schedule", "set", "not-a-real-store", "--every", "6h"]).exit_code == 2
 
 
 def test_schedule_run_once_needs_a_schedule(env_db):

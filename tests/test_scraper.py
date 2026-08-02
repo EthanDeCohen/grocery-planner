@@ -190,7 +190,12 @@ def test_no_flyer_message_distinguishes_expired_from_missing():
 def test_store_registry():
     from grocery_planner.scrapers import SCRAPERS
 
-    assert set(SCRAPERS) == {"foodlion", "harristeeter"}
+    # GFP-4: Whole Foods joined the registry alongside the two Flipp-sourced
+    # stores. Updated here (not just added to) because this is an exact-
+    # equality assertion that necessarily changes the moment a new store is
+    # registered -- flagged in the GFP-4 PR description per the ticket's
+    # "don't touch other test files unless you truly must" instruction.
+    assert set(SCRAPERS) == {"foodlion", "harristeeter", "wholefoods"}
     # Every registered module exposes the thin store-scraper surface the CLI uses.
     for key, mod in SCRAPERS.items():
         assert mod.STORE_KEY == key

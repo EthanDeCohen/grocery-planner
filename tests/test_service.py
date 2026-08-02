@@ -12,8 +12,14 @@ from grocery_planner import service
 PUBLIC_API = [
     "DEAL_TYPE_GROUPS",
     "EXPORT_COLUMNS",
+    # GFP-4: registered and ready are no longer the same question (Whole
+    # Foods needs a hand-minted session cookie before it's scrapable) --
+    # ScraperStatus/all_scrapers/scraper_status are the new vocabulary for
+    # telling them apart; available_scrapers() itself now means "ready".
+    "ScraperStatus",
     "UnknownDealTypeError",
     "UnknownStoreError",
+    "all_scrapers",
     "available_scrapers",
     "best_deals",
     "count_deals",
@@ -22,6 +28,7 @@ PUBLIC_API = [
     "fetch_deals",
     "is_expired",
     "run_scrape",
+    "scraper_status",
     "stores_with_deals",
     "today_iso",
 ]
@@ -39,9 +46,53 @@ def test_available_scrapers_lists_known_stores():
     assert {"foodlion", "harristeeter"} <= set(scrapers)
 
 
-def test_run_scrape_unknown_store_raises(conn):
+def test_all_scrapers_includes_every_registered_store_regardless_of_readiness():
+    # GFP-4: wholefoods is registered but (in this test environment, with no
+    # hand-minted session cookie) not ready -- all_scrapers() must still name
+    # it; available_scrapers() must not.
+    assert set(service.all_scrapers()) == {"foodlion", "harristeeter", "wholefoods"}
+
+
+def test_scraper_status_unknown_store_raises():
     with pytest.raises(service.UnknownStoreError):
-        service.run_scrape("wholefoods", conn=conn)
+        service.scraper_status("not-a-real-store")
+
+
+def test_scraper_status_defaults_to_ready_when_a_module_defines_no_readiness():
+    # foodlion/harristeeter predate GFP-4 and were never touched by it --
+    # confirming they still report ready is what "no existing scraper needs
+    # to change" actually means.
+    status = service.scraper_status("foodlion")
+    assert status.ready is True
+    assert status.reason == ""
+
+
+def test_scraper_status_reflects_wholefoods_configuration(monkeypatch, tmp_path):
+    from grocery_planner.scrapers import wholefoods as wf
+
+    # No session file: not ready, with an actionable reason.
+    monkeypatch.setattr(wf, "session_path", lambda: tmp_path / "wholefoods_session.json")
+    status = service.scraper_status("wholefoods")
+    assert status.ready is False
+    assert "session cookie" in status.reason
+    assert "wholefoods" not in service.available_scrapers()
+
+    # A session file existing (even a trivial one) is enough for the cheap
+    # readiness check -- full validation happens at actual scrape time.
+    (tmp_path / "wholefoods_session.json").write_text('{"wfm_store_d8": "x"}', encoding="utf-8")
+    status = service.scraper_status("wholefoods")
+    assert status.ready is True
+    assert status.reason == ""
+    assert "wholefoods" in service.available_scrapers()
+
+
+def test_run_scrape_unknown_store_raises(conn):
+    # GFP-4 registered a real "wholefoods" scraper, so this test (which
+    # predates that ticket and used "wholefoods" as its example of an
+    # unregistered store) now uses a key that is guaranteed not to exist
+    # instead -- flagged here per the GFP-4 PR description.
+    with pytest.raises(service.UnknownStoreError):
+        service.run_scrape("not-a-real-store", conn=conn)
 
 
 # --------------------------------------------------------------------------- #
@@ -367,11 +418,18 @@ def test_filters_compose(conn):
     assert [r["item_name"] for r in rows] == ["Boneless Chicken Breast"]
 
 
-def test_choice_helpers_come_from_the_data(conn):
+def test_choice_helpers_come_from_the_data(conn, monkeypatch, tmp_path):
     _seed_filterable(conn)
-    # Whole Foods has no scraper but does have rows, so it must still be offered.
+    # Stores with data always show up, whether or not they're scrapable.
     assert service.stores_with_deals(conn=conn) == ["foodlion", "harristeeter", "wholefoods"]
+    # GFP-4 gave Whole Foods a real scraper, but it isn't READY until its
+    # session cookie is hand-minted (see scrapers/wholefoods.py) -- pin that
+    # to a guaranteed-empty tmp_path rather than relying on whatever this
+    # test happens to be running on to actually lack one.
+    from grocery_planner.scrapers import wholefoods as wf
+    monkeypatch.setattr(wf, "session_path", lambda: tmp_path / "wholefoods_session.json")
     assert "wholefoods" not in service.available_scrapers()
+    assert "wholefoods" in service.all_scrapers()
 
     assert service.deal_categories(store="harristeeter", conn=conn) == ["Snacks & Chips"]
     assert "Meat & Seafood" in service.deal_categories(conn=conn)

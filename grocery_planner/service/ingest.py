@@ -8,6 +8,7 @@ the scrape + persist logic lives in exactly one place.
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -55,8 +56,61 @@ class ImplausibleCollapseError(ScrapeGuardError):
     """
 
 
+@dataclass(frozen=True)
+class ScraperStatus:
+    """Whether a REGISTERED scraper is actually usable right now, and why not.
+
+    GFP-4 (Whole Foods) introduced the first store where those two things
+    differ: it's registered in ``SCRAPERS`` the moment its module ships, but
+    it needs an out-of-band, human-minted session cookie before a scrape can
+    do anything (see ``scrapers/wholefoods.py``'s module docstring) --
+    unlike the Flipp-sourced scrapers, which need no setup at all. Before
+    this, "registered" and "ready to scrape" were the same question; this
+    type is what lets code ask them separately.
+    """
+
+    key: str
+    ready: bool
+    reason: str = ""
+
+
+def scraper_status(store_key: str) -> ScraperStatus:
+    """The readiness of one registered scraper.
+
+    A scraper module MAY define ``readiness() -> (bool, str)``; one that
+    doesn't (every Flipp-sourced store today) is always ready, so this is a
+    pure addition -- no existing scraper module needs to change. Raises
+    :class:`UnknownStoreError` for a store key with no registered scraper at
+    all (a different, stronger kind of "not usable" than "registered but not
+    configured").
+    """
+    scraper = SCRAPERS.get(store_key)
+    if scraper is None:
+        raise UnknownStoreError(store_key)
+    check = getattr(scraper, "readiness", None)
+    if check is None:
+        return ScraperStatus(store_key, True, "")
+    ready, reason = check()
+    return ScraperStatus(store_key, bool(ready), reason or "")
+
+
 def available_scrapers() -> list[str]:
-    """Sorted list of store keys that can be scraped."""
+    """Sorted list of store keys that can *actually* be scraped right now.
+
+    "Registered" and "ready" are different questions since GFP-4 (see
+    :class:`ScraperStatus`): this returns only the ready ones, which is what
+    lets ``gui/app.py``'s store dropdown/scrape button and
+    ``scheduler.set_schedule`` keep working unchanged -- neither offers nor
+    schedules a store that would just fail on every run. Use
+    :func:`all_scrapers` for every registered key regardless of readiness
+    (e.g. so `gplan stores` can still show an unready one, annotated as
+    needing setup, rather than hiding it outright).
+    """
+    return sorted(key for key in SCRAPERS if scraper_status(key).ready)
+
+
+def all_scrapers() -> list[str]:
+    """Every REGISTERED store key, ready or not (GFP-4). See :func:`available_scrapers`."""
     return sorted(SCRAPERS)
 
 

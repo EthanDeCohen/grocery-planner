@@ -87,8 +87,20 @@ def scrape(
     scraper = SCRAPERS.get(store)
     if scraper is None:
         typer.secho(
-            f"No scraper for {store!r}. Available: {', '.join(service.available_scrapers())}. "
-            "Whole Foods is GFP-4.",
+            f"No scraper for {store!r}. Registered: {', '.join(service.all_scrapers())}.",
+            fg=typer.colors.YELLOW, err=True,
+        )
+        raise typer.Exit(2)
+
+    # GFP-4: registered and ready are different questions (Whole Foods needs
+    # a hand-minted session cookie before a scrape can do anything useful --
+    # see scrapers/wholefoods.py). Check and report this BEFORE attempting
+    # anything, so a missing/dead cookie is a clean, expected exit rather
+    # than an unhandled traceback partway through run_scrape().
+    status = service.scraper_status(store)
+    if not status.ready:
+        typer.secho(
+            f"{scraper.MERCHANT} is registered but not ready to scrape: {status.reason}",
             fg=typer.colors.YELLOW, err=True,
         )
         raise typer.Exit(2)
@@ -306,14 +318,28 @@ def categories(
 
 @app.command()
 def stores() -> None:
-    """Show tracked stores and row counts."""
+    """Show tracked stores, row counts, and scraper readiness (GFP-4)."""
     conn = db.connect()
     rows = []
     for r in conn.execute("SELECT key, display_name FROM stores ORDER BY display_name"):
         d = conn.execute("SELECT COUNT(*) FROM deals WHERE store=?", (r["key"],)).fetchone()[0]
         p = conn.execute("SELECT COUNT(*) FROM prices WHERE store=?", (r["key"],)).fetchone()[0]
-        rows.append((r["key"], r["display_name"], str(d), str(p)))
-    _print_table(["key", "store", "deals", "prices"], rows)
+        rows.append((r["key"], r["display_name"], str(d), str(p), _scraper_status_label(r["key"])))
+    _print_table(["key", "store", "deals", "prices", "scraper"], rows)
+
+
+def _scraper_status_label(store_key: str) -> str:
+    """"-" (no scraper at all, CSV-only), "ready", or "needs setup: <why>".
+
+    GFP-4: a store can be registered without being usable yet (Whole Foods,
+    before its session cookie is hand-minted -- see scrapers/wholefoods.py).
+    This is where a user finds that out ahead of `gplan scrape` failing, per
+    the same ticket's "surface it where a user can act on it" requirement.
+    """
+    if store_key not in SCRAPERS:
+        return "-"
+    status = service.scraper_status(store_key)
+    return "ready" if status.ready else f"needs setup: {status.reason}"
 
 
 @schedule_app.command("set")
@@ -331,9 +357,19 @@ def schedule_set(
     try:
         scheduler.set_schedule(db.connect(), store, kind, expression)
     except service.UnknownStoreError:
-        typer.secho(f"No scraper for {store!r}. Available: "
-                    f"{', '.join(service.available_scrapers())}.",
-                    fg=typer.colors.RED, err=True)
+        # GFP-4: this store may be registered but not READY (e.g. Whole
+        # Foods before its session cookie is minted) rather than genuinely
+        # unregistered -- give the more specific message when that's why.
+        if store in SCRAPERS:
+            reason = service.scraper_status(store).reason
+            typer.secho(
+                f"{SCRAPERS[store].MERCHANT} is registered but not ready to "
+                f"schedule: {reason}", fg=typer.colors.RED, err=True,
+            )
+        else:
+            typer.secho(f"No scraper for {store!r}. Available: "
+                        f"{', '.join(service.available_scrapers())}.",
+                        fg=typer.colors.RED, err=True)
         raise typer.Exit(2)
     except scheduler.ScheduleError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
