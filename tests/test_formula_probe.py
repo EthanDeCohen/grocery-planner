@@ -1,8 +1,9 @@
 """Tests for GFP-64: the GUI formula validator must accept every formula a
 real consumer can evaluate, not just the deal-scoring ones.
 
-grocery_planner/gui/app.py validates a formula on Save by running it against
-a stand-in "probe" dict of variable names before it's ever stored. GFP-29
+The GUI formula editor (grocery_planner/gui/formulas.py since GFP-35 moved it
+out of gui/app.py) validates a formula on Save by running it against a
+stand-in "probe" dict of variable names before it's ever stored. GFP-29
 made the daily protein target (``targets.FORMULA_NAME`` ==
 "protein_target_daily") a user-editable formula whose variables are
 ``weight_kg`` and ``protein_factor`` (see grocery_planner/targets.py's
@@ -26,7 +27,7 @@ pytest.importorskip("PySide6", reason="GUI extra not installed")
 
 from simpleeval import simple_eval  # noqa: E402
 
-from grocery_planner.gui.app import _formula_probe  # noqa: E402
+from grocery_planner.gui.formulas import _formula_probe  # noqa: E402
 
 
 def test_probe_covers_every_deal_score_var(conn):

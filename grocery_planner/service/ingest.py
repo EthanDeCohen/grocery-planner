@@ -99,7 +99,7 @@ def available_scrapers() -> list[str]:
 
     "Registered" and "ready" are different questions since GFP-4 (see
     :class:`ScraperStatus`): this returns only the ready ones, which is what
-    lets ``gui/app.py``'s store dropdown/scrape button and
+    lets the GUI's Run scrape dialog (``gui/scrape.py``) and
     ``scheduler.set_schedule`` keep working unchanged -- neither offers nor
     schedules a store that would just fail on every run. Use
     :func:`all_scrapers` for every registered key regardless of readiness
