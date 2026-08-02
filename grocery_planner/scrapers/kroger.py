@@ -88,7 +88,6 @@ token broker can replace the local file without touching callers.
 from __future__ import annotations
 
 import configparser
-import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -97,8 +96,7 @@ from typing import Any, Iterable
 
 import httpx
 
-from .. import db, matching
-from ..paths import data_dir
+from .. import credentials, db, matching
 
 # The CLI/registry name. Distinct from STORE_KEY because this is a SECOND
 # source for a store that already has one: `harristeeter` is the Flipp weekly
@@ -121,8 +119,11 @@ MERCHANT = "Harris Teeter (Kroger API)"
 DEFAULT_POSTAL_CODE = "27401"
 DEAL_TYPE = "Shelf Price"
 
-CONFIG_FILENAME = "kroger-env.config"
-CONFIG_ENV_VAR = "GROCERY_PLANNER_KROGER_CONFIG"
+# Re-exported from the GFP-97 credential registry rather than restated, so the
+# filename and the override variable cannot drift from what the seam actually
+# looks at. Existing callers and tests keep importing them from here.
+CONFIG_FILENAME = credentials.KROGER.filename
+CONFIG_ENV_VAR = credentials.KROGER.env_var
 
 TOKEN_URL = "https://api.kroger.com/v1/connect/oauth2/token"
 API_BASE = "https://api.kroger.com/v1"
@@ -185,6 +186,16 @@ class Credentials:
     client_secret: str
 
 
+def _missing_message(target: Path | str) -> str:
+    """The 'no credentials' text, shared by every path that has to say it."""
+    return (
+        f"No Kroger credentials at {target}. Register an application at "
+        "https://developer.kroger.com and write its client_id/client_secret "
+        "to that file as INI:\n\n    [kroger]\n    client_id = ...\n"
+        "    client_secret = ...\n\nNever commit it."
+    )
+
+
 @dataclass(frozen=True)
 class _FoodFact:
     """Nutrition to land in foods/food_nutrients, keyed on Kroger's productId."""
@@ -200,32 +211,42 @@ class _FoodFact:
 # Credentials
 # --------------------------------------------------------------------------- #
 def config_path() -> Path:
-    override = os.environ.get(CONFIG_ENV_VAR)
-    if override:
-        return Path(override)
-    return data_dir() / CONFIG_FILENAME
+    """Where the credential file lives, via the GFP-97 provider seam.
+
+    Kept as a function on this module because callers and tests already use
+    it; it now delegates rather than resolving the path itself, so there is
+    one definition of "where do Kroger credentials come from".
+    """
+    return credentials.LocalFileProvider().path(credentials.KROGER)
 
 
 def load_credentials(path: Path | None = None) -> Credentials:
-    """Read client_id/client_secret from the INI file, or raise.
+    """Read client_id/client_secret from the INI document, or raise.
 
-    Accepts the file with or without a ``[section]`` header, because an
+    Accepts the document with or without a ``[section]`` header, because an
     "env config" is as likely to be written as bare ``key = value`` lines, and
     failing on that would be a pointless papercut.
-    """
-    target = path or config_path()
-    if not target.exists():
-        raise CredentialsMissingError(
-            f"No Kroger credentials at {target}. Register an application at "
-            "https://developer.kroger.com and write its client_id/client_secret "
-            f"to that file as INI:\n\n    [kroger]\n    client_id = ...\n"
-            "    client_secret = ...\n\nNever commit it."
-        )
 
-    # utf-8-sig: PowerShell's `Out-File -Encoding utf8` writes a BOM on 5.1, and
-    # a BOM ahead of a section header makes configparser fail obscurely. Same
-    # trap GFP-93 hit with the Whole Foods session file.
-    text = target.read_text(encoding="utf-8-sig").strip()
+    The *document* is obtained through the GFP-97 credential seam
+    (:func:`grocery_planner.credentials.fetch`), so a future token broker can
+    supply it without touching this function; the INI parsing and the error
+    messages stay here, where the format is actually known. ``path`` still
+    reads a specific file directly -- tests rely on it, and it stays the
+    escape hatch for "check this exact file".
+    """
+    if path is not None:
+        if not path.exists():
+            raise CredentialsMissingError(_missing_message(path))
+        text = path.read_text(encoding="utf-8-sig")
+        target: Path | str = path
+    else:
+        try:
+            text = credentials.fetch(credentials.KROGER.name)
+        except credentials.CredentialsMissingError as exc:
+            raise CredentialsMissingError(str(exc)) from exc
+        target = credentials.LocalFileProvider().describe(credentials.KROGER)
+
+    text = text.strip()
     if not text.lstrip().startswith("["):
         text = "[kroger]\n" + text
 

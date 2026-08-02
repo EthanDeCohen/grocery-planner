@@ -18,7 +18,17 @@ from pathlib import Path
 
 import typer
 
-from . import __version__, db, formulas, importers, jobs, scheduler, service, usda
+from . import (
+    __version__,
+    credentials,
+    db,
+    formulas,
+    importers,
+    jobs,
+    scheduler,
+    service,
+    usda,
+)
 from . import records as rec
 from .scrapers import SCRAPERS
 from .stores import BY_KEY
@@ -434,6 +444,39 @@ def stores() -> None:
         p = conn.execute("SELECT COUNT(*) FROM prices WHERE store=?", (r["key"],)).fetchone()[0]
         rows.append((r["key"], r["display_name"], str(d), str(p), _scraper_status_label(r["key"])))
     _print_table(["key", "store", "deals", "prices", "scraper"], rows)
+
+
+@app.command("credentials")
+def credentials_cmd() -> None:
+    """Show which credentials are configured, and where (GFP-97).
+
+    Deliberately prints presence and location only, never a value. This is the
+    command to run when supporting someone else's install: it answers "is the
+    Kroger key set up, and which file is it reading?" without anyone having to
+    read a client_secret out loud.
+    """
+    entries = credentials.status()
+    _print_table(
+        ["credential", "status", "source"],
+        [(s.name,
+          "configured" if s.configured else "MISSING",
+          s.origin + (" (overridden)" if s.overridden else ""))
+         for s in entries],
+    )
+    # Locations go on their own lines: _print_table truncates a cell at 48
+    # characters, and a half-printed path is useless for the one question this
+    # command exists to answer -- which file is it actually reading?
+    typer.echo("")
+    for s in entries:
+        typer.echo(f"{s.name}: {s.location}")
+        if not s.configured:
+            typer.echo(f"    {s.obtain_hint}")
+    if all(s.configured for s in entries):
+        typer.echo("\nAll known credentials are configured.")
+    typer.echo(
+        "\nValues are never printed. A secret in a terminal is a secret in a "
+        "scrollback buffer."
+    )
 
 
 def _scraper_status_label(store_key: str) -> str:
