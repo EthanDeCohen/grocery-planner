@@ -263,6 +263,11 @@ MERCHANT = "Whole Foods Market"
 DEFAULT_POSTAL_CODE = "27401"
 DEAL_TYPE = "Storefront Price"
 
+# unitPrice.baseUnit values that mean "this price is per unit WEIGHT", i.e. the
+# shopper pays this multiplied by however much the cut weighs (GFP-98). Whole
+# Foods uses "pound" for butcher-counter items; "each" is a package price.
+_WEIGHT_BASE_UNITS = frozenset({"pound", "lb", "lbs", "ounce", "oz", "kg", "kilogram"})
+
 BASE_URL = "https://www.wholefoodsmarket.com"
 SEARCH_HTML_PATH = "/grocery/search"
 SEARCH_DATA_PATH = "/_next/data/{build_id}/grocery/search.json"
@@ -801,6 +806,15 @@ def product_to_row(
         "flipp_flyer_id": None,
         "flipp_item_id": None,
         "flipp_coupon_id": None,
+        # GFP-98. Whole Foods' unitPrice.baseUnit already distinguishes a
+        # per-pound butcher price from a per-package one, so these come for
+        # free here rather than staying NULL like the Flipp rows -- and the UI
+        # tag (GFP-36/37/38/48/50/52) then works for two sources, not one.
+        "sold_by": "WEIGHT" if unit_price_base.lower() in _WEIGHT_BASE_UNITS else (
+            "UNIT" if unit_price_base else None
+        ),
+        "price_per_unit": unit_price_amount,
+        "price_per_unit_uom": unit_price_base or None,
     }
 
     food_fact = None

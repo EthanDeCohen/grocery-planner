@@ -24,6 +24,13 @@ DEAL_COLUMNS = [
     # NULL for csv-import rows (the legacy Excel export never had these) --
     # only grocery_planner/scrapers/base.py's row builders populate them.
     "source_url", "image_url", "flipp_flyer_id", "flipp_item_id", "flipp_coupon_id",
+    # GFP-98: how the price is DENOMINATED, and the source's own per-unit
+    # price. Only the Kroger API states these today, so they are NULL for
+    # Flipp and csv-import rows -- "not stated by the source", which is the
+    # honest reading, never a guess. sold_by is 'UNIT' or 'WEIGHT'; a WEIGHT
+    # price is per pound, and the UI must tag it as such or a $2.49/lb loin
+    # reads as cheaper than a $4.99 packet.
+    "sold_by", "price_per_unit", "price_per_unit_uom",
 ]
 PRICE_COLUMNS = [
     "item_name", "brand", "category", "regular_price", "sale_price", "unit",

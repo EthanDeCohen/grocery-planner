@@ -522,6 +522,12 @@ def flyer_item_to_row(
         "flipp_flyer_id": flyer_id,
         "flipp_item_id": item_id,
         "flipp_coupon_id": None,
+        # GFP-98: Flipp ad copy never states how a price is denominated,
+        # nor a per-unit price. NULL is the honest value -- "not stated by
+        # the source" -- and a guess here would be worse than nothing.
+        "sold_by": None,
+        "price_per_unit": None,
+        "price_per_unit_uom": None,
     }
 
 
@@ -586,6 +592,12 @@ def coupon_to_row(
         "flipp_flyer_id": None,
         "flipp_item_id": None,
         "flipp_coupon_id": coupon_id,
+        # GFP-98: Flipp ad copy never states how a price is denominated,
+        # nor a per-unit price. NULL is the honest value -- "not stated by
+        # the source" -- and a guess here would be worse than nothing.
+        "sold_by": None,
+        "price_per_unit": None,
+        "price_per_unit_uom": None,
     }
 
 

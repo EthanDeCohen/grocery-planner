@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from .. import db, importers, records
+from .. import db, importers, records, scrapers
 from ..scrapers import SCRAPERS
 
 
@@ -135,7 +135,7 @@ _COLLAPSE_MIN_PREVIOUS = 20
 
 
 def _previous_capture_count(
-    conn: sqlite3.Connection, store_key: str, zip_code: str
+    conn: sqlite3.Connection, store_key: str, source: str, zip_code: str
 ) -> int | None:
     """Row count of this (store, postal_code)'s most recent price_history capture.
 
@@ -146,11 +146,15 @@ def _previous_capture_count(
     there is no prior capture at all (first-ever scrape for this store+ZIP),
     in which case the collapse guard has nothing to compare against.
     """
+    # Scoped by SOURCE as well as store (GFP-98). Two feeds can now share one
+    # store -- the Flipp weekly ad returns ~940 rows, the shelf-price API a few
+    # hundred. Comparing one against the other's last capture would read a
+    # perfectly healthy scrape as an implausible collapse and refuse it.
     row = conn.execute(
-        "SELECT COUNT(*) AS n FROM price_history WHERE store=? AND postal_code=? "
+        "SELECT COUNT(*) AS n FROM price_history WHERE store=? AND source=? AND postal_code=? "
         "AND captured_at=(SELECT MAX(captured_at) FROM price_history "
-        "WHERE store=? AND postal_code=?)",
-        (store_key, zip_code, store_key, zip_code),
+        "WHERE store=? AND source=? AND postal_code=?)",
+        (store_key, source, zip_code, store_key, source, zip_code),
     ).fetchone()
     if row is None or row["n"] == 0:
         return None
@@ -158,7 +162,8 @@ def _previous_capture_count(
 
 
 def _guard_replacement(
-    conn: sqlite3.Connection, store_key: str, zip_code: str, current: int, force: bool
+    conn: sqlite3.Connection, store_key: str, source: str, zip_code: str,
+    current: int, force: bool
 ) -> None:
     """Raise a :class:`ScrapeGuardError` rather than let a bad scrape replace good data.
 
@@ -182,7 +187,7 @@ def _guard_replacement(
             "empty result and replace anyway."
         )
 
-    previous = _previous_capture_count(conn, store_key, zip_code)
+    previous = _previous_capture_count(conn, store_key, source, zip_code)
     if (
         previous is not None
         and previous >= _COLLAPSE_MIN_PREVIOUS
@@ -204,14 +209,21 @@ _HISTORY_UPSERT = (
     "INSERT INTO price_history("
     "store, postal_code, item_name, sub_category, deal_type, regular_price, "
     "sale_price, dollar_price, discount_amount, discount_percent, source, "
+    "sold_by, price_per_unit, price_per_unit_uom, "
     "captured_at, updated_at) "
     "VALUES (:store, :postal_code, :item_name, :sub_category, :deal_type, "
     ":regular_price, :sale_price, :dollar_price, :discount_amount, :discount_percent, "
-    ":source, :captured_at, :updated_at) "
+    ":source, :sold_by, :price_per_unit, :price_per_unit_uom, "
+    ":captured_at, :updated_at) "
     "ON CONFLICT(store, postal_code, item_name, deal_type, captured_at) DO UPDATE SET "
     "regular_price=excluded.regular_price, sale_price=excluded.sale_price, "
     "dollar_price=excluded.dollar_price, discount_amount=excluded.discount_amount, "
     "discount_percent=excluded.discount_percent, source=excluded.source, "
+    # GFP-98: carried into history too, so a historical row's denominator is
+    # never forgotten. A bare number whose denominator has been lost cannot be
+    # compared against anything safely.
+    "sold_by=excluded.sold_by, price_per_unit=excluded.price_per_unit, "
+    "price_per_unit_uom=excluded.price_per_unit_uom, "
     "updated_at=excluded.updated_at"
 )
 
@@ -267,32 +279,43 @@ def run_scrape(
         raise UnknownStoreError(store_key)
 
     zip_code = postal_code or scraper.DEFAULT_POSTAL_CODE
+    # GFP-98: the registry key is no longer necessarily the store. `kroger` is
+    # a SECOND source for `harristeeter` (Flipp weekly ad vs Kroger shelf-price
+    # API), so the row's store and source come from the module, not from the
+    # name the caller typed. Modules that declare neither keep today's exact
+    # behaviour.
+    store = scrapers.store_key_for(scraper, store_key)
+    source = scrapers.source_for(scraper)
     rows, flyer, stats = scraper.scrape(postal_code=postal_code)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     today = now[:10]
     own = conn or db.connect()
-    _guard_replacement(own, store_key, zip_code, len(rows), force)
+    _guard_replacement(own, store, source, zip_code, len(rows), force)
     cols = importers.DEAL_COLUMNS
     own.execute(
         "DELETE FROM deals WHERE store=? AND source=? AND postal_code=?",
-        (store_key, "scrape", zip_code),
+        (store, source, zip_code),
     )
     own.executemany(
         f"INSERT INTO deals(store, postal_code, {', '.join(cols)}, source, imported_at) "
         f"VALUES (:store, :postal_code, {', '.join(':' + c for c in cols)}, :source, :imported_at)",
-        [{**r, "store": store_key, "postal_code": zip_code, "source": "scrape", "imported_at": now}
+        [{**{c: None for c in cols}, **r,
+          "store": store, "postal_code": zip_code, "source": source, "imported_at": now}
          for r in rows],
     )
     own.executemany(
         _HISTORY_UPSERT,
-        [{**r, "store": store_key, "postal_code": zip_code, "source": "scrape",
-          "captured_at": today, "updated_at": now} for r in rows],
+        [{**{c: None for c in cols}, **r, "store": store, "postal_code": zip_code,
+          "source": source, "captured_at": today, "updated_at": now} for r in rows],
     )
     # GFP-75: fold this scrape into the durable records BEFORE committing, so
     # records and the history rows they summarise land in the same
     # transaction. Done after the guards, so a scrape refused as broken never
     # moves a record -- a record low set by a bad parse would be permanent.
-    record_summary = records.update_records(own, store_key, zip_code, rows, today)
+    # Records are keyed on the STORE, not the source: a record low is a record
+    # low whichever feed observed it, and the Flipp ad and the shelf-price API
+    # describe the same shop.
+    record_summary = records.update_records(own, store, zip_code, rows, today)
     own.commit()
     return {
         "flyer": flyer,

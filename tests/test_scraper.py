@@ -195,12 +195,47 @@ def test_store_registry():
     # equality assertion that necessarily changes the moment a new store is
     # registered -- flagged in the GFP-4 PR description per the ticket's
     # "don't touch other test files unless you truly must" instruction.
-    assert set(SCRAPERS) == {"foodlion", "harristeeter", "wholefoods"}
+    # GFP-98: 'harristeeter-api' is the Kroger shelf-price API for the SAME
+    # physical store as 'harristeeter' (the Flipp weekly ad). Two entries, one
+    # shop, on purpose -- see scrapers/__init__.py.
+    assert set(SCRAPERS) == {
+        "foodlion", "harristeeter", "harristeeter-api", "wholefoods",
+    }
     # Every registered module exposes the thin store-scraper surface the CLI uses.
     for key, mod in SCRAPERS.items():
-        assert mod.STORE_KEY == key
         assert mod.MERCHANT and mod.DEFAULT_POSTAL_CODE
         assert callable(mod.scrape)
+        # The registry key is the module's SCRAPER_KEY when it declares one,
+        # otherwise its STORE_KEY. Only a second-source module needs the two to
+        # differ, so the assertion is about the registry being self-consistent
+        # rather than about the names being equal.
+        assert getattr(mod, "SCRAPER_KEY", mod.STORE_KEY) == key
+
+
+def test_a_second_source_for_one_store_does_not_evict_the_first():
+    """GFP-98: 'harristeeter' and 'harristeeter-api' share a store but not a source.
+
+    If these ever collapse to the same (STORE_KEY, SOURCE) pair, run_scrape's
+    DELETE — scoped to (store, source, postal_code) — would make each scrape
+    wipe the other's rows, silently halving the data with no error anywhere.
+    """
+    from grocery_planner import scrapers as pkg
+    from grocery_planner.scrapers import SCRAPERS
+
+    flipp, api = SCRAPERS["harristeeter"], SCRAPERS["harristeeter-api"]
+    assert pkg.store_key_for(flipp) == pkg.store_key_for(api) == "harristeeter"
+    assert pkg.source_for(flipp) != pkg.source_for(api)
+    assert pkg.source_for(flipp) == "scrape"
+    assert pkg.source_for(api) == "kroger-api"
+
+
+def test_store_key_for_falls_back_to_the_registry_key():
+    # A stand-in without STORE_KEY (a test double, or a scraper that simply
+    # doesn't need the distinction) must not have to know this convention.
+    from grocery_planner import scrapers as pkg
+
+    assert pkg.store_key_for(object(), "foodlion") == "foodlion"
+    assert pkg.source_for(object()) == "scrape"
 
 
 def test_harris_teeter_config():

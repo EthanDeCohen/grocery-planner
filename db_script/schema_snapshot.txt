@@ -58,8 +58,11 @@ TABLE deals
   loyalty_required: TEXT
   notes: TEXT
   postal_code: TEXT
+  price_per_unit: REAL
+  price_per_unit_uom: TEXT
   regular_price: REAL
   sale_price: REAL
+  sold_by: TEXT
   source: TEXT
   source_url: TEXT
   store: TEXT NOT NULL
@@ -98,8 +101,11 @@ TABLE price_history
   id: INTEGER PK
   item_name: TEXT NOT NULL
   postal_code: TEXT NOT NULL
+  price_per_unit: REAL
+  price_per_unit_uom: TEXT
   regular_price: REAL
   sale_price: REAL
+  sold_by: TEXT
   source: TEXT
   store: TEXT NOT NULL
   sub_category: TEXT

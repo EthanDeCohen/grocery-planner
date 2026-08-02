@@ -57,7 +57,11 @@ def test_all_scrapers_includes_every_registered_store_regardless_of_readiness():
     # GFP-4: wholefoods is registered but (in this test environment, with no
     # hand-minted session cookie) not ready -- all_scrapers() must still name
     # it; available_scrapers() must not.
-    assert set(service.all_scrapers()) == {"foodlion", "harristeeter", "wholefoods"}
+    # GFP-98 adds 'harristeeter-api' (Kroger shelf prices), which like
+    # wholefoods is registered but not ready without credentials.
+    assert set(service.all_scrapers()) == {
+        "foodlion", "harristeeter", "harristeeter-api", "wholefoods",
+    }
 
 
 def test_scraper_status_unknown_store_raises():
