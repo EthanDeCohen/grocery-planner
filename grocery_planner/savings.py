@@ -24,6 +24,32 @@ Four honesty rules run through this module:
    :func:`cost_per_gram_protein` below can use a manufacturer's own printed
    protein content directly when no weight-based size is available.
 
+   **That figure is per SERVING, not per PACKAGE** (GFP-73) -- "20G Protein"
+   is a nutrition-facts-panel number, and nutrition facts are always stated
+   per serving. For a single-serve drink the two coincide; for a
+   multi-serving tub they do not, and treating the claim as the package
+   total silently overstates cost-per-gram-of-protein by the serving count
+   (a real deal, "Chobani 20G Protein **Multiserve** Greek Yogurt" at
+   $10/each, priced as if the tub held 20g total when a 4-serving tub
+   actually holds ~80g -- 4x cheaper than reported). Flipp gives no
+   servings-per-container field for any store (Food Lion, Harris Teeter), so
+   :func:`cost_per_gram_protein` cannot fold it in there -- it can only (a)
+   use it directly when a caller *does* know it (``servings_per_container``,
+   see below -- the same fold-in ``scrapers/wholefoods.py`` already does for
+   its own weight-based-size path) and (b) otherwise flag the resulting
+   number as less certain than a real measurement rather than pretend the
+   ambiguity doesn't exist. The word "Multiserve" (or a spacing/hyphen
+   variant) in the name is treated as a stronger, specific signal of that
+   ambiguity than the generic case and drops confidence further. Deliberately
+   NOT "fixed" by guessing a servings count: guessing upward would make an
+   overpriced multi-serving container look artificially cheap -- the
+   dangerous direction. Keeping the per-serving-as-per-package number (which
+   *overstates* cost, the safe direction: the engine under-recommends rather
+   than pushes something it shouldn't) and only lowering confidence preserves
+   that safe direction on purpose. See ``LABEL_CLAIM_CONFIDENCE``/
+   ``LABEL_CLAIM_MULTISERVE_CONFIDENCE``/``LABEL_CLAIM_KNOWN_SERVINGS_CONFIDENCE``
+   below.
+
 Note on savings-vs-regular-price: the Flipp scrapers only ever populate
 ``sale_price``; ``regular_price`` arrives solely from CSV imports. So
 :func:`savings_vs_regular` returns ``None`` for scraped rows until shelf-price
@@ -41,7 +67,8 @@ forbids. The one exception (GFP-69): when a deal has no weight-based size but
 its name carries a rule-4 protein claim, that claim *is* the numerator this
 function wants, straight from the manufacturer, so it is used directly
 instead of returning ``None`` -- see :func:`parse_protein_claim` and the
-label-claim branch below.
+label-claim branch below (folded through ``servings_per_container`` per the
+GFP-73 note above when that count is known).
 """
 from __future__ import annotations
 
@@ -106,6 +133,12 @@ _BARE = re.compile(r"\b(dozen|each)\b", re.IGNORECASE)
 _PROTEIN_CLAIM = re.compile(
     rf"\b({_NUMBER})\s*g(?:rams?)?\b\s*protein\b", re.IGNORECASE
 )
+# GFP-73: "Multiserve" (or a spacing/hyphen variant) in the name is a
+# specific, positive signal that a rule-4 protein claim describes ONE
+# serving of a package holding MORE than one -- stronger evidence than the
+# generic "we simply don't know" case every other label-claim deal is in.
+# See :func:`_label_claim_is_multiserve` and the module docstring's rule 4.
+_MULTISERVE_SIGNAL = re.compile(r"\bmulti[\s-]?serve\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -168,16 +201,25 @@ def parse_size(item_name: str | None) -> Size | None:
 
 
 def parse_protein_claim(item_name: str | None) -> float | None:
-    """Grams of protein per package, read from a manufacturer's own on-pack
+    """Grams of protein PER SERVING, read from a manufacturer's own on-pack
     claim such as "20G Protein" -- or ``None`` if the headline carries no
     such claim.
 
     This is :func:`parse_size`'s rule 4 read the other way round: the same
     "20G Protein" that must never become a 20-gram size *is* a real number,
-    just not a size -- it is the protein content :func:`cost_per_gram_protein`
+    just not a size -- it is a protein content :func:`cost_per_gram_protein`
     ultimately wants. Rule 1 (unreadable -> ``None``, never a guess) and
     rule 2 (only the headline product's figure counts, so an "A or B" promo
     doesn't borrow B's claim for A) both apply here exactly as they do to size.
+
+    Per SERVING, not per package (GFP-73): a nutrition-facts figure is always
+    stated per serving, and this function only ever reads the figure itself,
+    never how many servings the package holds -- that is a separate fact
+    (``servings_per_container``) that :func:`cost_per_gram_protein` folds in
+    only when a caller actually supplies it. For a single-serve item the two
+    numbers happen to coincide; assuming they always do is exactly the bug
+    GFP-73 fixed -- see the module docstring's rule 4 and
+    :func:`cost_per_gram_protein`'s label-claim branch.
 
     >>> parse_protein_claim("Chobani 20G Protein Drinks")
     20.0
@@ -189,6 +231,18 @@ def parse_protein_claim(item_name: str | None) -> float | None:
     headline = re.split(r"\bor\b", item_name, maxsplit=1, flags=re.IGNORECASE)[0]
     match = _PROTEIN_CLAIM.search(headline)
     return float(match.group(1)) if match else None
+
+
+def _label_claim_is_multiserve(item_name: str) -> bool:
+    """Does the headline itself flag a rule-4 protein claim as per-serving-of-
+    several (GFP-73), e.g. "Chobani 20G Protein Multiserve Greek Yogurt"?
+
+    Same headline-only rule as :func:`parse_protein_claim` (rule 2): a
+    "Multiserve" belonging to the SECOND item in an "A or B" promo says
+    nothing about the first item's claim.
+    """
+    headline = re.split(r"\bor\b", item_name, maxsplit=1, flags=re.IGNORECASE)[0]
+    return bool(_MULTISERVE_SIGNAL.search(headline))
 
 
 def cost_per_unit(price: float | None, item_name: str | None) -> tuple[float, str] | None:
@@ -265,12 +319,35 @@ def rank_by_unit_price(rows: Iterable[Any], limit: int = 0) -> list[dict[str, An
 # all -- it is the exact protein content of the exact product printed on the
 # package, which is a stronger fact than any matched food's protein-per-100g
 # estimate. `food_id`/`food_name`/`size_grams` are None on this path (there is
-# no matched food and no known package weight, only a protein figure);
-# `match_confidence` sits above matching.CONFIDENCE_HIGH because there is no
-# match-quality question to weigh here at all.
+# no matched food and no known package weight, only a protein figure).
 LABEL_CLAIM_SOURCE = "label"
 LABEL_CLAIM_METHOD = "protein_claim"
-LABEL_CLAIM_CONFIDENCE = 1.0
+# GFP-73: this used to sit above matching.CONFIDENCE_HIGH on the theory that
+# there was no match-quality question to weigh at all -- a manufacturer's own
+# number for the exact product. That theory missed one thing: the number is
+# per SERVING (see parse_protein_claim), and nothing about Flipp ad copy says
+# how many servings the package holds. Treating "1 serving = 1 package" as a
+# near-certainty was itself the bug (the real "Chobani ... Multiserve ..."
+# deal this ticket was opened against). CONFIDENCE_MEDIUM instead: still a
+# real manufacturer figure for the exact product (stronger than a keyword
+# guess against the catalog, which is why it isn't CONFIDENCE_LOW either),
+# but the serving-vs-package question is real and unresolved here, not "no
+# question at all".
+LABEL_CLAIM_CONFIDENCE = matching.CONFIDENCE_MEDIUM
+# A name that itself says "Multiserve" (:func:`_label_claim_is_multiserve`) is
+# specific, positive evidence -- not mere generic uncertainty -- that the
+# per-serving-as-per-package assumption above is actively wrong for this
+# product, so it sits a full step below the baseline.
+LABEL_CLAIM_MULTISERVE_CONFIDENCE = matching.CONFIDENCE_LOW
+LABEL_CLAIM_MULTISERVE_METHOD = "protein_claim_multiserve_uncertain"
+# GFP-73: when a caller DOES know the servings count (``servings_per_container``
+# on :func:`cost_per_gram_protein`), the serving-vs-package question above is
+# actually answered, not guessed around -- protein per package = per-serving x
+# servings, the same correct fold-in ``scrapers/wholefoods.py`` already does
+# for its own weight-based-size path. That is real information, not an
+# assumption, so confidence returns to the pre-GFP-73 near-certainty.
+LABEL_CLAIM_KNOWN_SERVINGS_CONFIDENCE = 1.0
+LABEL_CLAIM_KNOWN_SERVINGS_METHOD = "protein_claim_known_servings"
 
 
 @dataclass(frozen=True)
@@ -296,6 +373,7 @@ def cost_per_gram_protein(
     item_name: str | None,
     store: str | None,
     conn: sqlite3.Connection | None = None,
+    servings_per_container: float | None = None,
 ) -> ProteinCost | None:
     """Dollars per gram of protein for one deal, or ``None`` when any link in
     the chain is missing -- following this module's rule 1, a missing number
@@ -307,11 +385,29 @@ def cost_per_gram_protein(
     GFP-23) -> grams of protein in the package -> price / that.
 
     GFP-69 exception: when there is no weight-based size but the name carries
-    a rule-4 protein claim ("20G Protein"), that figure *is* grams of protein
-    in the package already -- no size, no food match, no ``food_nutrients``
-    lookup needed, because it is the manufacturer's own number for this exact
+    a rule-4 protein claim ("20G Protein"), that figure is grams of protein
+    PER SERVING -- no size, no food match, no ``food_nutrients`` lookup
+    needed, because it is the manufacturer's own number for this exact
     product rather than an estimate for whatever it gets matched to. See
     ``LABEL_CLAIM_SOURCE``/``LABEL_CLAIM_METHOD``/``LABEL_CLAIM_CONFIDENCE``.
+
+    GFP-73: a per-serving figure is not yet a per-package figure. When
+    ``servings_per_container`` is supplied (a caller's own known fact -- e.g.
+    a future structured source, mirroring how ``scrapers/wholefoods.py``
+    already folds its own ``servingsPerContainer`` into a package weight for
+    the weight-based-size path above), this multiplies it back out
+    (``per-serving x servings``) and returns a near-certain figure
+    (``LABEL_CLAIM_KNOWN_SERVINGS_CONFIDENCE``/``_METHOD``). Every Flipp deal
+    today supplies no such count (Food Lion, Harris Teeter), so the common
+    case keeps the pre-GFP-73 per-serving-as-per-package number unchanged --
+    deliberately: guessing a servings count upward would make an overpriced
+    multi-serving container look artificially cheap (the dangerous
+    direction), whereas keeping today's number only *overstates* cost (the
+    safe direction, see the module docstring's rule 4) -- but the returned
+    confidence no longer claims near-certainty for it
+    (``LABEL_CLAIM_CONFIDENCE``, or ``LABEL_CLAIM_MULTISERVE_CONFIDENCE`` when
+    the name itself says "Multiserve" -- see
+    :func:`_label_claim_is_multiserve`).
 
     Deliberately store-agnostic: ``store`` is used only as half of the
     ``deal_food_match`` lookup key, never to change behavior.
@@ -358,20 +454,53 @@ def cost_per_gram_protein(
 
     # GFP-69: no weight-based size, but a manufacturer's own protein claim
     # ("20G Protein") may still make this deal computable -- honesty rule 1
-    # still applies (no claim -> None, never a guess).
-    protein_grams = parse_protein_claim(item_name)
-    if protein_grams is None or protein_grams <= 0:
+    # still applies (no claim -> None, never a guess). Per parse_protein_claim
+    # (GFP-73), this figure is per SERVING, not per package.
+    per_serving_grams = parse_protein_claim(item_name)
+    if per_serving_grams is None or per_serving_grams <= 0:
         return None
 
+    if servings_per_container is not None and servings_per_container > 0:
+        # GFP-73: the caller KNOWS the servings count -- fold it in for a
+        # real per-package figure rather than treat one serving as the whole
+        # package. This is information, not a guess, so confidence returns
+        # to near-certainty.
+        protein_grams = per_serving_grams * servings_per_container
+        return ProteinCost(
+            cost_per_gram_protein=price / protein_grams,
+            food_id=None,
+            food_name=None,
+            protein_source=LABEL_CLAIM_SOURCE,
+            match_confidence=LABEL_CLAIM_KNOWN_SERVINGS_CONFIDENCE,
+            match_method=LABEL_CLAIM_KNOWN_SERVINGS_METHOD,
+            size_grams=None,
+            protein_grams=protein_grams,
+        )
+
+    # GFP-73: servings unknown (true of every Flipp deal today). Do NOT
+    # guess how many there are -- guessing upward would make an overpriced
+    # multi-serving container look artificially cheap, the dangerous
+    # direction. Keep treating this serving's protein as the whole package's
+    # (unchanged from pre-GFP-73 behavior), which overstates cost-per-gram
+    # for a genuinely multi-serving item -- the safe direction, deliberately
+    # preserved (see the module docstring's rule 4) -- but no longer claim
+    # near-certainty about it.
+    if _label_claim_is_multiserve(item_name):
+        confidence = LABEL_CLAIM_MULTISERVE_CONFIDENCE
+        method = LABEL_CLAIM_MULTISERVE_METHOD
+    else:
+        confidence = LABEL_CLAIM_CONFIDENCE
+        method = LABEL_CLAIM_METHOD
+
     return ProteinCost(
-        cost_per_gram_protein=price / protein_grams,
+        cost_per_gram_protein=price / per_serving_grams,
         food_id=None,
         food_name=None,
         protein_source=LABEL_CLAIM_SOURCE,
-        match_confidence=LABEL_CLAIM_CONFIDENCE,
-        match_method=LABEL_CLAIM_METHOD,
+        match_confidence=confidence,
+        match_method=method,
         size_grams=None,
-        protein_grams=protein_grams,
+        protein_grams=per_serving_grams,
     )
 
 
@@ -389,13 +518,20 @@ def rank_by_cost_per_gram_protein(
     one (0.3 and 0.9 are never silently treated the same). Pass
     ``min_confidence`` to drop rows below a threshold outright; the default
     (``None``) keeps every computable row visible.
+
+    GFP-73: a row carrying its own ``servings_per_container`` value (no such
+    column exists yet -- ``_get`` returns ``None`` for any row that doesn't
+    have it, which is every row today) is passed through to
+    :func:`cost_per_gram_protein` so a future structured source can supply it
+    with no change here beyond populating that key.
     """
     own = conn or db.connect()
     ranked: list[dict[str, Any]] = []
     for row in rows:
         price = _get(row, "dollar_price") or _get(row, "sale_price")
         result = cost_per_gram_protein(
-            price, _get(row, "item_name"), _get(row, "store"), conn=own
+            price, _get(row, "item_name"), _get(row, "store"), conn=own,
+            servings_per_container=_get(row, "servings_per_container"),
         )
         if result is None:
             continue
