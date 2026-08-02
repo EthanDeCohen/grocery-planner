@@ -41,16 +41,35 @@ from PySide6.QtWidgets import (
 )
 from simpleeval import simple_eval
 
-from .. import db, formulas, jobs, scheduler, service
+from .. import db, formulas, jobs, scheduler, service, targets
+from ..savings import DEAL_SCORE_VARS
 from ..scrapers import SCRAPERS
 from ..stores import BY_KEY
+from ..targets import PROTEIN_TARGET_VARS
 
-# Stand-in values used to validate a formula before it is saved: every variable
-# score_deals() supplies, so a typo is caught at Save rather than at Rank.
-_FORMULA_PROBE = {
-    "price": 1.0, "sale_price": 1.0, "unit_price": 1.0,
-    "quantity": 1.0, "saved_percent": 1.0,
-}
+
+def _formula_probe(conn) -> dict[str, float]:
+    """Stand-in values used to validate a formula before it is saved.
+
+    GFP-64: a formula is not only ever scored by ``savings.score_deals``
+    (deal-ranking vars: ``price``, ``sale_price``, ...) -- GFP-29 also
+    scores the ``protein_target_daily`` formula via ``targets`` (customer
+    vars: ``weight_kg``, ``protein_factor``). A probe hand-maintained here
+    covering only the first set silently rejects every valid formula that
+    uses the second, which is exactly the bug this fixes: a nutritionist
+    could not save a protein-target formula through the GUI at all.
+
+    So this is built from each consumer's own published variable-name list
+    (``savings.DEAL_SCORE_VARS``, ``targets.PROTEIN_TARGET_VARS``) plus the
+    live profile context every formula consumer also merges in
+    (``formulas._profile_context``), rather than a second hand-written dict
+    that can drift out of sync with what those consumers actually supply --
+    which is how this bug happened in the first place.
+    """
+    probe: dict[str, float] = {name: 1.0 for name in formulas._profile_context(conn)}
+    probe.update({name: 1.0 for name in DEAL_SCORE_VARS})
+    probe.update({name: 1.0 for name in PROTEIN_TARGET_VARS})
+    return probe
 
 
 def _placeholder(text: str) -> QListWidgetItem:
@@ -340,7 +359,7 @@ class MainWindow(QMainWindow):
             return
         # Validate before storing: a formula that cannot evaluate is not saved.
         try:
-            simple_eval(expression, names=_FORMULA_PROBE)
+            simple_eval(expression, names=_formula_probe(db.connect()))
         except Exception as exc:
             self.formula_message.setText(f"Not saved — {type(exc).__name__}: {exc}")
             return

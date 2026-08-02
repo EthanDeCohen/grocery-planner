@@ -75,6 +75,12 @@ DEFAULT_PROTEIN_FACTOR = 1.6
 # calculation (GFP-29's protein target), where it does.
 KG_PER_LB = 0.45359237
 
+# GFP-66: decimal places kept by Customer.weight_display. Far finer than
+# anyone types a body weight to (nobody enters "150.000001 lb"), so rounding
+# to this can only remove float round-trip noise (e.g. 150 lb -> kg -> lb
+# landing on 149.99999999999997), never a value a user actually entered.
+_WEIGHT_DISPLAY_DECIMALS = 6
+
 
 def _normalize_unit(unit: str) -> str:
     normalized = (unit or "").strip().lower()
@@ -195,10 +201,21 @@ class Customer:
 
         ``None`` if either half is missing -- a weight with no known unit is
         not safe to guess at.
+
+        Rounded to :data:`_WEIGHT_DISPLAY_DECIMALS` places (GFP-66): the
+        lb<->kg round trip through :func:`to_kg`/:func:`from_kg` is exact
+        math but not exact *float* arithmetic -- e.g. 150 lb -> kg -> lb
+        comes back as ``149.99999999999997``, not ``150``. That epsilon is
+        display noise, not information: nobody enters body weight to six
+        decimal places, so rounding it away can't hide a real value, only
+        the floating-point artifact. ``from_kg`` itself is left exact (it
+        is a general kg<->unit converter, not display-specific) --
+        only this property, whose entire job is to be shown to a person,
+        rounds.
         """
         if self.weight_kg is None or self.weight_unit is None:
             return None
-        return from_kg(self.weight_kg, self.weight_unit)
+        return round(from_kg(self.weight_kg, self.weight_unit), _WEIGHT_DISPLAY_DECIMALS)
 
     @property
     def is_deleted(self) -> bool:

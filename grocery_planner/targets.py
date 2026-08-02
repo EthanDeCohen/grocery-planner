@@ -69,6 +69,15 @@ FORMULA_NAME = "protein_target_daily"
 # the "no hard-coded multiplier" rule holds even on a formula-free DB.
 DEFAULT_FORMULA_EXPRESSION = "weight_kg * protein_factor"
 
+# The customer-specific variable names this module supplies to a
+# FORMULA_NAME formula, over and above the live profile context (see
+# formulas._profile_context). GFP-64: named and importable for the same
+# reason as grocery_planner/savings.py's DEAL_SCORE_VARS -- so a validator
+# elsewhere (the GUI's formula editor) can derive its probe from what this
+# module actually supplies rather than hand-maintaining a second list that
+# can drift.
+PROTEIN_TARGET_VARS = ("weight_kg", "protein_factor")
+
 
 @dataclass(frozen=True)
 class ProteinTarget:
@@ -85,6 +94,11 @@ class ProteinTarget:
     weekly_unit: str = GRAMS_PER_WEEK
 
 
+def _customer_vars(customer: Customer) -> dict[str, Any]:
+    """This customer's values for each name in :data:`PROTEIN_TARGET_VARS`."""
+    return {name: getattr(customer, name) for name in PROTEIN_TARGET_VARS}
+
+
 def _formula_context(conn: sqlite3.Connection, customer: Customer) -> dict[str, Any]:
     """Profile values + this customer's weight/factor, for formula evaluation.
 
@@ -93,11 +107,7 @@ def _formula_context(conn: sqlite3.Connection, customer: Customer) -> dict[str, 
     the same name -- the more specific setting should never be silently
     shadowed by the more general one.
     """
-    return {
-        **formulas._profile_context(conn),
-        "weight_kg": customer.weight_kg,
-        "protein_factor": customer.protein_factor,
-    }
+    return {**formulas._profile_context(conn), **_customer_vars(customer)}
 
 
 def _daily_grams(conn: sqlite3.Connection, customer: Customer) -> float:
@@ -109,7 +119,7 @@ def _daily_grams(conn: sqlite3.Connection, customer: Customer) -> float:
     expression through ``simpleeval`` -- the multiplier is never inlined as
     literal Python arithmetic in this module.
     """
-    extra = {"weight_kg": customer.weight_kg, "protein_factor": customer.protein_factor}
+    extra = _customer_vars(customer)
     try:
         return float(formulas.evaluate(conn, FORMULA_NAME, extra))
     except KeyError:

@@ -419,6 +419,16 @@ def rank_by_cost_per_gram_protein(
     return ranked[:limit] if limit else ranked
 
 
+# The per-deal variable names score_deals() supplies to a formula, over and
+# above the live profile context (see formulas._profile_context). GFP-64:
+# this is a named, importable constant rather than only a literal dict
+# inline below specifically so a validator elsewhere (the GUI's formula
+# editor) can build its probe from this single source of truth instead of
+# hand-maintaining a second copy that can silently drift out of sync with
+# what this function actually supplies.
+DEAL_SCORE_VARS = ("price", "sale_price", "unit_price", "quantity", "saved_percent")
+
+
 def score_deals(
     conn: sqlite3.Connection,
     formula_name: str,
