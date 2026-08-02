@@ -149,8 +149,27 @@ right.
   chart — the pane says which of "nothing scraped yet" and "come back tomorrow"
   it is, and still lists the latest known price per store.
 
-Selecting a client opens their detail page; `Alt+Left` or **← Clients** goes
-back. Everything else lives on the menu bar:
+Selecting a client opens their **detail page** — three columns, and the thing
+the product is actually for:
+
+- **Biometrics** — editable weight (in the unit you type it in), height, age
+  and protein factor, with the required daily protein as a derived headline.
+  There is no field to type a protein target into; it follows from the weight
+  and factor, and recomputes as you edit, before you save.
+- **Daily protein bill** — what hitting that target costs per day, built from
+  the cheapest protein currently on offer. Ticking a protein-category
+  preference recomputes immediately and shows the baseline beside your plan,
+  e.g. `Baseline $2.82/day · your plan $2.99/day (+$0.17)`. With nothing
+  ticked you get the unconstrained baseline, never an empty basket. The
+  figure is **amortised** — today's share of this week's ad prices, not a
+  shopping total — and the panel says so under the number. Lines that could
+  not be priced per gram of protein are counted, never hidden.
+- **Where to buy** — the store behind each line, plus a **View ad** link where
+  one was captured. Flipp is a flyer aggregator, so a link opens a weekly ad
+  or product page, never a checkout; a line with no captured link degrades to
+  plain text rather than a dead button.
+
+`Alt+Left` or **← Clients** goes back. Everything else lives on the menu bar:
 
 - **Data ▸ Run scrape…** — pick a store and pull its fresh weekly ad on a
   background thread. The run is tracked, so it shows up in `gplan jobs` like a
