@@ -1,14 +1,58 @@
-name: CI
+# macOS CI -- ON DEMAND ONLY (GFP-94).
+#
+# Why there is no push/pull_request trigger
+# -----------------------------------------
+# This workflow used to run on `push: ["**"]` AND `pull_request`, on Windows
+# plus macOS. Measured on 2026-08-01: ~26 allowance-minutes per run (GitHub
+# bills Windows at 2x and macOS at 10x), two runs per PR commit because both
+# triggers fired, and 98 runs in a single day -- which burned the entire
+# 2,000-minute monthly free allowance in that one day and hard-blocked CI.
+#
+# The split is by platform, not by cost alone. Development happens on Windows,
+# so everything Windows-testable is verified LOCALLY before merge, in one
+# command:
+#
+#     powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
+#
+# That runs the same pytest suite and the same scripts/smoke_test.ps1 this
+# workflow used to run, on a real Windows machine, for free. Paying a 2x
+# runner to re-run them was buying nothing.
+#
+# macOS is the one platform that CANNOT be checked here: PyInstaller does not
+# cross-compile (GFP-10), so a macOS binary can only be built on a macOS
+# runner. That is what this workflow is for, and the only thing it is for.
+#
+# Run it from the Actions tab ("Run workflow"), or:
+#
+#     gh workflow run ci.yml --ref <branch>
+#     gh run watch $(gh run list --workflow=ci.yml -L1 --json databaseId --jq '.[0].databaseId')
+#
+# Dispatch it before merging anything that could plausibly behave differently
+# on macOS -- paths, filesystem case-sensitivity, timezones, subprocess or
+# shell invocation, PyInstaller spec/hidden imports, or a new dependency.
+#
+# TRADEOFF, accepted deliberately: a macOS-only break is found when someone
+# dispatches this, not at PR time. If that stops being an acceptable trade,
+# the one-line fix is to add back:
+#
+#     push:
+#       branches: [main]
+#
+# which costs ~40 allowance-minutes per merge to main and nothing per PR.
+name: CI (macOS)
 
 on:
-  push:
-    branches: ["**"]
-  pull_request:
+  workflow_dispatch:
+
+# A re-dispatch supersedes a run still in flight rather than paying for both.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    name: tests (py${{ matrix.python-version }})
-    runs-on: windows-latest
+    name: tests (macOS, py${{ matrix.python-version }})
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
@@ -27,28 +71,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      # tests/test_schema_guard.py (GFP-61) runs here too -- it pins
+      # db_script/init/0001_GFP-9.ddl's checksum, checks the committed schema
+      # snapshot against a freshly built database, and asserts db_script/
+      # script hygiene. No separate job needed: it's plain pytest, already
+      # collected under testpaths (pyproject.toml).
+      #
+      # scripts/smoke_test.ps1 is NOT run here. It is a PowerShell script that
+      # exercises the CLI, and it runs locally on Windows via verify.ps1 --
+      # which is the platform it was written for and where the CLI actually
+      # ships. Re-running it on a 10x runner would re-test the CLI's logic,
+      # not anything macOS-specific.
       - name: Run pytest
-        # tests/test_schema_guard.py (GFP-61) runs here too -- it pins
-        # db_script/init/0001_GFP-9.ddl's checksum, checks the committed
-        # schema snapshot against a freshly built database, and asserts
-        # db_script/ script hygiene. No separate job needed: it's plain
-        # pytest, already collected under testpaths (pyproject.toml).
         run: pytest
 
-      - name: Run PowerShell smoke test
-        shell: pwsh
-        run: ./scripts/smoke_test.ps1
-
-  # GFP-10: PyInstaller cannot cross-compile, so each OS builds its own binary.
-  # macOS is built here because it cannot be built on the Windows dev machine.
+  # GFP-10: PyInstaller cannot cross-compile, so the macOS binary can only be
+  # built on macOS. This is the job the whole workflow exists for; the Windows
+  # binary is built locally with scripts/build_binary.ps1.
   binary:
-    name: binary (${{ matrix.os }})
+    name: binary (macos-latest)
     needs: test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest]
+    runs-on: macos-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -66,33 +109,19 @@ jobs:
         working-directory: packaging
         run: pyinstaller gplan.spec --noconfirm --distpath ../dist --workpath ../build
 
-      - name: Smoke test the binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GROCERY_PLANNER_DB: ${{ runner.temp }}/ci-binary.sqlite3
-        run: |
-          ./dist/gplan.exe version
-          ./dist/gplan.exe stores
-          # APScheduler resolves triggers by name; a missing hidden import in the
-          # spec surfaces here and nowhere earlier.
-          ./dist/gplan.exe schedule set foodlion --every 6h
-          ./dist/gplan.exe schedule list
-
-      - name: Smoke test the binary (macOS)
-        if: runner.os == 'macOS'
+      - name: Smoke test the binary
         env:
           GROCERY_PLANNER_DB: ${{ runner.temp }}/ci-binary.sqlite3
         run: |
           ./dist/gplan version
           ./dist/gplan stores
+          # APScheduler resolves triggers by name; a missing hidden import in
+          # the spec surfaces here and nowhere earlier.
           ./dist/gplan schedule set foodlion --every 6h
           ./dist/gplan schedule list
 
       - uses: actions/upload-artifact@v4
         with:
-          name: gplan-${{ matrix.os }}
-          path: |
-            dist/gplan
-            dist/gplan.exe
+          name: gplan-macos-latest
+          path: dist/gplan
           if-no-files-found: error

@@ -17,7 +17,19 @@ Optional Smart Commit directives in the commit body: `GFP-9 #comment <text>`, `G
 
 ## Testing (as we go)
 
-Every code change ships with tests. CI (GitHub Actions, `.github/workflows/ci.yml`) runs on every push/PR — **a PR shouldn't merge with red CI.**
+Every code change ships with tests. **Verification is local and Windows-side; GitHub Actions is macOS-only and runs on demand** (GFP-94 — Actions minutes ran out on 2026-08-01 after 98 runs in one day, and re-running Windows tests on a 2x-billed runner was buying nothing over running them here).
+
+**The pre-merge gate — one command, one exit code:**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1                    # pytest + CLI smoke test
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -IncludeBinary     # + build & smoke the Windows binary
+powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -IncludeScrape     # + the live-network smoke cases
+```
+
+**A PR shouldn't merge until `verify.ps1` exits 0.** It is the same pytest suite and the same `scripts/smoke_test.ps1` the Windows CI jobs used to run. Add `-IncludeBinary` when you touch `packaging/`, dependencies, or anything imported lazily — a missing PyInstaller hidden import surfaces nowhere else.
+
+The individual pieces, if you want a faster inner loop:
 
 ```powershell
 # Python unit/integration tests (offline, fast)
@@ -28,6 +40,15 @@ pytest
 powershell -ExecutionPolicy Bypass -File scripts/smoke_test.ps1
 powershell -ExecutionPolicy Bypass -File scripts/smoke_test.ps1 -IncludeScrape   # also hits network
 ```
+
+**macOS is the gap `verify.ps1` cannot close.** PyInstaller doesn't cross-compile, so a macOS binary only builds on a macOS runner. Dispatch the workflow by hand when a change could behave differently there — paths, filesystem case-sensitivity, timezones, subprocess/shell invocation, the PyInstaller spec, or a new dependency:
+
+```powershell
+gh workflow run ci.yml --ref <branch>
+gh run watch $(gh run list --workflow=ci.yml -L1 --json databaseId --jq '.[0].databaseId')
+```
+
+The accepted tradeoff: a macOS-only break is found when someone dispatches that, not at PR time.
 
 Add `pytest` cases under `tests/` for new logic; add a `Test-Case` line to `scripts/smoke_test.ps1` for new CLI commands. Keep unit tests network-free (scraper *parsing* is tested via pure functions, not live calls).
 
