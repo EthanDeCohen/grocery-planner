@@ -1,0 +1,123 @@
+# ===========================================================================
+# THE REAL CI. PARKED, NOT RETIRED. RESTORE THIS. (GFP-94 / GFP-95)
+# ===========================================================================
+# This is the full Windows + macOS CI, preserved byte-for-byte as it ran on
+# main at commit eb2ed92. It is inert ONLY because of the ".disabled" suffix
+# -- GitHub Actions reads .yml/.yaml in this directory and ignores everything
+# else. Nothing about the config below is broken or deprecated.
+#
+# Why it is parked: an unusually heavy development push in August 2026 burned
+# the entire 2,000-minute monthly free allowance in a single day (98 runs on
+# 2026-08-01). This is a TEMPORARY cost measure for the duration of that push,
+# not a decision that PR-time CI was a bad idea. The free allowance resets
+# monthly and is comfortably sufficient at a normal pace.
+#
+# RESTORE IT -- one command, no reconstruction:
+#
+#     git mv .github/workflows/ci-full.yml.disabled .github/workflows/ci.yml
+#
+# That single rename overwrites the temporary macOS-only workflow and puts
+# push + pull_request CI back exactly as it was. Tracked as GFP-95 so it does
+# not get forgotten; close that ticket when you do it.
+#
+# If you touch CI while this file is parked, change THIS file too, or the
+# restore will silently roll your change back.
+# ===========================================================================
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python-version }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run pytest
+        # tests/test_schema_guard.py (GFP-61) runs here too -- it pins
+        # db_script/init/0001_GFP-9.ddl's checksum, checks the committed
+        # schema snapshot against a freshly built database, and asserts
+        # db_script/ script hygiene. No separate job needed: it's plain
+        # pytest, already collected under testpaths (pyproject.toml).
+        run: pytest
+
+      - name: Run PowerShell smoke test
+        shell: pwsh
+        run: ./scripts/smoke_test.ps1
+
+  # GFP-10: PyInstaller cannot cross-compile, so each OS builds its own binary.
+  # macOS is built here because it cannot be built on the Windows dev machine.
+  binary:
+    name: binary (${{ matrix.os }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install package + build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[build]"
+
+      - name: Build the CLI binary
+        working-directory: packaging
+        run: pyinstaller gplan.spec --noconfirm --distpath ../dist --workpath ../build
+
+      - name: Smoke test the binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GROCERY_PLANNER_DB: ${{ runner.temp }}/ci-binary.sqlite3
+        run: |
+          ./dist/gplan.exe version
+          ./dist/gplan.exe stores
+          # APScheduler resolves triggers by name; a missing hidden import in the
+          # spec surfaces here and nowhere earlier.
+          ./dist/gplan.exe schedule set foodlion --every 6h
+          ./dist/gplan.exe schedule list
+
+      - name: Smoke test the binary (macOS)
+        if: runner.os == 'macOS'
+        env:
+          GROCERY_PLANNER_DB: ${{ runner.temp }}/ci-binary.sqlite3
+        run: |
+          ./dist/gplan version
+          ./dist/gplan stores
+          ./dist/gplan schedule set foodlion --every 6h
+          ./dist/gplan schedule list
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gplan-${{ matrix.os }}
+          path: |
+            dist/gplan
+            dist/gplan.exe
+          if-no-files-found: error
