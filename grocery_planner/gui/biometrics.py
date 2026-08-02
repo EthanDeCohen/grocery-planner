@@ -1,0 +1,412 @@
+"""Biometrics panel (GFP-51): the left column of the client detail page.
+
+GFP-37 laid the detail page out as three columns -- biometrics (here), the
+daily protein bill (GFP-52), and where to buy (GFP-38) -- built
+independently so none has to wait on the others. This module owns the
+first: a client's editable biometrics, plus the number the whole product
+exists to compute, presented as a *headline* rather than buried in a form
+row like just another field.
+
+**Required protein is derived, never typed.** There is deliberately no text
+box for "daily grams" anywhere in this panel. The only levers a nutritionist
+has are the inputs :mod:`grocery_planner.targets` actually reads --
+``weight_kg`` and ``protein_factor`` (see ``targets.PROTEIN_TARGET_VARS``) --
+and the headline is recomputed from those through
+:func:`targets.protein_target_for` on every edit. Typing a target directly
+would let the displayed number and the client's real biometrics drift apart,
+which is exactly the failure mode a cost-per-gram-protein tool cannot afford.
+
+**"Recompute immediately" means before Save, not after.** Every widget that
+feeds the formula (the weight spinbox, the unit selector, the protein-factor
+spinbox) is wired to :meth:`BiometricsPanel._recompute_headline` via its Qt
+change signal, so the headline tracks the *draft* form state live. Save
+(:meth:`BiometricsPanel.on_save`) only decides when that draft is persisted
+to ``customers`` and broadcast to the rest of the app via
+:attr:`BiometricsPanel.client_changed`; it plays no part in keeping the
+headline itself correct.
+
+**Unit-switching converts, it never reinterprets.** Flipping the kg/lb combo
+box changes the *displayed* number so the real-world body weight stays the
+same -- e.g. 90 kg becomes ~198.4 lb, not a relabelled "90 lb" that would
+silently multiply the canonical ``weight_kg`` by ~2.2 the next time the
+form is read. See :meth:`BiometricsPanel._on_unit_changed`. This is the same
+2.2x dosing-error concern ``grocery_planner/customers.py`` describes for its
+``weight_kg``/``weight_unit`` split, just reachable from a combo box instead
+of a raw text field.
+
+**A missing weight is missing, never a guess** (GFP-29's rule, reasserted
+here because the whole point of a "headline" is to be glanceable): when
+``targets.protein_target_for`` returns ``None`` the headline says so in
+words, never 0, a dash, or a number computed from an invented weight.
+
+**Photo.** The ticket text mentions "photo or default avatar", but photo
+*storage* is GFP-47, not yet built -- there is no photo column. This panel
+draws a neutral placeholder avatar (the client's initials on a solid disc)
+entirely in code via :func:`_avatar_pixmap`. Swapping this for a real photo
+is GFP-47's job; nothing here should need to change except which pixmap
+:meth:`BiometricsPanel._set_avatar` hands to ``avatar_label``.
+
+**Free-text fields.** ``sex``, ``activity_level`` and ``goal`` have no
+``CHECK`` constraint or enum anywhere in the schema
+(``db_script/migration/0008_GFP-28.ddl``) -- they are plain ``TEXT``. This
+panel therefore edits them as free-text fields with a placeholder hint
+rather than inventing a fixed dropdown list the schema does not actually
+enforce; a narrower enum can be layered on later without a data migration
+if a ticket asks for one.
+"""
+from __future__ import annotations
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPixmap
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
+from .. import db, targets
+from ..customers import DEFAULT_PROTEIN_FACTOR, KG, LB, Customer, CustomerRepository, from_kg, to_kg
+
+# Diameter of the default avatar disc, in pixels. Small enough to sit beside
+# a single line of name text rather than dominating the column.
+_AVATAR_DIAMETER = 56
+
+
+def _initials(name: str) -> str:
+    """Up to two letters to print on the default avatar disc.
+
+    First + last token's first letter for a "Firstname Lastname" style name
+    (mirrors how the roster and client-detail pages already treat names);
+    the first two letters of a single-word name; ``"?"`` for a still-blank
+    name, since a client mid-intake with no name yet is a real state, not a
+    bug.
+    """
+    parts = name.split()
+    if not parts:
+        return "?"
+    if len(parts) == 1:
+        return parts[0][:2].upper()
+    return (parts[0][0] + parts[-1][0]).upper()
+
+
+def _avatar_pixmap(initials: str, diameter: int = _AVATAR_DIAMETER) -> QPixmap:
+    """A neutral placeholder avatar: initials on a solid disc.
+
+    Drawn entirely in code -- see the module docstring's note on GFP-47.
+    """
+    pixmap = QPixmap(diameter, diameter)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor("#6b7280"))  # neutral slate -- no client identity implied
+    painter.drawEllipse(0, 0, diameter, diameter)
+    font = painter.font()
+    font.setPointSize(max(diameter // 3, 8))
+    font.setBold(True)
+    painter.setFont(font)
+    painter.setPen(QColor("white"))
+    painter.drawText(pixmap.rect(), Qt.AlignCenter, initials)
+    painter.end()
+    return pixmap
+
+
+class BiometricsPanel(QWidget):
+    """Editable biometrics for one client, plus the derived protein headline.
+
+    Call :meth:`set_client` to load a customer; nothing is shown until then.
+    :attr:`client_changed` fires with the customer id after a successful
+    :meth:`on_save`, so a hosting page (GFP-37's ``ClientDetailPage``) can
+    recompute anything downstream -- the daily bill, GFP-52's column -- that
+    depends on this client's biometrics. This panel does not connect that
+    signal to anything itself; wiring it up is the host's job.
+    """
+
+    #: Emitted with the customer id after a successful Save.
+    client_changed = Signal(int)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.customer: Customer | None = None
+        # Tracks the unit the weight spinbox's *current number* is expressed
+        # in, so _on_unit_changed knows what to convert from. Kept separate
+        # from unit_box.currentData() because by the time that handler runs,
+        # the combo box has already moved to the new selection.
+        self._active_unit: str = KG
+
+        outer = QVBoxLayout(self)
+
+        # --- identity: avatar + name ---------------------------------- #
+        identity = QHBoxLayout()
+        self.avatar_label = QLabel()
+        self.avatar_label.setFixedSize(_AVATAR_DIAMETER, _AVATAR_DIAMETER)
+        identity.addWidget(self.avatar_label)
+
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("Full name")
+        identity.addWidget(self.name_edit, 1)
+        outer.addLayout(identity)
+
+        # --- headline: the number this whole panel exists to show ----- #
+        # A dedicated block rather than a QFormLayout row -- the ticket asks
+        # for this to read as a headline, not just another field.
+        self.headline_title = QLabel("Required protein")
+        outer.addWidget(self.headline_title)
+
+        self.headline_value = QLabel("")
+        headline_font = self.headline_value.font()
+        headline_font.setBold(True)
+        headline_font.setPointSize(headline_font.pointSize() + 8)
+        self.headline_value.setFont(headline_font)
+        outer.addWidget(self.headline_value)
+
+        self.headline_detail = QLabel("")
+        self.headline_detail.setWordWrap(True)
+        outer.addWidget(self.headline_detail)
+
+        # --- editable biometrics ---------------------------------------- #
+        form = QFormLayout()
+
+        weight_row = QHBoxLayout()
+        self.weight_spin = QDoubleSpinBox()
+        self.weight_spin.setRange(0.0, 1000.0)
+        self.weight_spin.setDecimals(1)
+        self.weight_spin.setSpecialValueText("not on file")  # 0 means "unknown"
+        weight_row.addWidget(self.weight_spin, 1)
+        self.unit_box = QComboBox()
+        self.unit_box.addItem("kg", KG)
+        self.unit_box.addItem("lb", LB)
+        weight_row.addWidget(self.unit_box)
+        weight_container = QWidget()
+        weight_container.setLayout(weight_row)
+        form.addRow("Weight:", weight_container)
+
+        self.height_spin = QDoubleSpinBox()
+        self.height_spin.setRange(0.0, 300.0)
+        self.height_spin.setDecimals(1)
+        self.height_spin.setSpecialValueText("not on file")
+        self.height_spin.setSuffix(" cm")
+        form.addRow("Height:", self.height_spin)
+
+        self.age_spin = QSpinBox()
+        self.age_spin.setRange(0, 120)
+        self.age_spin.setSpecialValueText("not on file")
+        form.addRow("Age:", self.age_spin)
+
+        self.sex_edit = QLineEdit()
+        self.sex_edit.setPlaceholderText("e.g. female / male / other")
+        form.addRow("Sex:", self.sex_edit)
+
+        self.activity_edit = QLineEdit()
+        self.activity_edit.setPlaceholderText("e.g. sedentary / moderate / active")
+        form.addRow("Activity level:", self.activity_edit)
+
+        self.goal_edit = QLineEdit()
+        self.goal_edit.setPlaceholderText("e.g. maintenance / cut / bulk")
+        form.addRow("Goal:", self.goal_edit)
+
+        self.factor_spin = QDoubleSpinBox()
+        self.factor_spin.setRange(0.1, 5.0)
+        self.factor_spin.setSingleStep(0.1)
+        self.factor_spin.setDecimals(2)
+        self.factor_spin.setValue(DEFAULT_PROTEIN_FACTOR)
+        self.factor_spin.setToolTip("Grams of protein per kilogram of body weight per day.")
+        form.addRow("Protein factor:", self.factor_spin)
+
+        self.notes_edit = QLineEdit()
+        self.notes_edit.setPlaceholderText("Notes")
+        form.addRow("Notes:", self.notes_edit)
+
+        outer.addLayout(form)
+
+        self.save_btn = QPushButton("Save")
+        self.save_btn.clicked.connect(self.on_save)
+        self.save_btn.setEnabled(False)  # nothing loaded yet -- see set_client
+        outer.addWidget(self.save_btn)
+
+        self.message = QLabel("")
+        self.message.setWordWrap(True)
+        outer.addWidget(self.message)
+
+        # Only the formula's actual inputs (targets.PROTEIN_TARGET_VARS)
+        # need to trigger a recompute -- height/age/sex/etc. do not feed
+        # protein_target_for, so wiring them up would be dead weight.
+        self.weight_spin.valueChanged.connect(self._recompute_headline)
+        self.unit_box.currentIndexChanged.connect(self._on_unit_changed)
+        self.factor_spin.valueChanged.connect(self._recompute_headline)
+
+        self._set_avatar("")
+        self._recompute_headline()  # initial "no client loaded" state
+
+    # ------------------------------------------------------------------ #
+    def clear(self) -> None:
+        """Blank every field, so no client's data outlives the client.
+
+        Without this a failed lookup left the *previous* client still on
+        screen -- their name, their weight, and their protein headline --
+        under a "Client not found" message. A stale dose shown beside the
+        wrong client's name is the single worst thing this panel could do,
+        so a load that fails clears rather than leaves what was there.
+        """
+        self.customer = None
+        for widget in (self.weight_spin, self.unit_box, self.factor_spin):
+            widget.blockSignals(True)
+        self.name_edit.clear()
+        self.weight_spin.setValue(0.0)
+        self.unit_box.setCurrentIndex(self.unit_box.findData(KG))
+        self.height_spin.setValue(0.0)
+        self.age_spin.setValue(0)
+        self.sex_edit.clear()
+        self.activity_edit.clear()
+        self.goal_edit.clear()
+        self.factor_spin.setValue(DEFAULT_PROTEIN_FACTOR)
+        self.notes_edit.clear()
+        for widget in (self.weight_spin, self.unit_box, self.factor_spin):
+            widget.blockSignals(False)
+        self._active_unit = KG
+        self._set_avatar("")
+        self.save_btn.setEnabled(False)
+        self._recompute_headline()
+
+    def set_client(self, customer_id: int) -> bool:
+        """Load one client's biometrics into the form.
+
+        Returns ``False``, and clears the form, if no such active customer
+        exists -- mirrors ``ClientDetailPage.show_client``'s contract so a
+        hosting page can react the same way to a stale id.
+        """
+        conn = db.connect()
+        customer = CustomerRepository.get(customer_id, include_deleted=False, conn=conn)
+        if customer is None:
+            self.clear()
+            self.message.setText("Client not found.")
+            return False
+
+        self.customer = customer
+        # No unit on file yet (a weightless client) defaults the selector to
+        # kg purely as a display starting point -- it carries no meaning
+        # about the (still-None) weight itself.
+        self._active_unit = customer.weight_unit or KG
+
+        self.name_edit.setText(customer.name)
+
+        self.weight_spin.blockSignals(True)
+        self.weight_spin.setValue(customer.weight_display or 0.0)
+        self.weight_spin.blockSignals(False)
+        self.unit_box.blockSignals(True)
+        self.unit_box.setCurrentIndex(self.unit_box.findData(self._active_unit))
+        self.unit_box.blockSignals(False)
+
+        self.height_spin.setValue(customer.height_cm or 0.0)
+        self.age_spin.setValue(customer.age or 0)
+        self.sex_edit.setText(customer.sex or "")
+        self.activity_edit.setText(customer.activity_level or "")
+        self.goal_edit.setText(customer.goal or "")
+        self.factor_spin.setValue(customer.protein_factor)
+        self.notes_edit.setText(customer.notes or "")
+
+        self._set_avatar(customer.name)
+        self.save_btn.setEnabled(True)
+        self.message.setText("")
+        self._recompute_headline()
+        return True
+
+    # ------------------------------------------------------------------ #
+    def _read_customer(self) -> Customer:
+        """The current *draft* form state as a :class:`Customer`.
+
+        The single place that turns widgets into a Customer -- used for both
+        the live headline recompute and Save, so there is never a second,
+        separately-maintained copy of "what the form currently says" that
+        could drift from what is actually on screen.
+        """
+        weight = self.weight_spin.value() or None  # 0 is the specialValueText "not on file"
+        unit = self.unit_box.currentData()
+        weight_kg = to_kg(weight, unit) if weight is not None else None
+        return Customer(
+            id=self.customer.id if self.customer else None,
+            name=self.name_edit.text().strip(),
+            weight_kg=weight_kg,
+            weight_unit=unit,
+            height_cm=self.height_spin.value() or None,
+            age=self.age_spin.value() or None,
+            sex=self.sex_edit.text().strip() or None,
+            activity_level=self.activity_edit.text().strip() or None,
+            goal=self.goal_edit.text().strip() or None,
+            protein_factor=self.factor_spin.value(),
+            notes=self.notes_edit.text().strip() or None,
+            created_at=self.customer.created_at if self.customer else None,
+            deleted_at=self.customer.deleted_at if self.customer else None,
+        )
+
+    def _recompute_headline(self, *_args: object) -> None:
+        """Redraw the headline from the current draft form state.
+
+        ``*_args`` absorbs whatever a connected Qt signal hands over
+        (``valueChanged(float)``, ``currentIndexChanged(int)``, ...) since
+        this method only cares that *something* changed, not what.
+        """
+        draft = self._read_customer()
+        target = targets.protein_target_for(draft, conn=db.connect())
+        if target is None:
+            # GFP-29's rule, reasserted here on purpose: a "headline" is the
+            # most visible number on the page, which makes it the worst
+            # possible place to quietly substitute a guess for a missing
+            # weight.
+            self.headline_value.setText("No target")
+            self.headline_detail.setText(
+                "No weight on file, so there is no protein target to compute."
+            )
+            return
+        self.headline_value.setText(f"{target.daily_grams:.0f} {target.daily_unit}")
+        self.headline_detail.setText(f"{target.weekly_grams:.0f} {target.weekly_unit}")
+
+    def _on_unit_changed(self, _index: int) -> None:
+        """kg<->lb converts the displayed number; it never reinterprets it.
+
+        See the module docstring's "Unit-switching converts" note. Signals
+        are blocked around the spinbox update so this handler's own
+        recompute call (not a second one from ``valueChanged``) is what
+        actually redraws the headline.
+        """
+        new_unit = self.unit_box.currentData()
+        if new_unit == self._active_unit:
+            return
+        displayed = self.weight_spin.value()
+        if displayed:  # 0 is "not on file" -- nothing there to convert
+            kg = to_kg(displayed, self._active_unit)
+            self.weight_spin.blockSignals(True)
+            self.weight_spin.setValue(round(from_kg(kg, new_unit), 6))
+            self.weight_spin.blockSignals(False)
+        self._active_unit = new_unit
+        self._recompute_headline()
+
+    # ------------------------------------------------------------------ #
+    def _set_avatar(self, name: str) -> None:
+        self.avatar_label.setPixmap(_avatar_pixmap(_initials(name)))
+
+    def on_save(self) -> None:
+        if self.customer is None:
+            self.message.setText("No client loaded — nothing to save.")
+            return
+        draft = self._read_customer()
+        if not draft.name:
+            # A client record cannot be re-derived from anything (see
+            # customers.py), and the roster identifies clients by name alone,
+            # so saving a blank one loses the only handle on the record.
+            # AddClientDialog refuses this on the way in; so does this on edit.
+            self.message.setText("A client needs a name — not saved.")
+            return
+        saved = CustomerRepository.save(draft, conn=db.connect())
+        self.customer = saved
+        self._active_unit = saved.weight_unit or KG
+        self._set_avatar(saved.name)
+        self.message.setText("Saved.")
+        self.client_changed.emit(saved.id)
