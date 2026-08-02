@@ -166,7 +166,11 @@ def test_run_catch_up_scrapes_overdue_stores_and_survives_failures(conn, monkeyp
     scheduler.set_schedule(conn, "foodlion", "interval", "6h")
     scheduler.set_schedule(conn, "harristeeter", "interval", "6h")
 
-    def fake_scrape(store_key, postal_code=None, conn=None):
+    def fake_scrape(store_key, postal_code=None, conn=None, force=False):
+        # GFP-71: jobs.run_tracked_scrape now always forwards `force` as a
+        # keyword to service.run_scrape, so this fake's signature must accept
+        # it too (even though this test never passes force=True) -- added
+        # here per the GFP-71 PR description.
         if store_key == "harristeeter":
             raise RuntimeError("no active flyer")
         return {"flyer": {}, "stats": {"total": 7}, "postal_code": "27401"}
@@ -193,9 +197,12 @@ def test_run_catch_up_reaps_before_scraping(conn, monkeypatch):
 
 
 def test_run_tracked_scrape_records_the_run(conn, monkeypatch):
+    # GFP-71: run_tracked_scrape now always forwards `force` as a keyword to
+    # service.run_scrape, so this fake must accept it too -- added per the
+    # GFP-71 PR description.
     monkeypatch.setattr(
         service, "run_scrape",
-        lambda store_key, postal_code=None, conn=None: {"stats": {"total": 42}},
+        lambda store_key, postal_code=None, conn=None, force=False: {"stats": {"total": 42}},
     )
     result = jobs.run_tracked_scrape("foodlion", conn=conn)
     row = jobs.recent_jobs(conn)[0]

@@ -128,18 +128,30 @@ def run_tracked_scrape(
     store_key: str,
     postal_code: str | None = None,
     conn: sqlite3.Connection | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Run a scrape with a ``scraping_jobs`` row around it.
 
     Returns the same payload as :func:`service.run_scrape` plus ``job_id``. On
     failure the job row is marked ``failed`` with the message and the exception
     is re-raised — the caller decides whether that is fatal.
+
+    ``force`` (GFP-71) is forwarded straight through to
+    :func:`service.run_scrape`, bypassing its GFP-67 replace-guards
+    (:class:`service.EmptyScrapeError` / :class:`service.ImplausibleCollapseError`).
+    Before this, nothing reaching ``run_scrape`` through the tracked path (the
+    GUI's "Run scrape now" and ``scheduler``'s catch-up/scheduled runs) could
+    ever pass ``force=True`` — a guard tripping here had no escape hatch at
+    all, which is exactly what the guard's own ``force`` parameter was meant
+    to prevent.
     """
     own = conn or db.connect()
     job_id = start_job(own, store_key)
     try:
         checkpoint(own, job_id, "fetching flyer")
-        result = service.run_scrape(store_key, postal_code=postal_code, conn=own)
+        result = service.run_scrape(
+            store_key, postal_code=postal_code, conn=own, force=force
+        )
     except Exception as exc:
         fail_job(own, job_id, f"{type(exc).__name__}: {exc}")
         raise

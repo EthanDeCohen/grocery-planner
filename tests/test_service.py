@@ -12,6 +12,13 @@ from grocery_planner import service
 PUBLIC_API = [
     "DEAL_TYPE_GROUPS",
     "EXPORT_COLUMNS",
+    # GFP-71: EmptyScrapeError/ImplausibleCollapseError (and their shared base,
+    # ScrapeGuardError) were previously reachable only via service.ingest,
+    # unlike UnknownStoreError -- re-exported here for consistency, added per
+    # the GFP-71 PR description.
+    "EmptyScrapeError",
+    "ImplausibleCollapseError",
+    "ScrapeGuardError",
     # GFP-4: registered and ready are no longer the same question (Whole
     # Foods needs a hand-minted session cookie before it's scrapable) --
     # ScraperStatus/all_scrapers/scraper_status are the new vocabulary for

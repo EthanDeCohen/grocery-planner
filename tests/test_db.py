@@ -46,6 +46,93 @@ EXPECTED_CUSTOMER_COLUMNS = {
 SCRIPT_NAME_RE = re.compile(r"^\d{4}_GFP-\d+\.(ddl|dml)$")
 
 
+# --------------------------------------------------------------------------- #
+# GFP-72 — derive the "rewind to mid-history" DROP list from the schema
+# itself, instead of hard-coding it.
+#
+# test_a_partially_migrated_database_adopts_then_catches_up and
+# test_adoption_still_runs_after_a_partially_recorded_failed_upgrade below
+# both need to simulate a database whose history stopped right after
+# migration 0002 (GFP-6's dollar_price) -- everything 0003 onward introduced
+# has to be undone first. That used to be a hand-written list of DROP/ALTER
+# statements; GFP-15 had to extend it the moment it added new `deals`
+# columns, and nothing forces the next migration's author to remember to do
+# the same. If they forget, the rewind silently stops rewinding anything --
+# the "old" columns stay present, schema_version still (correctly) says the
+# migration hasn't run, and the test that's supposed to prove adoption works
+# on a genuinely mid-history database instead exercises a database that is
+# actually fully current. It still passes; it just isn't testing what it
+# claims to.
+#
+# The fix: derive the statements by diffing two schemas that db.py already
+# knows how to build --
+#   "full"     = every script on disk, applied in full (today's real schema).
+#   "baseline" = only the scripts up to and including a given seq (in-memory,
+#                built from the very same db_script/ files/helpers db.py uses
+#                to apply migrations for real).
+# Any table in "full" but not "baseline" is new since that seq -> DROP TABLE.
+# Any column in "full" but not "baseline", on a table that already existed at
+# that seq -> ALTER TABLE ... DROP COLUMN. A future migration that adds a
+# `deals` column (or any other table's column, or a whole new table) shows up
+# here automatically -- see test_history_after_a_new_migration_is_derived_
+# not_hand_maintained below for a self-contained proof.
+# --------------------------------------------------------------------------- #
+def _full_schema_fingerprint(tmp_path) -> dict[str, set[str]]:
+    """Fingerprint of a brand-new database built from every db_script/ script
+    currently on disk (init/ + migration/, in full) -- today's real schema."""
+    import sqlite3
+
+    from grocery_planner import db
+
+    conn = sqlite3.connect(tmp_path / "_gfp72_reference_full.sqlite3")
+    conn.row_factory = sqlite3.Row  # _apply_pending_migrations expects Row access
+    try:
+        db._apply_pending_migrations(conn)
+        return db._schema_fingerprint(conn)
+    finally:
+        conn.close()
+
+
+def _baseline_schema_fingerprint(seq_cutoff: int) -> dict[str, set[str]]:
+    """Fingerprint produced by only the scripts up to and including
+    ``seq_cutoff``, replayed in-memory. Never touches schema_version or
+    _apply_pending_migrations -- this is deliberately just "what SQL these
+    specific scripts, in order, produce," independent of the tracking
+    machinery being exercised elsewhere in this file."""
+    import sqlite3
+
+    from grocery_planner import db
+
+    conn = sqlite3.connect(":memory:")
+    try:
+        for seq, _key, path in db._all_scripts():
+            if seq > seq_cutoff:
+                break
+            for stmt in db._split_statements(path.read_text(encoding="utf-8")):
+                conn.execute(stmt)
+        return db._schema_fingerprint(conn)
+    finally:
+        conn.close()
+
+
+def _drop_statements_for_history_after(seq_cutoff: int, tmp_path) -> list[str]:
+    """SQL statements that undo every table/column db_script/ introduced
+    strictly after schema-version seq ``seq_cutoff``, so applying them to a
+    fully-current database leaves it looking like history stopped at that
+    seq. Self-maintaining by construction (see the module note above)."""
+    full = _full_schema_fingerprint(tmp_path)
+    baseline = _baseline_schema_fingerprint(seq_cutoff)
+
+    statements = [
+        f"DROP TABLE IF EXISTS {table}"
+        for table in sorted(set(full) - set(baseline))
+    ]
+    for table, baseline_cols in baseline.items():
+        for col in sorted(full.get(table, set()) - baseline_cols):
+            statements.append(f"ALTER TABLE {table} DROP COLUMN {col}")
+    return statements
+
+
 def test_tables_created(conn):
     names = {r["name"] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
@@ -706,28 +793,14 @@ def test_a_partially_migrated_database_adopts_then_catches_up(tmp_path):
     # Rewind to a mid-history state: keep 0002's dollar_price, drop everything
     # 0003 onward introduced, and remove the tracking table entirely.
     #
-    # GFP-15 note: source_url/image_url/flipp_flyer_id/flipp_item_id/
-    # flipp_coupon_id (0012_GFP-15.ddl) are also `deals` columns introduced
-    # after 0002, same as postal_code -- they must be dropped here too, or
-    # this "rewind" leaves them present while schema_version still thinks
-    # seq 12 hasn't run, and the real re-application of 0012 below then
-    # collides on columns that were never actually undone. No assertion in
-    # this test changes; the DROP list just has to keep including every
-    # `deals` column any migration after 0002 has since added.
+    # GFP-72: the DROP/ALTER list itself is derived, not hand-maintained --
+    # see _drop_statements_for_history_after above. It diffs a full build
+    # against a baseline built from only 0001+0002, so a future migration
+    # that adds a `deals` column (or any other new table/column) is picked up
+    # here automatically; no assertion in this test changes.
     raw = sqlite3.connect(p)
-    for stmt in (
-        "DROP TABLE IF EXISTS schema_version",
-        "DROP TABLE IF EXISTS price_history",
-        "DROP TABLE IF EXISTS food_nutrients",
-        "DROP TABLE IF EXISTS foods",
-        "DROP TABLE IF EXISTS customers",
-        "ALTER TABLE deals DROP COLUMN postal_code",
-        "ALTER TABLE deals DROP COLUMN source_url",
-        "ALTER TABLE deals DROP COLUMN image_url",
-        "ALTER TABLE deals DROP COLUMN flipp_flyer_id",
-        "ALTER TABLE deals DROP COLUMN flipp_item_id",
-        "ALTER TABLE deals DROP COLUMN flipp_coupon_id",
-    ):
+    raw.execute("DROP TABLE IF EXISTS schema_version")
+    for stmt in _drop_statements_for_history_after(2, tmp_path):
         raw.execute(stmt)
     raw.execute("INSERT INTO deals(store, item_name) VALUES ('foodlion', 'Chicken Breast')")
     raw.commit()
@@ -763,26 +836,15 @@ def test_adoption_still_runs_after_a_partially_recorded_failed_upgrade(tmp_path)
     p = tmp_path / "poisoned.sqlite3"
     db.connect(p).close()
 
-    # See the identical GFP-15 note in test_a_partially_migrated_database_
-    # adopts_then_catches_up above: any `deals` column added after 0002 has
-    # to be dropped here too, so this rewind keeps being an honest simulation
-    # of "history stopped right after 0002" as the schema grows.
+    # GFP-72: same derived rewind as test_a_partially_migrated_database_
+    # adopts_then_catches_up above (see _drop_statements_for_history_after) --
+    # this test's distinguishing feature is the partially-recorded
+    # schema_version (below), not a different structural rewind.
     raw = sqlite3.connect(p)
-    for stmt in (
-        "DROP TABLE IF EXISTS price_history",
-        "DROP TABLE IF EXISTS food_nutrients",
-        "DROP TABLE IF EXISTS foods",
-        "DROP TABLE IF EXISTS customers",
-        "ALTER TABLE deals DROP COLUMN postal_code",
-        "ALTER TABLE deals DROP COLUMN source_url",
-        "ALTER TABLE deals DROP COLUMN image_url",
-        "ALTER TABLE deals DROP COLUMN flipp_flyer_id",
-        "ALTER TABLE deals DROP COLUMN flipp_item_id",
-        "ALTER TABLE deals DROP COLUMN flipp_coupon_id",
-        # Mid-history AND partially recorded: 0001 landed, nothing after it.
-        "DELETE FROM schema_version WHERE seq > 1",
-    ):
+    for stmt in _drop_statements_for_history_after(2, tmp_path):
         raw.execute(stmt)
+    # Mid-history AND partially recorded: 0001 landed, nothing after it.
+    raw.execute("DELETE FROM schema_version WHERE seq > 1")
     raw.commit()
     raw.close()
 
@@ -796,3 +858,82 @@ def test_adoption_still_runs_after_a_partially_recorded_failed_upgrade(tmp_path)
     assert "postal_code" in cols
     assert conn.execute("SELECT COUNT(*) FROM foods").fetchone()[0] > 0
     conn.close()
+
+
+def test_history_after_a_new_migration_is_derived_not_hand_maintained(
+    tmp_path, monkeypatch
+):
+    """GFP-72 proof.
+
+    The bug this fixes: the two adoption tests above used to rewind to
+    "mid-history" via a hand-written DROP/ALTER list. Every migration that
+    added a `deals` column had to remember to extend that list, or the
+    rewind silently stopped simulating anything real -- the "old" columns
+    would stay present, schema_version would (correctly) say the migration
+    hadn't run, and the test would keep passing while testing nothing.
+    GFP-15 hit this immediately.
+
+    This builds a throwaway, self-contained db_script/ tree -- entirely
+    separate from the real one under the repo root -- with its own 0001/0002
+    baseline plus a brand-new 0003 migration adding a `deals` column this
+    test file has never heard of. It then asks
+    _drop_statements_for_history_after (the same helper the two tests above
+    now use) for the DROP list at cutoff=2, with NO edit to that helper or to
+    this test for the new column. If the derivation actually reads the
+    schema instead of a hard-coded list, the new column shows up unaided.
+    """
+    root = tmp_path / "throwaway_db_script"
+    (root / "init").mkdir(parents=True)
+    (root / "migration").mkdir(parents=True)
+    (root / "init" / "0001_GFP-900.ddl").write_text(
+        "CREATE TABLE IF NOT EXISTS deals (id INTEGER PRIMARY KEY, store TEXT);\n",
+        encoding="utf-8",
+    )
+    (root / "migration" / "0002_GFP-901.ddl").write_text(
+        "ALTER TABLE deals ADD COLUMN dollar_price REAL;\n", encoding="utf-8")
+    (root / "migration" / "0003_GFP-902.ddl").write_text(
+        # The "future migration nobody remembered to add to a hard-coded
+        # list" -- a brand-new `deals` column past the 0001+0002 baseline.
+        "ALTER TABLE deals ADD COLUMN brand_new_never_seen_column TEXT;\n",
+        encoding="utf-8",
+    )
+
+    from grocery_planner import db
+
+    monkeypatch.setattr(db, "_db_script_root", lambda: root)
+
+    statements = _drop_statements_for_history_after(2, tmp_path)
+
+    assert "ALTER TABLE deals DROP COLUMN brand_new_never_seen_column" in statements
+    # And nothing from on-or-before the cutoff gets dropped.
+    assert "ALTER TABLE deals DROP COLUMN dollar_price" not in statements
+    assert "ALTER TABLE deals DROP COLUMN store" not in statements
+
+    # Full end-to-end sanity check: applying the derived statements to a
+    # fully-current (throwaway-schema) database, then replaying every script
+    # from scratch, reproduces the new column with no collision -- exactly
+    # the property the two real adoption tests above depend on.
+    import sqlite3
+
+    p = tmp_path / "throwaway.sqlite3"
+    conn = sqlite3.connect(p)
+    conn.row_factory = sqlite3.Row
+    db._apply_pending_migrations(conn)  # build fully current (through 0003)
+    conn.close()
+
+    raw = sqlite3.connect(p)
+    raw.execute("DROP TABLE IF EXISTS schema_version")
+    for stmt in statements:
+        raw.execute(stmt)
+    raw.commit()
+    raw.close()
+
+    conn = sqlite3.connect(p)
+    conn.row_factory = sqlite3.Row
+    try:
+        db._apply_pending_migrations(conn)  # must not raise -- no collision
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(deals)")}
+        assert "brand_new_never_seen_column" in cols
+        assert "dollar_price" in cols
+    finally:
+        conn.close()

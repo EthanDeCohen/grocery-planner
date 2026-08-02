@@ -82,6 +82,15 @@ def scrape(
     postal_code: str = typer.Option(
         None, "--postal-code", "-z", help="ZIP for the flyer lookup (default: store's own)."
     ),
+    force: bool = typer.Option(
+        False, "--force",
+        help=(
+            "Bypass the GFP-67 replace-guards and accept a zero-row or "
+            "implausibly-small scrape anyway. Only pass this once you've "
+            "independently confirmed the low count is real (e.g. via "
+            "flipp.com) and not upstream (Flipp) breakage."
+        ),
+    ),
 ) -> None:
     """Scrape fresh deals for a store and store them in the DB."""
     scraper = SCRAPERS.get(store)
@@ -107,7 +116,21 @@ def scrape(
 
     zip_code = postal_code or scraper.DEFAULT_POSTAL_CODE
     typer.echo(f"Scraping {scraper.MERCHANT} weekly ad for {zip_code} ...")
-    result = service.run_scrape(store, postal_code=postal_code)
+    try:
+        result = service.run_scrape(store, postal_code=postal_code, force=force)
+    except service.ScrapeGuardError as exc:
+        # GFP-71: without --force, a guard tripping here used to be a dead
+        # end -- nothing user-facing could pass force=True to run_scrape(),
+        # so a genuinely tiny (or empty) ad week left the store permanently
+        # unscrapeable. str(exc) already explains what happened and why;
+        # this just adds the concrete way out.
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        typer.secho(
+            "Retry with --force once you've confirmed this is real, not "
+            "upstream breakage.",
+            fg=typer.colors.YELLOW, err=True,
+        )
+        raise typer.Exit(1)
     flyer, stats = result["flyer"], result["stats"]
     typer.secho(
         f"Flyer {flyer.get('name')} ({flyer.get('id')}), valid {stats['valid_from']} to "
