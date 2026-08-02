@@ -8,6 +8,7 @@ against product dicts shaped like the real payload documented in
 """
 from __future__ import annotations
 
+import base64
 import json
 import urllib.parse
 from datetime import datetime, timezone
@@ -169,6 +170,31 @@ def test_decode_store_cookie_url_encoded():
 def test_decode_store_cookie_already_decoded():
     raw = json.dumps({"id": 1, "deliveryZip": "27401"})
     assert wf._decode_store_cookie(raw)["deliveryZip"] == "27401"
+
+
+def test_decode_store_cookie_base64():
+    # GFP-93: the live cookie is base64, not URL-encoded. This is the exact
+    # prefix of a real value read out of Chrome on 2026-08-02 -- the shape
+    # that used to be rejected as "re-mint required" on a perfectly good
+    # session, which is why this asserts on a verbatim capture rather than a
+    # round-tripped fixture.
+    real = (
+        "eyJpZCI6IjEwNDI2IiwibmFtZSI6IkxhbWFyIiwidGxjIjoiTE1SIiwicGF0aCI6Imxh"
+        "bWFyIiwic3RhdGUiOiJUWCIsInN0b3JlX25pZCI6IiIsImRlbGl2ZXJ5WmlwIjoiMjc0"
+        "MDEifQ=="
+    )
+    data = wf._decode_store_cookie(real)
+    assert data["deliveryZip"] == "27401"
+    assert data["id"] == "10426"
+
+
+def test_decode_store_cookie_base64_without_padding():
+    # Whole Foods pads inconsistently; a value that lost its trailing "="
+    # must still decode rather than send the user off to re-mint.
+    padded = base64.b64encode(
+        json.dumps({"id": "1", "deliveryZip": "27401"}).encode()
+    ).decode()
+    assert wf._decode_store_cookie(padded.rstrip("="))["deliveryZip"] == "27401"
 
 
 def test_decode_store_cookie_garbage_raises():

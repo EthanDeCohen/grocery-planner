@@ -38,9 +38,13 @@ control, that ``wfm_store_d8`` ALONE is necessary and sufficient for search
 from a plain httpx client. The Amazon-domain ``session-id``/``session-token``/
 ``ubid-main`` cookies are not needed. Nominal cookie expiry observed: 365 days.
 
-``wfm_store_d8``'s value is itself a URL-encoded JSON blob carrying (among
+``wfm_store_d8``'s value is itself an encoded JSON blob carrying (among
 other things) the pinned store's ``id`` (authoritative) and a ``deliveryZip``
-field. The spike found the blob's ``name``/``state``/``geometry`` fields are
+field. **The encoding is not stable** -- the GFP-70 spike recorded a
+URL-encoded value, and by 2026-08-02 the live cookie was base64 instead
+(GFP-93), so :func:`_decode_store_cookie` accepts base64, URL-encoded and
+bare JSON and you should paste the raw Value without worrying about which
+one you got. The spike found the blob's ``name``/``state``/``geometry`` fields are
 STALE placeholders that never update -- never trust those for store identity,
 only ``id`` (this module doesn't need store identity beyond the ZIP check
 below, so it never reads them at all).
@@ -237,6 +241,8 @@ every query in a run rather than reconnecting per request.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import re
 import sqlite3
@@ -397,14 +403,48 @@ def load_session(path: Path | None = None) -> Session:
     return Session(wfm_store_d8=cookie, minted_at=str(minted_at) if minted_at else None)
 
 
+def _b64_candidate(value: str) -> str | None:
+    """``value`` decoded from base64, or ``None`` if it is not base64 at all.
+
+    Whole Foods pads inconsistently, so the missing ``=`` are restored before
+    decoding. ``validate=False`` (the default) would silently skip characters
+    that are not in the base64 alphabet and hand back plausible-looking
+    garbage, so this validates strictly and lets a non-base64 value fail here
+    rather than turn into a confusing JSON error later.
+    """
+    stripped = value.strip()
+    if not stripped:
+        return None
+    padded = stripped + "=" * (-len(stripped) % 4)
+    try:
+        return base64.b64decode(padded, validate=True).decode("utf-8")
+    except (ValueError, binascii.Error, UnicodeDecodeError):
+        return None
+
+
 def _decode_store_cookie(value: str) -> dict[str, Any]:
     """Decode ``wfm_store_d8``'s value into its JSON blob.
 
-    Tried URL-decoded first (what the cookie actually carries on the wire,
-    per the GFP-70 spike), then as already-decoded JSON, in case a human
-    pasted a value some tool had already unquoted for them.
+    Three encodings are accepted, because the cookie's own shape has already
+    changed once under us:
+
+    1. **base64** -- what the live cookie actually carries as of 2026-08-02
+       (GFP-93). A real minted value read straight out of Chrome began
+       ``eyJpZCI6IjEwNDI2Iiwi``, i.e. base64 for ``{"id":"10426",...}``, with
+       no percent-encoding anywhere in it.
+    2. **URL-decoded** -- what the GFP-70 spike recorded. Kept so an older
+       session file, or a future revert on Whole Foods' side, still loads.
+    3. **as-is JSON** -- in case a human pasted a value some tool had already
+       decoded for them.
+
+    Order matters only for speed, not correctness: the three forms are
+    mutually exclusive in practice (base64 of a JSON object never parses as
+    JSON, and vice versa).
     """
-    for candidate in (urllib.parse.unquote(value), value):
+    candidates = (_b64_candidate(value), urllib.parse.unquote(value), value)
+    for candidate in candidates:
+        if candidate is None:
+            continue
         try:
             data = json.loads(candidate)
         except (ValueError, TypeError):
@@ -412,10 +452,10 @@ def _decode_store_cookie(value: str) -> dict[str, Any]:
         if isinstance(data, dict):
             return data
     raise SessionExpiredError(
-        "Could not parse the wfm_store_d8 cookie value as JSON (tried both "
-        "URL-decoded and as-is). Either the pasted value is not the real "
-        "cookie Value, or Whole Foods changed the cookie's shape -- re-mint "
-        "following the module docstring's steps."
+        "Could not parse the wfm_store_d8 cookie value as JSON (tried "
+        "base64, URL-decoded and as-is). Either the pasted value is not the "
+        "real cookie Value, or Whole Foods changed the cookie's shape -- "
+        "re-mint following the module docstring's steps."
     )
 
 
