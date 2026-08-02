@@ -37,3 +37,25 @@ dist/
 # Local SQLite databases (personal data lives in the per-OS user-data dir)
 *.sqlite3
 *.db
+
+# Credentials. NEVER commit these.
+#
+# A client secret in git history is not fixed by a later delete commit -- it
+# stays in every clone and every fork, and the only real remedy is revoking
+# the credential at the provider. So these patterns are deliberately broad:
+# the cost of ignoring a file by accident is that someone re-adds it with
+# `git add -f`; the cost of committing one is a rotated secret and a rewritten
+# history.
+#
+# The RIGHT home for these is the per-OS user-data dir alongside
+# wholefoods_session.json (`gplan db-path` shows the folder), not the repo --
+# see GFP-97. These patterns exist to catch the case where one lands here
+# anyway.
+kroger-env.config
+*-env.config
+*.credentials.json
+*_credentials.json
+credentials.json
+.env
+.env.*
+secrets.*

@@ -1,10 +1,125 @@
 # GFP-77 — Is Harris Teeter reachable through Kroger's public developer API?
 
 **Date:** 2026-08-02
-**Status:** Documentation phase complete. **Blocked on credentials the user must
-create** — the one decisive question cannot be answered without them.
+**Status: VERIFIED AGAINST THE LIVE API — GO.** Harris Teeter is reachable, and
+the payload is the best of any source measured. See "Verified results" below,
+which supersedes the doubts recorded further down.
 **Related:** [GFP-70 (Whole Foods)](GFP-70-whole-foods.md),
 [GFP-76 (Food Lion)](GFP-76-food-lion.md)
+
+---
+
+# ⚑ VERIFIED RESULTS (run against the live API with real credentials)
+
+## Harris Teeter IS in the catalog — as chain code `HART`
+
+The doubts recorded later in this document were reasonable but **wrong**. Both
+of the reasons for suspicion turned out to be red herrings, and one of them
+actively misleads:
+
+- `/v1/chains` returns 44 chains. Harris Teeter grocery appears as **`HART`** —
+  an opaque code, not a readable name.
+- The two entries that *do* read as Harris Teeter — `HARRIS TEETER FUEL` and
+  `HARRIS TEETER FUEL CENTER` — are **petrol stations**, and filtering
+  `/v1/locations` by either returns **zero** stores. Searching the chain list
+  for "Harris Teeter" therefore produces a confident false negative.
+- The Syndigo note about HT private-label syndication does not stop HT products
+  appearing here.
+
+**The reliable check is to query locations by ZIP and read the `chain` field
+back, not to look for a recognisable name in `/v1/chains`.**
+
+```
+GET /v1/locations?filter.zipCode.near=27401&filter.radiusInMiles=25
+  -> 11 stores, every one chain=HART
+     09700347  Harris Teeter - Lawndale Crossing, GREENSBORO NC
+     09700306  Harris Teeter - The Shops at ...,  Greensboro NC
+     09700091  Harris Teeter - North Elm Village,  Greensboro NC
+     ... 8 in Greensboro itself, 11 within 25 miles
+```
+
+## The payload is the best of any source we have measured
+
+Sampled at store `09700347` (Harris Teeter Lawndale Crossing, Greensboro)
+across 14 protein-relevant search terms, 670 unique products:
+
+| | Harris Teeter via Kroger API | HT via Flipp (today) | Whole Foods |
+|---|---:|---:|---:|
+| with a price | **100%** | 73% | 100% |
+| with a machine-readable size | **100%** | 4.9% | — |
+| with protein grams | **82%** | 0% | ~40% |
+| **$/g protein resolvable** | **74% (497/670)** | **0.3% (3/938)** | 36% (89/246) |
+
+Of the 497 resolvable, 438 came from an explicit `servingsPerPackage` and 59
+were derived from `size / servingSize` — worth keeping both paths, since the
+derived one is a fifth of the extra coverage.
+
+This is a ~230x improvement over what Flipp gives us for the same store.
+
+## ⚠ THE TRAP: `soldBy=WEIGHT` items price PER POUND
+
+**This is the most important finding in this document.** It is the same class
+of error as GFP-73 (per-serving read as per-package), in a new place, and it
+would poison exactly the items that matter most.
+
+A whole pork loin came back at **$0.0035/g protein** — an order of magnitude
+cheaper than anything else, and impossible: 453 g of pork cannot contain 720 g
+of protein. The raw record explains it:
+
+```
+Pork Loin Whole
+  soldBy              WEIGHT      <- price is PER POUND
+  size                1 lb        <- the PRICING unit, not the package
+  price.promo         2.49        <- $2.49 per lb
+  servingsPerPackage  30          <- describes the WHOLE loin (30 x 112g = 7.4 lb)
+  servingSize         112 g
+```
+
+Multiplying a **per-pound price** by the **whole loin's** protein mixes two
+different denominators and understates cost by roughly 7x.
+
+**The rule, which must be implemented before this source is trusted:**
+
+- `soldBy == "UNIT"` → package protein = `servingsPerPackage x protein_per_serving`;
+  `$/g = price / package_protein`. The price is for the whole package.
+- `soldBy == "WEIGHT"` → **ignore `servingsPerPackage` entirely.** Use protein
+  *density* (`protein_per_serving / servingSize_grams`) applied to the priced
+  weight from `size`. The price is per unit weight.
+
+This is not an edge case: **48 of 160 sampled items (30%) are `soldBy=WEIGHT`**,
+and they are precisely the fresh meat — the highest-protein, highest-value
+items. Left unhandled they would look ~7x cheaper than reality and dominate
+every single recommendation the product makes.
+
+`soldBy` is present on every item, so the fix is available and cheap. There is
+no excuse for shipping without it.
+
+## Other verified facts
+
+- Auth works exactly as documented: OAuth2 client credentials, scope
+  `product.compact`, **30-minute** token lifetime (`expires_in=1800`).
+- Prices carry `regular`, `promo`, and `*PerUnitEstimate`, plus
+  `effectiveDate`/`expirationDate` — so promo windows are explicit rather than
+  inferred, which is more than Flipp ever gave us (cf. GFP-16's expiry bug).
+- `nutritionInformation` is a rich structured block: protein is nutrient code
+  **`PRO-`** with `quantity` and `unitOfMeasure`, alongside fat/carbs/sodium/
+  fibre — which feeds the "protein-first, nutrient-general" schema decision
+  directly, with no USDA matching step.
+- The repo's existing `savings.parse_size` handles Kroger's `size` strings
+  well enough to derive package weight; no new parser was needed for the
+  measurement above.
+
+## What still needs deciding
+
+- **Credential distribution.** See GFP-97. One operator today, so a local file
+  is fine; the broker stays unbuilt.
+- **`soldBy` handling** must land with the scraper, not after it.
+- Kroger has **no store within 100 miles of 27401 under any other banner**, so
+  this API is a Harris Teeter source specifically, not a general one.
+
+---
+
+# Original pre-verification notes (kept for the reasoning trail)
 
 ## Why this matters
 
@@ -213,14 +328,13 @@ something this project's tooling should do on the user's behalf.
 
 Until then this ticket cannot progress past documentation.
 
-## Recommendation
+## Recommendation (superseded — see "Verified results" at the top)
 
-**Pursue it, but verify before building.** The prize is 938 deals and the only
-compliant source we have found; the risk is that HT simply is not in the
-catalog, and that risk is resolvable in a single API call. Do not write a
-`scrapers/harristeeter_api.py` until step 3 returns an HT store.
+The pre-verification recommendation was "pursue it, but verify before
+building", on the reasoning that the prize was large and the go/no-go cost one
+API call. That was the right call and the verification has now run: **it is a
+go.** Harris Teeter is present as chain `HART`, 11 stores serve 27401, and
+74% of sampled products resolve a $/g protein against 0.3% today.
 
-If HT is **not** in the catalog, this is a dead end of the same kind as Food
-Lion, and the honest next move is to accept that HT contributes ad copy only and
-concentrate on widening Whole Foods coverage instead — it is the only source
-that has ever moved the number.
+The one condition on building it: **`soldBy=WEIGHT` handling is not optional.**
+See the trap section at the top of this document.
