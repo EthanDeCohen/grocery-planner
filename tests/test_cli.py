@@ -29,7 +29,11 @@ def test_import_then_list(env_db, sample_data):
 
 
 def test_scrape_rejects_unimplemented_store(env_db):
-    result = runner.invoke(app, ["scrape", "wholefoods"])
+    # GFP-4 registered a real "wholefoods" scraper, so this test (which
+    # predates that ticket and used "wholefoods" as its example of an
+    # unimplemented store) now uses a key guaranteed not to exist -- flagged
+    # here per the GFP-4 PR description.
+    result = runner.invoke(app, ["scrape", "not-a-real-store"])
     assert result.exit_code == 2
 
 
@@ -167,8 +171,12 @@ def test_schedule_set_rejects_bad_input(env_db):
     ).exit_code == 1
     # Unparseable cadence, and a store with no scraper.
     assert runner.invoke(app, ["schedule", "set", "foodlion", "--every", "soon"]).exit_code == 1
+    # GFP-4 registered a real "wholefoods" scraper, so this test (which
+    # predates that ticket and used "wholefoods" as its example of a store
+    # with no scraper) now uses a key guaranteed not to exist -- flagged here
+    # per the GFP-4 PR description.
     assert runner.invoke(
-        app, ["schedule", "set", "wholefoods", "--every", "6h"]).exit_code == 2
+        app, ["schedule", "set", "not-a-real-store", "--every", "6h"]).exit_code == 2
 
 
 def test_schedule_run_once_needs_a_schedule(env_db):

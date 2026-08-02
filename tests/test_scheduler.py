@@ -61,8 +61,12 @@ def test_set_list_and_remove_schedule(conn):
 
 
 def test_set_schedule_validates_before_writing(conn):
+    # GFP-4 registered a real "wholefoods" scraper, so this test (which
+    # predates that ticket and used "wholefoods" as its example of an
+    # unregistered store) now uses a key guaranteed not to exist -- flagged
+    # here per the GFP-4 PR description.
     with pytest.raises(service.UnknownStoreError):
-        scheduler.set_schedule(conn, "wholefoods", "interval", "6h")
+        scheduler.set_schedule(conn, "not-a-real-store", "interval", "6h")
     with pytest.raises(scheduler.ScheduleError):
         scheduler.set_schedule(conn, "foodlion", "interval", "every so often")
     assert scheduler.list_schedules(conn) == []  # nothing persisted

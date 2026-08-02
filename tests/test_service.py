@@ -40,8 +40,12 @@ def test_available_scrapers_lists_known_stores():
 
 
 def test_run_scrape_unknown_store_raises(conn):
+    # GFP-4 registered a real "wholefoods" scraper, so this test (which
+    # predates that ticket and used "wholefoods" as its example of an
+    # unregistered store) now uses a key that is guaranteed not to exist
+    # instead -- flagged here per the GFP-4 PR description.
     with pytest.raises(service.UnknownStoreError):
-        service.run_scrape("wholefoods", conn=conn)
+        service.run_scrape("not-a-real-store", conn=conn)
 
 
 # --------------------------------------------------------------------------- #
@@ -369,9 +373,12 @@ def test_filters_compose(conn):
 
 def test_choice_helpers_come_from_the_data(conn):
     _seed_filterable(conn)
-    # Whole Foods has no scraper but does have rows, so it must still be offered.
+    # Stores with data always show up, whether or not they're scrapable.
     assert service.stores_with_deals(conn=conn) == ["foodlion", "harristeeter", "wholefoods"]
-    assert "wholefoods" not in service.available_scrapers()
+    # GFP-4 gave Whole Foods a real scraper (this test predates that ticket
+    # and asserted the opposite as its example of a data-only store) --
+    # flagged here per the GFP-4 PR description.
+    assert "wholefoods" in service.available_scrapers()
 
     assert service.deal_categories(store="harristeeter", conn=conn) == ["Snacks & Chips"]
     assert "Meat & Seafood" in service.deal_categories(conn=conn)
