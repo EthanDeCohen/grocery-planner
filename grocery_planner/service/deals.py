@@ -22,9 +22,12 @@ from .. import db, savings
 _HAS_END_DATE = "valid_to IS NOT NULL AND valid_to <> ''"
 _EXPIRED_SQL = f"CASE WHEN {_HAS_END_DATE} AND valid_to < ? THEN 1 ELSE 0 END"
 
+# GFP-38 added source_url/image_url here rather than in a second query: the
+# where-to-buy column needs a corroborating link for a row it already has, and
+# a row that carries its own provenance cannot go out of sync with itself.
 _DEAL_COLUMNS = (
     "store, item_name, sub_category, deal_type, sale_price, "
-    "dollar_price, valid_from, valid_to"
+    "dollar_price, valid_from, valid_to, source_url, image_url"
 )
 
 

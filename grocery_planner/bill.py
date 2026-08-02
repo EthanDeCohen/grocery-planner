@@ -169,6 +169,13 @@ class BillLine:
     match_confidence: float       # 0-1, see matching.CONFIDENCE_* / savings.LABEL_CLAIM_CONFIDENCE
     food_id: int | None
     food_name: str | None
+    # GFP-15's corroborating link and ad clipping, carried through so GFP-38's
+    # where-to-buy column can offer them without a second lookup. Both are
+    # frequently None -- only the Flipp path populates them, and the Kroger and
+    # Whole Foods scrapers write None -- so a consumer MUST degrade to plain
+    # text rather than render a dead control (see scrapers/base.py).
+    source_url: str | None = None
+    image_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -392,6 +399,8 @@ def _build_bill(
                 match_confidence=item["match_confidence"],
                 food_id=item.get("food_id"),
                 food_name=item.get("food_name"),
+                source_url=item.get("source_url"),
+                image_url=item.get("image_url"),
             )
         )
         remaining -= grams_protein
