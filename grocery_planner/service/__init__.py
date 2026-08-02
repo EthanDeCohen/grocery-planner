@@ -9,6 +9,8 @@ nutrition and ingest:
 
 - :mod:`.deals` — deal query, ranking, filtering and export (GFP-16/GFP-17/GFP-8).
 - :mod:`.ingest` — pulling fresh deals from a store scraper into SQLite.
+- :mod:`.trends` — cheapest $/g protein per store per day, from ``price_history``
+  (GFP-36).
 
 This module re-exports the full public API so existing call sites
 (``service.fetch_deals``, ``service.run_scrape``, ``service.UnknownStoreError``,
@@ -46,10 +48,23 @@ from .ingest import (
     run_scrape,
     scraper_status,
 )
+from .trends import (
+    DEFAULT_WINDOW_DAYS,
+    MIN_POINTS_TO_PLOT,
+    ProteinTrend,
+    StoreTrend,
+    TrendPoint,
+    protein_price_trend,
+)
 
 __all__ = [
     "DEAL_TYPE_GROUPS",
+    "DEFAULT_WINDOW_DAYS",
     "EXPORT_COLUMNS",
+    "MIN_POINTS_TO_PLOT",
+    "ProteinTrend",
+    "StoreTrend",
+    "TrendPoint",
     "EmptyScrapeError",
     "ImplausibleCollapseError",
     "ScrapeGuardError",
@@ -64,6 +79,7 @@ __all__ = [
     "export_deals",
     "fetch_deals",
     "is_expired",
+    "protein_price_trend",
     "run_scrape",
     "scraper_status",
     "stores_with_deals",

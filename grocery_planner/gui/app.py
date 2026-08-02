@@ -1,18 +1,21 @@
 """PySide6 desktop shell — the menu-bar window the nutritionist GUI sits in.
 
 GFP-35 retired the GFP-14/GFP-11 tab layout (Deals / Formulas / Schedule) and
-its deal-browsing table: browsing raw supermarket deals is not the product,
-and the tabs were in the way of the client roster (GFP-36) and client detail
-page (GFP-37) that are. The central widget is deliberately empty here — GFP-36
-fills it — and this module is now only the shell:
+its deal-browsing table: browsing raw supermarket deals is not the product, and
+the tabs were in the way of the client roster and client detail page that are.
+GFP-36 filled the centre it left empty. This module is the shell:
 
 - the menu bar, which is where every control the tabs used to hold now lives,
+- the roster/detail navigation stack,
 - CSV export,
 - ``main()``, still the ``gplan-gui`` entry point.
 
-Each retired tab became its own dialog module so the GFP-20 panes can be built
-side by side without three people editing one file:
+Every pane and dialog is its own module so the GFP-20 stories can be built side
+by side without several people editing one file:
 
+- :mod:`.roster`   — client roster, left of the main view (GFP-36)
+- :mod:`.trends`   — price-trends chart, right of it (GFP-36)
+- :mod:`.client`   — client detail page (GFP-37 fills the body)
 - :mod:`.scrape`   — Data ▸ Run scrape…
 - :mod:`.formulas` — Settings ▸ Formulas…
 - :mod:`.schedule` — Settings ▸ Automatic refresh…
@@ -25,29 +28,26 @@ from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
-    QLabel,
     QMainWindow,
-    QVBoxLayout,
-    QWidget,
+    QSplitter,
+    QStackedWidget,
 )
 
 from .. import service
+from .client import ClientDetailPage
 from .formulas import FormulaDialog
+from .roster import RosterPane
 from .schedule import ScheduleDialog
 from .scrape import ScrapeDialog
+from .trends import TrendsPane
 
-PLACEHOLDER_TEXT = (
-    "The client roster lands here.\n\n"
-    "Everything the app can do today is on the menu bar:\n"
-    "Data ▸ Run scrape…   ·   Settings ▸ Formulas…   ·   "
-    "Settings ▸ Automatic refresh…   ·   File ▸ Export deals…"
-)
+#: Roster gets the narrower half; the chart needs the width to be readable.
+SPLIT_SIZES = (340, 580)
 
 
 class MainWindow(QMainWindow):
@@ -58,7 +58,7 @@ class MainWindow(QMainWindow):
 
         self._dialogs: dict[str, QDialog] = {}
         self._build_menus()
-        self.setCentralWidget(self._build_placeholder())
+        self.setCentralWidget(self._build_central())
         self.statusBar().showMessage(
             f"{service.count_deals(hide_expired=True)} current deals stored."
         )
@@ -100,17 +100,46 @@ class MainWindow(QMainWindow):
         self.schedule_action.triggered.connect(self.open_schedule)
         settings_menu.addAction(self.schedule_action)
 
-    def _build_placeholder(self) -> QWidget:
-        """The empty centre, saying so plainly rather than looking broken."""
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.addStretch(1)
-        self.placeholder_label = QLabel(PLACEHOLDER_TEXT)
-        self.placeholder_label.setAlignment(Qt.AlignCenter)
-        self.placeholder_label.setWordWrap(True)
-        layout.addWidget(self.placeholder_label)
-        layout.addStretch(1)
-        return page
+    def _build_central(self) -> QStackedWidget:
+        """Roster + trends, with the client detail page stacked behind them.
+
+        A stack rather than a new window per client: the nutritionist moves
+        between the roster and one client constantly during an intake call, and
+        a second window to hunt for would be in the way. ``Alt+Left`` and the
+        page's own back button both come back here.
+        """
+        self.roster = RosterPane()
+        self.roster.client_selected.connect(self.show_client)
+        self.trends = TrendsPane()
+
+        self.split = QSplitter()
+        self.split.addWidget(self.roster)
+        self.split.addWidget(self.trends)
+        self.split.setSizes(list(SPLIT_SIZES))
+
+        self.client_page = ClientDetailPage()
+        self.client_page.back_requested.connect(self.show_roster)
+
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.split)
+        self.stack.addWidget(self.client_page)
+        return self.stack
+
+    # ----------------------------------------------------------------- #
+    # Navigation (GFP-36)
+    # ----------------------------------------------------------------- #
+    def show_client(self, customer_id: int) -> bool:
+        """Open one client's detail page. Stays on the roster if they're gone."""
+        if not self.client_page.show_client(customer_id):
+            self.statusBar().showMessage("That client is no longer on file.", 8000)
+            return False
+        self.stack.setCurrentWidget(self.client_page)
+        return True
+
+    def show_roster(self) -> None:
+        self.stack.setCurrentWidget(self.split)
+        self.roster.reload()      # a rename or a new client shows up on return
+        self.roster.search_edit.setFocus()
 
     # ----------------------------------------------------------------- #
     # Dialogs — one instance each, reused so state survives a close/reopen
@@ -141,6 +170,7 @@ class MainWindow(QMainWindow):
 
     def _on_scrape_completed(self, summary: str) -> None:
         self.statusBar().showMessage(summary, 10000)
+        self.trends.reload()             # a fresh day of prices moves the chart
         schedule = self._dialogs.get("schedule")
         if schedule is not None:
             schedule.reload_schedules()  # the run is on the job record either way
