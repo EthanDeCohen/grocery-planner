@@ -14,7 +14,21 @@ import pytest
 
 from grocery_planner import bill, service
 from grocery_planner.customers import Customer
-from grocery_planner.gui.wheretobuy import _denomination_note
+
+
+def _denomination_note(line):
+    """The GUI's renderer, imported lazily.
+
+    A module-level `from grocery_planner.gui...` import broke collection of this
+    WHOLE file on any machine without the optional `gui` extra -- which is every
+    CI runner, since CI installs `.[dev]`. The service-level tests here have
+    nothing to do with Qt and must keep running there, so only the two tests
+    that need the renderer pay for it.
+    """
+    pytest.importorskip("PySide6", reason="GUI extra not installed")
+    from grocery_planner.gui.wheretobuy import _denomination_note as real
+
+    return real(line)
 
 FUTURE = (date.today() + timedelta(days=7)).isoformat()
 
