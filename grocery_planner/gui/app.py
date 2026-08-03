@@ -27,7 +27,6 @@ the bar had as a flag; the menu's Export writes the current (non-expired) deals.
 """
 from __future__ import annotations
 
-import os
 import sys
 
 from PySide6.QtGui import QAction, QKeySequence
@@ -42,7 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import service
+from .. import config, service
 from .cheapest import CheapestMeatStrip
 from .client import ClientDetailPage
 from .formulas import FormulaDialog
@@ -50,11 +49,6 @@ from .roster import RosterPane
 from .schedule import ScheduleDialog
 from .scrape import ScrapeDialog
 from .trends import TrendsPane
-
-#: Set this to any non-empty value to stop the app fetching prices on start
-#: (GFP-105). An environment variable is a placeholder: GFP-85's global config
-#: file is where this setting belongs, and this should move there when it lands.
-NO_AUTO_REFRESH_ENV = "GROCERY_PLANNER_NO_AUTO_REFRESH"
 
 #: Roster gets the narrower half; the chart needs the width to be readable.
 SPLIT_SIZES = (340, 580)
@@ -175,10 +169,12 @@ class MainWindow(QMainWindow):
         Returns True when a refresh was started, for tests and for callers that
         want to know.
         """
-        if os.environ.get(NO_AUTO_REFRESH_ENV):
-            # Opt-out. GFP-85's config file is the proper home for this; until
-            # it exists an environment variable is the honest placeholder --
-            # documented rather than silently absent.
+        if not config.auto_refresh():
+            # GFP-85 gave this a real home. It was an environment variable
+            # placeholder when GFP-105 shipped, which the code said at the time;
+            # `auto_refresh: false` in config.json is now the supported way, and
+            # GROCERY_PLANNER_AUTO_REFRESH still overrides it because the
+            # config layer gives every setting an environment override.
             return False
 
         decision = service.refresh_decision()

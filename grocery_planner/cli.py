@@ -7,6 +7,7 @@ Local-first commands over the SQLite store:
     gplan stores            show tracked stores + row counts
     gplan records           all-time record low/high per item (GFP-75)
     gplan trends            price / $/g protein over time (GFP-40)
+    gplan config            show global settings and where each came from
     gplan db-path           print the database location
     gplan client ...        add/edit/remove clients (GFP-33)
     gplan formula ...       manage user-defined formulas
@@ -24,6 +25,7 @@ from . import (
     __version__,
     credentials,
     db,
+    config as app_config,
     formulas,
     importers,
     jobs,
@@ -662,6 +664,37 @@ def client_groceries(
         f"Wrote {len(glist.items)} item(s) for {glist.days} days to {written}",
         fg=typer.colors.GREEN,
     )
+
+
+@app.command("config")
+def config_cmd(
+    write: bool = typer.Option(
+        False, "--write", help="Create config.json with the defaults if absent."
+    ),
+) -> None:
+    """Show global settings, where each value came from, and any problems (GFP-85).
+
+    Origin matters as much as value: "why is it using that ZIP" is answered by
+    knowing whether it came from the environment, the file, or a built-in
+    default.
+    """
+    if write:
+        written = app_config.write_defaults()
+        typer.secho(f"Config file: {written}", fg=typer.colors.GREEN)
+
+    resolved = app_config.load()
+    typer.echo(f"Config file: {resolved.source}"
+               + ("" if resolved.source.exists() else "  (not created yet — defaults apply)"))
+    _print_table(
+        ["setting", "value", "from", "what it does"],
+        [(key, str(value), origin, describe)
+         for key, value, origin, describe in app_config.describe()],
+    )
+    for problem in resolved.problems:
+        # A problem never stops the app -- it degraded to a default and says so.
+        typer.secho(f"  ! {problem}", fg=typer.colors.YELLOW)
+    if resolved.problems:
+        raise typer.Exit(code=1)
 
 
 @app.command()

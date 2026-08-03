@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from .. import db, importers, records, scrapers
+from .. import config, db, importers, records, scrapers
 from ..scrapers import SCRAPERS
 
 
@@ -289,7 +289,12 @@ def run_scrape(
     if scraper is None:
         raise UnknownStoreError(store_key)
 
-    zip_code = postal_code or scraper.DEFAULT_POSTAL_CODE
+    # GFP-85: the caller's ZIP wins, then the user's config, then the
+    # scraper's own constant. 27401 was hard-coded in four modules, so a
+    # nutritionist in another city had to edit source; now they edit one JSON
+    # file. The per-scraper constant stays as the last resort, which keeps a
+    # scraper usable standalone and unchanged for any caller passing a ZIP.
+    zip_code = postal_code or config.postal_code() or scraper.DEFAULT_POSTAL_CODE
     # GFP-98: the registry key is no longer necessarily the store. `kroger` is
     # a SECOND source for `harristeeter` (Flipp weekly ad vs Kroger shelf-price
     # API), so the row's store and source come from the module, not from the
