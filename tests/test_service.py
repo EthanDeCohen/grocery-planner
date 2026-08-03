@@ -16,9 +16,16 @@ PUBLIC_API = [
     # re-exported here like deals/ingest rather than reached into directly.
     "DEFAULT_WINDOW_DAYS",
     "MIN_POINTS_TO_PLOT",
-    "ProteinTrend",
-    "StoreTrend",
+    # GFP-40 widened that one question into two metrics over two dimensions,
+    # so `gplan trends` and the chart share a definition instead of drifting.
+    "Dimension",
+    "Metric",
+    "PriceTrend",
     "TrendPoint",
+    "TrendSeries",
+    "UnknownFoodError",
+    "UnscopedPriceTrendError",
+    "price_trend",
     "protein_price_trend",
     "EXPORT_COLUMNS",
     # GFP-71: EmptyScrapeError/ImplausibleCollapseError (and their shared base,

@@ -12,7 +12,7 @@ to nutritionists. A few dozen lines of ``QPainter`` avoid it entirely and keep
 the frozen binary smaller.
 
 **Honesty.** The pane never draws a chart it cannot support. Below
-``service.MIN_POINTS_TO_PLOT`` days it shows ``ProteinTrend.reason`` — which
+``service.MIN_POINTS_TO_PLOT`` days it shows ``PriceTrend.reason`` — which
 distinguishes "nothing scraped yet" from "come back tomorrow" — and still lists
 whatever latest prices *are* known, because refusing to plot is not a reason to
 withhold the data.
@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import service
-from ..stores import BY_KEY, STORES
+from ..stores import STORES
 
 # Categorical slots 1-4 of the house palette, in fixed order, validated for
 # this chart form in both modes (adjacent-pair CVD ΔE 9.1 light / 8.4 dark;
@@ -87,11 +87,6 @@ def _slot(store_key: str) -> int:
     return keys.index(store_key) if store_key in keys else len(keys)
 
 
-def _display(store_key: str) -> str:
-    store = BY_KEY.get(store_key)
-    return store.display_name if store else store_key
-
-
 def _money_per_gram(value: float) -> str:
     """$/g protein, at the precision the numbers actually differ by."""
     return f"${value:.4f}"
@@ -104,13 +99,12 @@ class TrendChart(QWidget):
         super().__init__(parent)
         self.setMinimumHeight(220)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._trend = service.ProteinTrend(days=service.DEFAULT_WINDOW_DAYS)
+        self._trend = service.PriceTrend(days=service.DEFAULT_WINDOW_DAYS)
 
-    def set_trend(self, trend: service.ProteinTrend) -> None:
+    def set_trend(self, trend: service.PriceTrend) -> None:
         self._trend = trend
         self.setToolTip("\n".join(
-            f"{_display(s.store)}: {_money_per_gram(s.latest.cost_per_gram_protein)}/g "
-            f"— {s.latest.item_name}"
+            f"{s.label}: {_money_per_gram(s.latest.value)}/g — {s.latest.item_name}"
             for s in trend.series if s.latest
         ))
         self.update()
@@ -144,7 +138,7 @@ class TrendChart(QWidget):
         # margin is measured from them rather than guessed -- a guess clips
         # the longest store name, which is how a chart lies quietly.
         labels = {
-            s.store: f"{_display(s.store)} {_money_per_gram(s.latest.cost_per_gram_protein)}"
+            s.key: f"{s.label} {_money_per_gram(s.latest.value)}"
             for s in series
         }
         label_width = max(metrics.horizontalAdvance(text) for text in labels.values())
@@ -157,7 +151,7 @@ class TrendChart(QWidget):
         plot_bottom = max(self.height() - _MARGIN_BOTTOM, plot_top + 1)
 
         days = [date.fromisoformat(p.day) for s in series for p in s.points]
-        values = [p.cost_per_gram_protein for s in series for p in s.points]
+        values = [p.value for s in series for p in s.points]
         first_day, last_day = min(days), max(days)
         span_days = max((last_day - first_day).days, 1)
         low, high = min(values), max(values)
@@ -199,9 +193,9 @@ class TrendChart(QWidget):
         # --- the series -------------------------------------------------- #
         surface = self.palette().color(QPalette.Window)
         for store_trend in series:
-            colour = self.colour_for(store_trend.store)
+            colour = self.colour_for(store_trend.key)
             points = [
-                QPointF(x_of(p.day), y_of(p.cost_per_gram_protein))
+                QPointF(x_of(p.day), y_of(p.value))
                 for p in store_trend.points
             ]
             painter.setPen(QPen(colour, LINE_WIDTH, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
@@ -215,7 +209,7 @@ class TrendChart(QWidget):
 
         # --- endpoint labels, only ones, spread so they cannot overlap ---- #
         label_y = _spread(
-            [y_of(s.latest.cost_per_gram_protein) for s in series],
+            [y_of(s.latest.value) for s in series],
             metrics.height(), plot_top, plot_bottom,
         )
         painter.setPen(QPen(muted, 1))
@@ -223,7 +217,7 @@ class TrendChart(QWidget):
             painter.drawText(
                 int(plot_right + _LABEL_GAP),
                 int(y + metrics.height() / 3),
-                labels[store_trend.store],
+                labels[store_trend.key],
             )
         painter.end()
 
@@ -280,7 +274,7 @@ class TrendsPane(QWidget):
         # colours that sit under 3:1, and the only content at all when there
         # is not yet enough history to plot.
         rows = [
-            f"<b>{_display(s.store)}</b> — {_money_per_gram(s.latest.cost_per_gram_protein)}/g "
+            f"<b>{s.label}</b> — {_money_per_gram(s.latest.value)}/g "
             f"<span>({s.latest.item_name})</span>"
             for s in trend.series if s.latest
         ]
@@ -289,7 +283,7 @@ class TrendsPane(QWidget):
         )
         self.latest.setVisible(bool(rows))
 
-    def _build_legend(self, trend: service.ProteinTrend) -> None:
+    def _build_legend(self, trend: service.PriceTrend) -> None:
         while self.legend_layout.count():
             item = self.legend_layout.takeAt(0)
             if item.widget():
@@ -300,9 +294,9 @@ class TrendsPane(QWidget):
         for store_trend in plottable:
             swatch = QFrame()
             swatch.setFixedSize(10, 10)
-            colour = self.chart.colour_for(store_trend.store)
+            colour = self.chart.colour_for(store_trend.key)
             swatch.setStyleSheet(f"background:{colour.name()};border-radius:2px;")
             self.legend_layout.addWidget(swatch)
             # Text keeps its ink colour; the swatch beside it carries identity.
-            self.legend_layout.addWidget(QLabel(_display(store_trend.store)))
+            self.legend_layout.addWidget(QLabel(store_trend.label))
         self.legend_layout.addStretch(1)

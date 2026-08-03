@@ -6,6 +6,7 @@ Local-first commands over the SQLite store:
     gplan list deals|prices query stored rows
     gplan stores            show tracked stores + row counts
     gplan records           all-time record low/high per item (GFP-75)
+    gplan trends            price / $/g protein over time (GFP-40)
     gplan db-path           print the database location
     gplan formula ...       manage user-defined formulas
     gplan profile ...       set/get profile values used by formulas
@@ -432,6 +433,119 @@ def records(
 
 def _money(value: float | None) -> str:
     return f"${value:.2f}" if value is not None else "-"
+
+
+@app.command()
+def trends(
+    metric: str = typer.Option(
+        "protein", "--metric", "-m", help="'protein' ($/g protein) or 'price' ($)."
+    ),
+    by: str = typer.Option("store", "--by", "-b", help="Series per 'store' or per 'food'."),
+    days: int = typer.Option(
+        service.DEFAULT_WINDOW_DAYS, "--days", "-d", help="Window length in days."
+    ),
+    store: str = typer.Option(None, "--store", "-s", help="Limit to one store key."),
+    food: str = typer.Option(None, "--food", "-f", help="Limit to one food (name or slug)."),
+    postal_code: str = typer.Option(None, "--postal-code", "-z", help="Limit to one ZIP."),
+    points: bool = typer.Option(
+        False, "--points", "-p", help="Print every day's value, not just the summary."
+    ),
+) -> None:
+    """Price and $/g protein over time, from captured history (GFP-40).
+
+    The same ``service.price_trend`` the GUI's chart draws, so a number quoted
+    from this command and a number read off the chart cannot disagree.
+
+    A missing day is a gap, never a zero: a week with no scrape simply
+    contributes no points. A plain ``--metric price`` series needs a food to be
+    about (``--food`` or ``--by food``) — the cheapest item in a whole weekly
+    ad measures package size, not price.
+    """
+    try:
+        chosen_metric = service.Metric(metric.lower())
+    except ValueError:
+        typer.echo(f"Error: unknown metric {metric!r}. Use 'protein' or 'price'.")
+        raise typer.Exit(code=2)
+    try:
+        dimension = service.Dimension(by.lower())
+    except ValueError:
+        typer.echo(f"Error: unknown grouping {by!r}. Use 'store' or 'food'.")
+        raise typer.Exit(code=2)
+
+    conn = db.connect()
+    try:
+        trend = service.price_trend(
+            metric=chosen_metric, dimension=dimension, days=days, store=store,
+            food=food, postal_code=postal_code, conn=conn,
+        )
+    except service.UnscopedPriceTrendError:
+        # The service states this in its own vocabulary (`food=`, `Dimension`);
+        # a CLI user types flags, so the front end says it in flags.
+        typer.echo(
+            "Error: a price series needs a food to be about — add --food NAME "
+            "or --by food. The cheapest item in a whole weekly ad measures "
+            "package size, not price; --metric protein compares across foods."
+        )
+        raise typer.Exit(code=2)
+    except service.UnknownFoodError as exc:
+        typer.echo(f"Error: {exc}")
+        raise typer.Exit(code=2)
+
+    unit = "$/g protein" if chosen_metric is service.Metric.PROTEIN else "$"
+
+    def fmt(value: float) -> str:
+        return f"{value:.4f}" if chosen_metric is service.Metric.PROTEIN else _money(value)
+
+    if not trend.series:
+        # Not an error: an empty window is a real, common answer early on.
+        typer.echo(trend.reason)
+        raise typer.Exit()
+
+    typer.echo(
+        f"Cheapest {unit} per day by {dimension.value}, last {trend.days} days "
+        f"· {trend.observed_days} day(s) observed"
+    )
+    if not trend.is_plottable:
+        typer.echo(trend.reason)
+
+    if points:
+        # For Metric.PRICE the value IS the price, so a second column would
+        # just repeat it. A food series spans stores, so it must say which one
+        # won the day -- that is the answer a "where do I buy this?" needs.
+        show_price = chosen_metric is not service.Metric.PRICE
+        show_store = dimension is service.Dimension.FOOD
+        headers = (
+            ["day", unit]
+            + (["price"] if show_price else [])
+            + (["store"] if show_store else [])
+            + ["item"]
+        )
+        for series in trend.series:
+            typer.echo(f"\n{series.label} ({series.key})")
+            _print_table(headers, [
+                (p.day, fmt(p.value))
+                + ((_money(p.price),) if show_price else ())
+                + ((p.store,) if show_store else ())
+                + (p.item_name[:44],)
+                for p in series.points
+            ])
+        return
+
+    # `change` is last minus first over the points that EXIST, so a gap narrows
+    # the span it describes rather than inventing values to fill it.
+    rows = []
+    for series in trend.series:
+        first, last = series.points[0], series.points[-1]
+        change = "-" if first is last else f"{(last.value - first.value) / first.value:+.1%}"
+        rows.append((
+            series.label,
+            fmt(last.value),
+            change,
+            f"{len(series.points)}",
+            f"{first.day}..{last.day}",
+            last.item_name[:36],
+        ))
+    _print_table(["series", f"latest {unit}", "change", "days", "span", "cheapest item"], rows)
 
 
 @app.command()
