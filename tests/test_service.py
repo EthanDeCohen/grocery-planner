@@ -27,6 +27,9 @@ PUBLIC_API = [
     "UnscopedPriceTrendError",
     "price_trend",
     "protein_price_trend",
+    # GFP-41: the chart's store selector is built from the stores that actually
+    # have history, not from the store registry, so it needs its own query.
+    "trend_stores",
     "EXPORT_COLUMNS",
     # GFP-71: EmptyScrapeError/ImplausibleCollapseError (and their shared base,
     # ScrapeGuardError) were previously reachable only via service.ingest,

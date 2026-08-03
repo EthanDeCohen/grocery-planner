@@ -61,6 +61,7 @@ from .trends import (
     UnscopedPriceTrendError,
     price_trend,
     protein_price_trend,
+    trend_stores,
 )
 
 __all__ = [
@@ -95,4 +96,5 @@ __all__ = [
     "scraper_status",
     "stores_with_deals",
     "today_iso",
+    "trend_stores",
 ]

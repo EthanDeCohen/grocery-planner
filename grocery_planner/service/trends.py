@@ -280,6 +280,34 @@ def _store_label(store_key: str) -> str:
     return store.display_name if store else store_key
 
 
+def trend_stores(
+    days: int = DEFAULT_WINDOW_DAYS,
+    today: date | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> list[tuple[str, str]]:
+    """``(key, label)`` for every store with price history in the window.
+
+    Feeds the chart's store selector (GFP-41). Deliberately derived from the
+    data rather than from the store registry: a registry-driven list offers
+    stores that have never been scraped, and picking one shows an empty chart
+    that looks like a bug. Equally deliberately it does NOT resolve protein —
+    that costs a query per distinct item and this only needs to fill a dropdown.
+
+    Sorted by label so the list does not reshuffle under the user's cursor when
+    prices move, unlike the series order, which is ranked on purpose.
+    """
+    own = conn or db.connect()
+    anchor = today or date.today()
+    since = (anchor - timedelta(days=days)).isoformat()
+    rows = own.execute(
+        "SELECT DISTINCT store FROM price_history WHERE captured_at >= ?", (since,)
+    ).fetchall()
+    return sorted(
+        ((row["store"], _store_label(row["store"])) for row in rows),
+        key=lambda pair: pair[1],
+    )
+
+
 # --------------------------------------------------------------------------- #
 # The query
 # --------------------------------------------------------------------------- #

@@ -51,6 +51,29 @@ def env_db(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def window(env_db, monkeypatch):
+    """A MainWindow over an isolated DB, rendered offscreen.
+
+    Lives here rather than in test_gui.py because GFP-41 gave it a second
+    consumer. Every Qt import is INSIDE the body on purpose: conftest is
+    imported for the whole suite, and the GUI is an optional extra that CI does
+    not install (it runs ``.[dev]``), so a module-level PySide6 import here
+    would fail collection for tests that never touch Qt.
+    """
+    pytest.importorskip("PySide6", reason="GUI extra not installed")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from grocery_planner.gui import app as gui_app
+
+    app = QApplication.instance() or QApplication([])
+    win = gui_app.MainWindow()
+    yield win
+    win.close()
+    app.processEvents()
+
+
+@pytest.fixture
 def sample_data(tmp_path) -> Path:
     """Build a data/<store>/{deals,prices}.csv tree and return the data dir."""
     root = tmp_path / "data"

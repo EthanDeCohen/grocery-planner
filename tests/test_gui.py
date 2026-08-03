@@ -20,19 +20,6 @@ from grocery_planner.gui.schedule import ScheduleDialog  # noqa: E402
 from grocery_planner.gui.scrape import ScrapeDialog  # noqa: E402
 
 
-@pytest.fixture
-def window(env_db, monkeypatch):
-    """A MainWindow over an isolated DB, rendered offscreen."""
-    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication
-
-    app = QApplication.instance() or QApplication([])
-    win = gui_app.MainWindow()
-    yield win
-    win.close()
-    app.processEvents()
-
-
 def _entries(list_widget):
     """Real rows, ignoring the unselectable "nothing here yet" placeholder."""
     return [
