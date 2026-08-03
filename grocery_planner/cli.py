@@ -842,6 +842,30 @@ def config_set(
         )
 
 
+@app.command("uninstall-plan")
+def uninstall_plan_cmd(
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+) -> None:
+    """Everything an uninstall would remove, with paths resolved (GFP-92).
+
+    Read by uninstall.ps1 / uninstall.sh so the two platforms cannot drift, and
+    useful on its own: "what is this app actually holding, and where" is a
+    question worth being able to answer without uninstalling anything.
+
+    Resolves environment overrides rather than assuming defaults. Any of
+    GROCERY_PLANNER_DB, _CONFIG, _LOG_DIR, _KROGER_CONFIG or
+    _WHOLEFOODS_SESSION moves a file out of the data directory, at which point
+    "delete the folder" would silently leave a credential behind.
+    """
+    from . import uninstall as uninstall_service
+
+    items = uninstall_service.plan()
+    if as_json:
+        typer.echo(uninstall_service.to_json(items))
+        return
+    typer.echo(uninstall_service.to_lines(items))
+
+
 @app.command()
 def stores() -> None:
     """Show tracked stores, row counts, and scraper readiness (GFP-4)."""

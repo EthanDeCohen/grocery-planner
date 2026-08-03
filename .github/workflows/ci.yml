@@ -190,7 +190,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
           Copy-Item dist/gplan.exe, dist/gplan-gui.exe release/
-          Copy-Item packaging/install.ps1, packaging/INSTALL.md release/
+          Copy-Item packaging/install.ps1, packaging/uninstall.ps1 release/
+          Copy-Item packaging/INSTALL.md, packaging/UNINSTALL.md release/
 
       - name: Assemble the release folder (macOS)
         if: runner.os == 'macOS'
@@ -199,21 +200,17 @@ jobs:
           mkdir -p release
           cp dist/gplan release/
           cp -R "dist/gplan-gui.app" "release/Grocery Planner.app"
-          cp packaging/install.sh packaging/INSTALL.md release/
-          chmod +x release/install.sh
+          cp packaging/install.sh packaging/uninstall.sh release/
+          cp packaging/INSTALL.md packaging/UNINSTALL.md release/
+          chmod +x release/install.sh release/uninstall.sh
 
       # GFP-91: the installers are PowerShell and shell, so pytest cannot run
       # them -- tests/test_installer_scripts.py can only check that the pinned
       # names have not drifted. THIS is where they are executed for real, and
-      # it is the only place the machine-wide steps (PATH, Start Menu, symlink,
-      # shell profile) are ever exercised: a dev machine is not a place to test
-      # writing to someone's PATH, and a runner is thrown away afterwards.
-      #
-      # NOT yet covered: the Add/Remove Programs entry, which install.ps1
-      # deliberately skips while there is no uninstall.ps1 to point it at -- an
-      # entry whose Uninstall button does nothing is worse than no entry, since
-      # the user believes the credentials are gone. GFP-92 adds the script and
-      # GFP-116 asserts the removal end to end.
+      # it is the only place the machine-wide steps (PATH, Start Menu, the
+      # registry, the symlink, the shell profile) are ever exercised: a dev
+      # machine is not a place to test writing to someone's registry, and a
+      # runner is thrown away afterwards.
       #
       # Run TWICE, because idempotence is an explicit requirement of the ticket
       # and the second run is the only thing that tests it.
@@ -251,6 +248,17 @@ jobs:
           if (-not $manifest.version) { throw "manifest records no version" }
           Write-Host "installed version: $($manifest.version)"
 
+          # Add/Remove Programs. Its UninstallString must point at a script
+          # that EXISTS -- an entry whose Uninstall button does nothing is
+          # worse than no entry, because the user believes the credentials in
+          # their data folder are gone when they are not.
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GroceryPlanner"
+          if (-not (Test-Path $key)) { throw "no Add/Remove Programs entry" }
+          $arp = Get-ItemProperty $key
+          if ($arp.DisplayName -ne "Grocery Planner") { throw "wrong DisplayName: $($arp.DisplayName)" }
+          if ($arp.UninstallString -notmatch '"(.+uninstall\.ps1)"') { throw "UninstallString names no script: $($arp.UninstallString)" }
+          if (-not (Test-Path $Matches[1])) { throw "UninstallString points at a missing file: $($Matches[1])" }
+
       - name: Install for real, twice (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -286,6 +294,83 @@ jobs:
           assert m["files"], "manifest lists no files"
           print("installed version:", m["version"])
           PY
+
+      # GFP-92: uninstall for real, and check the machine afterwards rather
+      # than trusting the script's own summary. An uninstaller that PRINTS
+      # success while leaving a credential behind is the exact failure mode
+      # this is guarding, and it cannot be caught by reading the output.
+      #
+      # Run TWICE here as well: the ticket requires that running it on a
+      # machine with nothing installed exits cleanly instead of erroring.
+      - name: Uninstall for real, and verify nothing is left (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:LOCALAPPDATA "Programs\GroceryPlanner"
+
+          # Plant a credential-shaped file so "did it remove the secrets?" is
+          # an observation rather than an assumption.
+          $data = Join-Path $env:LOCALAPPDATA "grocery-planner\grocery-planner"
+          New-Item -ItemType Directory -Force -Path $data | Out-Null
+          Set-Content -Path (Join-Path $data "kroger-env.config") -Value "client_secret=NOTAREALSECRET"
+          Set-Content -Path (Join-Path $data "wholefoods_session.json") -Value '{"wfm_store_d8": "fake"}'
+
+          & (Join-Path $root "uninstall.ps1") -DryRun
+          if (-not (Test-Path (Join-Path $data "kroger-env.config"))) {
+              throw "a DRY RUN deleted a credential"
+          }
+
+          & (Join-Path $root "uninstall.ps1") -Yes
+          if ($LASTEXITCODE -ne 0) { throw "uninstall reported failures (exit $LASTEXITCODE)" }
+
+          # Now check the MACHINE, not the transcript.
+          if (Test-Path $root) { throw "program files survived: $root" }
+          if (Test-Path $data) { throw "application data survived: $data" }
+          $menu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Grocery Planner"
+          if (Test-Path $menu) { throw "Start Menu folder survived: $menu" }
+          $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+          if ($userPath -and ($userPath -split ";" | Where-Object { $_ -like "*GroceryPlanner*" })) {
+              throw "PATH entry survived"
+          }
+          if (Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GroceryPlanner") {
+              throw "Add/Remove Programs entry survived"
+          }
+
+          # Idempotence: on a machine with nothing installed it must exit 0.
+          Copy-Item packaging/uninstall.ps1 $env:RUNNER_TEMP -Force
+          & (Join-Path $env:RUNNER_TEMP "uninstall.ps1") -Yes
+          if ($LASTEXITCODE -ne 0) { throw "second uninstall did not exit cleanly" }
+
+      - name: Uninstall for real, and verify nothing is left (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          ROOT="$HOME/.local/share/grocery-planner"
+          DATA="$HOME/Library/Application Support/grocery-planner"
+
+          mkdir -p "$DATA"
+          echo "client_secret=NOTAREALSECRET" > "$DATA/kroger-env.config"
+          echo '{"wfm_store_d8": "fake"}'     > "$DATA/wholefoods_session.json"
+
+          "$ROOT/uninstall.sh" --dry-run
+          test -f "$DATA/kroger-env.config" || { echo "a DRY RUN deleted a credential"; exit 1; }
+
+          "$ROOT/uninstall.sh" --yes
+
+          # Check the machine, not the transcript.
+          test ! -d "$ROOT" || { echo "program files survived: $ROOT"; exit 1; }
+          test ! -d "$DATA" || { echo "application data survived: $DATA"; exit 1; }
+          test ! -e "$HOME/Applications/Grocery Planner.app" || { echo ".app survived"; exit 1; }
+          test ! -L "$HOME/.local/bin/gplan" || { echo "symlink survived"; exit 1; }
+          if launchctl list 2>/dev/null | grep -q grocery; then
+            echo "a LaunchAgent is still loaded"; exit 1
+          fi
+
+          # Idempotence: nothing installed must exit 0, not error.
+          cp packaging/uninstall.sh "$RUNNER_TEMP/uninstall.sh"
+          chmod +x "$RUNNER_TEMP/uninstall.sh"
+          "$RUNNER_TEMP/uninstall.sh" --yes
 
       # The .app is a DIRECTORY, so it is listed explicitly -- a glob that
       # matched only files would upload an empty artifact and pass.
