@@ -443,6 +443,66 @@ def load_session(path: Path | None = None) -> Session:
     return Session(wfm_store_d8=cookie, minted_at=str(minted_at) if minted_at else None)
 
 
+def save_session(
+    cookie_value: str,
+    postal_code: str | None = None,
+    path: Path | None = None,
+    minted_at: str | None = None,
+) -> Path:
+    """Write a minted ``wfm_store_d8`` to the session file. Returns its path.
+
+    Added for GFP-80, which mints this cookie inside the app instead of asking
+    a nutritionist to open DevTools. Until now this file was only ever created
+    by hand, so nothing needed to write it.
+
+    **It validates before it writes, and refuses rather than saves.** A session
+    file containing a cookie that cannot be decoded, or one minted for the
+    wrong ZIP, is worse than no file at all: ``readiness()`` reports the store
+    as ready, the scrape then fails, and the failure surfaces a long way from
+    the moment the mistake was made. Both checks reuse the scrape path's own
+    functions -- :func:`_decode_store_cookie` and :func:`_check_zip` -- so
+    "will this be accepted later" is answered by the code that will do the
+    accepting, not by a second implementation that can drift from it.
+
+    Writes ONLY ``wfm_store_d8`` and ``minted_at``. A browser session carries
+    a great many other cookies; none of them are needed (see the module
+    docstring: this one is necessary and sufficient), and persisting a whole
+    cookie jar would put more of a customer's browsing on disk than this app
+    has any business holding.
+
+    NOTE for GFP-83: still ONE file, one cookie. Per-ZIP keying is that
+    ticket's job. ``postal_code`` is validated here and deliberately not used
+    to choose the filename yet.
+    """
+    value = (cookie_value or "").strip()
+    if not value:
+        raise SessionMissingError(
+            "Refusing to save an empty wfm_store_d8 value. Nothing was written."
+        )
+
+    # Decode first: an undecodable cookie means the mint did not actually
+    # capture the storefront session, and saving it would only defer the
+    # error to the next scrape.
+    data = _decode_store_cookie(value)
+    if postal_code:
+        _check_zip(data, str(postal_code).strip())
+
+    target = path or session_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    body: dict[str, Any] = {"wfm_store_d8": value}
+    body["minted_at"] = minted_at or datetime.now(timezone.utc).isoformat(
+        timespec="seconds"
+    )
+    if postal_code:
+        # Human bookkeeping only -- load_session never reads it. It is here so
+        # somebody looking at the file can tell which ZIP it was minted for
+        # without decoding the cookie by hand.
+        body["postal_code"] = str(postal_code).strip()
+
+    target.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
+    return target
+
+
 def _b64_candidate(value: str) -> str | None:
     """``value`` decoded from base64, or ``None`` if it is not base64 at all.
 
