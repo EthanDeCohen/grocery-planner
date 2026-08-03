@@ -7,6 +7,14 @@ return plain data and never print — the front end owns all presentation.
 Split into submodules under GFP-43 as this layer grows to carry customers,
 nutrition and ingest:
 
+- :mod:`.clients` — client CRUD, the one path both ``gplan client ...`` and the
+  GUI roster take (GFP-33), over the GFP-28 customer record. Deliberately NOT
+  re-exported flat below, unlike the four modules that follow: those are flat
+  because GFP-43 split an already-flat ``service.py`` and could not break the
+  call sites it had. ``clients`` is new, both its call sites import
+  ``service.clients`` by name, and there are ~20 of them — flattening those
+  into this namespace would put ``service.get_client`` next to
+  ``service.fetch_deals`` with nothing but the noun to say which is which.
 - :mod:`.deals` — deal query, ranking, filtering and export (GFP-16/GFP-17/GFP-8).
 - :mod:`.ingest` — pulling fresh deals from a store scraper into SQLite.
 - :mod:`.cheapest` — what to buy RIGHT NOW: the cheapest animal protein on

@@ -179,6 +179,30 @@ try {
     # rankable -- which must be a plain sentence and exit 0, not an empty table.
     Test-Case "cheapest (nothing rankable)" @("cheapest")                                  0 "Nothing to rank yet"
     Test-Case "cheapest --all-protein"   @("cheapest", "--all-protein")                    0
+    # GFP-33: client CRUD, the same service calls the GUI roster makes. The
+    # weight cases are the point: 150 entered as POUNDS must come back as
+    # pounds and produce a ~109 g/day target, not the ~240 a kilogram reading
+    # would invent. A weight with no unit is refused outright rather than
+    # defaulted to either one.
+    Test-Case "client add"               @("client", "add", "Ana Ruiz", "-w", "150", "-u", "lb") 0 "Added Ana Ruiz"
+    Test-Case "client add (no unit)"     @("client", "add", "No Unit", "--weight", "150")  1
+    Test-Case "client add (weightless)"  @("client", "add", "Dev Patel")                   0 "Added Dev Patel"
+    Test-Case "client list"              @("client", "list")                               0 "150 lb"
+    Test-Case "client show"              @("client", "show", "Ana Ruiz")                   0 "150 lb"
+    # "Absent stays absent": no weight on file means no target, said out loud.
+    Test-Case "client show (no weight)"  @("client", "show", "Dev Patel")                  0 "no protein target"
+    # No --unit, so the pounds already on file are what 145 is read in.
+    Test-Case "client edit weight"       @("client", "edit", "Ana Ruiz", "--weight", "145") 0 "145 lb"
+    Test-Case "client edit rename"       @("client", "edit", "Ana Ruiz", "--name", "Ana Ruiz-Mendez") 0 "Updated Ana Ruiz-Mendez"
+    Test-Case "client edit (bad unit)"   @("client", "edit", "Ana Ruiz-Mendez", "-w", "70", "-u", "stone") 2
+    # Client records are hand-typed and irreplaceable: an unconfirmed delete
+    # must remove nothing (here stdin is closed, so the prompt aborts), and a
+    # confirmed one must still be recoverable.
+    Test-Case "client delete (no confirm)" @("client", "delete", "Dev Patel")              1
+    Test-Case "client survived it"       @("client", "list")                               0 "Dev Patel"
+    Test-Case "client delete"            @("client", "delete", "Dev Patel", "--yes")       0 "Removed Dev Patel"
+    Test-Case "client restore"           @("client", "restore", "Dev Patel")               0 "Restored Dev Patel"
+    Test-Case "client delete (unknown)"  @("client", "delete", "Nobody At All", "--yes")   1
     Test-Case "schedule remove"          @("schedule", "remove", "foodlion")               0 "Removed"
     Test-Case "schedule remove (gone)"   @("schedule", "remove", "foodlion")               1
     Test-Case "schedule run (none set)"  @("schedule", "run", "--once")                    1 "No schedules"
