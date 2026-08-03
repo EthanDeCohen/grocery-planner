@@ -73,13 +73,21 @@ WIDEST_RANGE = max(days for days, _ in RANGE_CHOICES)
 #: then be indistinguishable.
 ALL_STORES = ""
 
-# GFP-109: two tabs rather than a default plus a hidden toggle. "Overall" is
-# every protein source, exactly as before; "Animal protein" is meat and seafood
-# only. Both stay first-class, and which question is on screen is legible at a
-# glance -- a chart silently ranking a subset would be the same class of quiet
-# lie this pane already refuses elsewhere.
-TAB_OVERALL, TAB_ANIMAL = 0, 1
-TAB_LABELS = ("Overall protein", "Animal protein")
+# GFP-109: two tabs rather than a default plus a hidden toggle. "Animal protein"
+# is meat and seafood only; "Overall" is every protein source, exactly as before.
+# Both stay first-class, and which question is on screen is legible at a glance --
+# a chart silently ranking a subset would be the same class of quiet lie this
+# pane already refuses elsewhere.
+#
+# ANIMAL PROTEIN LEADS AND IS THE DEFAULT, by product decision: meat is what the
+# tool is for, and the overall view's honest-but-useless answer (a pancake mix
+# won on $/g protein) is exactly what a nutritionist should NOT be shown first.
+# Overall stays one click away rather than being removed -- the data was never
+# the problem, the ranking was.
+TAB_ANIMAL, TAB_OVERALL = 0, 1
+TAB_LABELS = ("Animal protein", "Overall protein")
+#: Which tab a freshly-opened window lands on.
+DEFAULT_TAB = TAB_ANIMAL
 
 #: GFP-110: entries per page in the "Latest known" list. Two is the shape the
 #: user saw and asked to keep, and a fixed page keeps the pane a constant height
@@ -285,7 +293,7 @@ class TrendsPane(QWidget):
         self.tabs = QTabBar()
         for label in TAB_LABELS:
             self.tabs.addTab(label)
-        self.tabs.setCurrentIndex(TAB_OVERALL)
+        self.tabs.setCurrentIndex(DEFAULT_TAB)
         self.tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.tabs)
 
@@ -551,11 +559,14 @@ class TrendsPane(QWidget):
         )
         if trend.observed_days == 0 and self._any_history and narrowed:
             store = self.store_select.currentText() if self.selected_store else "any store"
-            if self.meat_only:
-                # The tab is a filter too, and the likeliest one to empty a
-                # view: a week's ad can carry protein without carrying meat.
-                # Telling someone to widen a date range they never narrowed
-                # would send them to fix the wrong thing.
+            # WHICH narrowing emptied this? Blaming the tab whenever it happens
+            # to be on sends someone to the Overall tab that is just as empty,
+            # and asserting "there is other protein" without looking would be
+            # this pane telling the user something it never checked. So ask:
+            # would dropping ONLY the meat filter, over this same window and
+            # store, find anything? One extra query, and only ever on the empty
+            # path.
+            if self.meat_only and self._has_other_protein():
                 return (
                     f"No animal protein for {store} in the last {trend.days} days. "
                     "There is other protein on record — see the Overall protein tab."
@@ -565,6 +576,13 @@ class TrendsPane(QWidget):
                 "There is history further back — widen the range, or pick All stores."
             )
         return trend.reason
+
+    def _has_other_protein(self) -> bool:
+        """Is there non-meat protein in exactly this window and store?"""
+        wider = service.protein_price_trend(
+            days=self.selected_days, store=self.selected_store, meat_only=False
+        )
+        return wider.observed_days > 0
 
     def _build_legend(self, trend: service.PriceTrend) -> None:
         while self.legend_layout.count():

@@ -19,6 +19,7 @@ pytest.importorskip("PySide6")
 
 from grocery_planner import db, service
 from grocery_planner.gui.trends import (
+    DEFAULT_TAB,
     LATEST_PAGE_SIZE,
     TAB_ANIMAL,
     TAB_LABELS,
@@ -132,32 +133,41 @@ def test_the_default_is_unchanged_so_no_existing_caller_shifts(pancake_and_chick
 # --------------------------------------------------------------------------- #
 # GFP-109 — the tabs
 # --------------------------------------------------------------------------- #
-def test_the_pane_offers_exactly_two_named_tabs(window):
+def test_animal_protein_leads_and_is_the_default(window):
+    """Meat is what the tool is for, so it must not be the second tab.
+
+    The overall view's honest-but-useless answer (a pancake mix winning on $/g
+    protein) is exactly what a nutritionist should not be shown first.
+    """
     pane = window.trends
     assert pane.tabs.count() == 2
     assert [pane.tabs.tabText(i) for i in range(2)] == list(TAB_LABELS)
-    assert pane.tabs.currentIndex() == TAB_OVERALL      # today's view leads
-    assert pane.meat_only is False
+    assert pane.tabs.tabText(0) == "Animal protein"
+    assert pane.tabs.currentIndex() == DEFAULT_TAB == TAB_ANIMAL
+    assert pane.meat_only is True
 
 
-def test_switching_to_animal_protein_refilters_the_chart(window, pancake_and_chicken):
+def test_the_default_tab_shows_meat_and_overall_shows_the_pancake_mix(window,
+                                                                     pancake_and_chicken):
+    """Both directions, since the default moved: meat first, everything second."""
     pane = window.trends
     pane.reload()
-    assert "Pancake" in pane.trend.series[0].latest.item_name
-
-    pane.tabs.setCurrentIndex(TAB_ANIMAL)
     assert pane.meat_only is True
     assert "Chicken" in pane.trend.series[0].latest.item_name
+
+    pane.tabs.setCurrentIndex(TAB_OVERALL)
+    assert pane.meat_only is False
+    assert "Pancake" in pane.trend.series[0].latest.item_name
 
 
 def test_the_caption_names_the_subset_being_ranked(window, pancake_and_chicken):
     """A chart ranking meat under a caption saying "protein" is the quiet lie."""
     pane = window.trends
     pane.reload()
-    assert "animal protein" not in pane.subtitle.text()
-
-    pane.tabs.setCurrentIndex(TAB_ANIMAL)
     assert "animal protein" in pane.subtitle.text()
+
+    pane.tabs.setCurrentIndex(TAB_OVERALL)
+    assert "animal protein" not in pane.subtitle.text()
 
 
 def test_an_empty_animal_tab_points_at_the_overall_tab_not_at_the_date_range(window):
@@ -168,7 +178,7 @@ def test_an_empty_animal_tab_points_at_the_overall_tab_not_at_the_date_range(win
     
 
     pane = window.trends
-    pane.tabs.setCurrentIndex(TAB_ANIMAL)
+    pane.reload()                       # already on the Animal tab by default
 
     text = pane.subtitle.text()
     assert "No animal protein" in text
@@ -280,5 +290,27 @@ def test_switching_tab_resets_the_page(window):
     pane.next_btn.click()
     assert "2/3" in pane.latest.text()
 
-    pane.tabs.setCurrentIndex(TAB_ANIMAL)
+    pane.tabs.setCurrentIndex(TAB_OVERALL)
     assert pane._latest_page == 0
+
+
+def test_an_empty_animal_tab_blames_the_range_when_the_range_is_the_cause(window):
+    """Which narrowing emptied the view decides which message is honest.
+
+    Caught by an existing GFP-41 test: with the Animal tab as the default, a
+    result emptied by the DATE RANGE was being blamed on the meat filter, which
+    sends the user to an Overall tab that is just as empty. The pane now checks
+    whether dropping only the meat filter would find anything, rather than
+    asserting "there is other protein on record" without looking.
+    """
+    live = db.connect()
+    chicken = _food(live, "Range Chicken", "gfp109-range", "Meat")
+    _observe(live, "wholefoods", "Chicken Breast 16 oz", chicken, 5.00, days=(40, 39))
+
+    pane = window.trends
+    pane.reload()
+    pane.range_select.setCurrentIndex(pane.range_select.findData(7))
+
+    text = pane.subtitle.text()
+    assert "widen the range" in text
+    assert "Overall protein tab" not in text
