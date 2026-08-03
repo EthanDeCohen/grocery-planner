@@ -59,6 +59,47 @@ USER_AGENT = "grocery-planner/0.1 (+local personal use)"
 FLIPP_WEB_FLYER_URL = "https://flipp.com/en-us/flyer/{flyer_id}"
 FLIPP_WEB_COUPON_URL = "https://flipp.com/en-us/coupon/{coupon_id}"
 
+# GFP-111 -- the namespaces this module's rows stamp on `product_identifier_ns`.
+#
+# `product_identifier` alone is not self-describing: '1018281137' as a Flipp
+# item id and '1018281137' as a Kroger productId denote two entirely unrelated
+# products, so the value is meaningless without the vocabulary it belongs to
+# and the two columns are always written together. Every consumer (the GFP-112
+# grocery list's SKU column, the GFP-113 online-order file) must read the pair.
+#
+# Namespaced by SOURCE, not by store, which is what keeps this store-agnostic
+# (GFP-32): one Flipp namespace covers Food Lion, Harris Teeter and any store
+# added to the registry later, because what identifies the id's vocabulary is
+# the feed it came from, never which shop the flyer happens to be for.
+#
+# A weekly-ad row and a coupon row are different vocabularies, not one: Flipp
+# numbers its flyer items and its digital coupons independently, and a deal is
+# always exactly one or the other (see the flipp_coupon_id note in
+# db_script/migration/0012_GFP-15.ddl).
+PRODUCT_IDENTIFIER_NS_ITEM = "flipp.item_id"
+PRODUCT_IDENTIFIER_NS_COUPON = "flipp.coupon_id"
+
+
+def product_identifier(value: Any, namespace: str) -> tuple[str | None, str | None]:
+    """Return the ``(product_identifier, product_identifier_ns)`` pair to store.
+
+    Both or neither, always. An absent id yields ``(None, None)`` rather than a
+    namespace labelling nothing -- and never a stand-in derived from the item
+    name or a row id, which would look exactly like a real SKU to the ordering
+    API it would eventually be handed to (savings.py rule 1: absent stays
+    absent, never a guess).
+
+    The value is kept verbatim as TEXT rather than coerced to a number: Kroger
+    productIds are zero-padded ('0020895500000') and an ASIN is alphanumeric
+    ('B09439SKW3'), so neither survives being read as an integer.
+    """
+    if value is None:
+        return None, None
+    text = str(value).strip()
+    if not text:
+        return None, None
+    return text, namespace
+
 
 @dataclass(frozen=True)
 class StoreConfig:
@@ -476,6 +517,7 @@ def flyer_item_to_row(
     elif sub_category:
         parts.append(sub_category)
     deal_description = " — ".join(parts) if parts else "Weekly ad item"
+    identifier, identifier_ns = product_identifier(item_id, PRODUCT_IDENTIFIER_NS_ITEM)
 
     # flipp_flyer_id/flipp_item_id are kept in `notes` here for provenance
     # (unchanged, existing behavior) *and* promoted to real `deals` columns
@@ -528,6 +570,14 @@ def flyer_item_to_row(
         "sold_by": None,
         "price_per_unit": None,
         "price_per_unit_uom": None,
+        # GFP-111: the same Flipp item id as `flipp_item_id` above, restated in
+        # the source-agnostic pair so a reader has ONE place to look for "this
+        # row's product identifier" whatever produced it. flipp_item_id is
+        # untouched -- this adds a column, it does not replace one. NULL/NULL
+        # when Flipp omitted the item's id, since a weekly-ad row with no id is
+        # simply not orderable and there is nothing honest to put here.
+        "product_identifier": identifier,
+        "product_identifier_ns": identifier_ns,
     }
 
 
@@ -556,6 +606,7 @@ def coupon_to_row(
 
     deal_description = promotion_text or sale_story
     item_name = coupon_item_name(coupon)
+    identifier, identifier_ns = product_identifier(coupon_id, PRODUCT_IDENTIFIER_NS_COUPON)
 
     notes = [
         "source=digital_coupon",
@@ -598,6 +649,12 @@ def coupon_to_row(
         "sold_by": None,
         "price_per_unit": None,
         "price_per_unit_uom": None,
+        # GFP-111: a coupon id, in its OWN namespace -- Flipp numbers coupons
+        # separately from flyer items, so the same digits can appear as both
+        # and mean different things. Deliberately not folded in with
+        # flipp.item_id for that reason.
+        "product_identifier": identifier,
+        "product_identifier_ns": identifier_ns,
     }
 
 

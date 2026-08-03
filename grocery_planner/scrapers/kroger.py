@@ -97,6 +97,7 @@ from typing import Any, Iterable
 import httpx
 
 from .. import credentials, db, matching
+from . import base
 
 # The CLI/registry name. Distinct from STORE_KEY because this is a SECOND
 # source for a store that already has one: `harristeeter` is the Flipp weekly
@@ -118,6 +119,18 @@ SOURCE = "kroger-api"
 MERCHANT = "Harris Teeter (Kroger API)"
 DEFAULT_POSTAL_CODE = "27401"
 DEAL_TYPE = "Shelf Price"
+
+# GFP-111: the vocabulary this module's `product_identifier` values belong to.
+# Named after the SOURCE, not the store -- these ids are Kroger's, issued by
+# the API, and would be the same numbers if this feed were pointed at any other
+# Kroger banner. Naming it after `harristeeter` would make that a lie the first
+# time a second banner is added, and would put store identity into shared data
+# (GFP-32).
+#
+# Kroger's productId is zero-padded ('0020895500000'), so it is stored verbatim
+# as TEXT -- read as a number it becomes 20895500000 and no longer matches
+# anything Kroger will accept.
+PRODUCT_IDENTIFIER_NS = "kroger.product_id"
 
 # Re-exported from the GFP-97 credential registry rather than restated, so the
 # filename and the override variable cannot drift from what the seam actually
@@ -571,6 +584,16 @@ def product_to_row(
         "sold_by": sold_by,
         "price_per_unit": per_unit,
         "price_per_unit_uom": per_unit_uom,
+        # GFP-111: Kroger's own productId, written at scrape time from the
+        # field already in hand a few lines above -- the same value `notes`
+        # records for provenance, but in a real column so nothing downstream
+        # has to string-parse that blob to find it. `notes` is unchanged.
+        # NULL/NULL when the API omitted productId: a shelf listing with no id
+        # cannot be ordered, and a substitute would be a fabricated SKU.
+        **dict(zip(
+            ("product_identifier", "product_identifier_ns"),
+            base.product_identifier(product_id, PRODUCT_IDENTIFIER_NS),
+        )),
     }
 
     fact = None

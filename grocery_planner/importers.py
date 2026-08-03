@@ -31,6 +31,16 @@ DEAL_COLUMNS = [
     # price is per pound, and the UI must tag it as such or a $2.49/lb loin
     # reads as cheaper than a $4.99 packet.
     "sold_by", "price_per_unit", "price_per_unit_uom",
+    # GFP-111: the source's OWN product identifier, plus which vocabulary it
+    # belongs to -- always as a pair, since a bare '0020895500000' does not say
+    # whether it is a Kroger productId, an ASIN or a Flipp item id, and those
+    # must never be compared or joined as if interchangeable. Each scraper
+    # module writes its own namespace constant (see PRODUCT_IDENTIFIER_NS in
+    # scrapers/kroger.py, scrapers/wholefoods.py and scrapers/base.py); nothing
+    # here or downstream parses `notes` to get it. NULL for csv-import rows --
+    # the legacy Excel export carries no source identifier and inventing one
+    # would be worse than its absence (savings.py rule 1).
+    "product_identifier", "product_identifier_ns",
 ]
 PRICE_COLUMNS = [
     "item_name", "brand", "category", "regular_price", "sale_price", "unit",
