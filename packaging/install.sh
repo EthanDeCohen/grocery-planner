@@ -28,6 +28,7 @@
 #   ./install.sh
 #   ./install.sh --dry-run
 #   ./install.sh --prefix /tmp/gp-test --no-integrate
+#   ./install.sh --no-timer          # skip the daily background refresh
 #   ./install.sh --clear-quarantine
 # ===========================================================================
 set -euo pipefail
@@ -48,6 +49,7 @@ MANIFEST_SCHEMA=1
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX=""
 NO_INTEGRATE=0
+NO_TIMER=0
 DRY_RUN=0
 CLEAR_QUARANTINE=0
 
@@ -55,6 +57,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --prefix)            PREFIX="$2"; shift 2 ;;
         --no-integrate)      NO_INTEGRATE=1; shift ;;
+        --no-timer)          NO_TIMER=1; shift ;;
         --dry-run)           DRY_RUN=1; shift ;;
         --clear-quarantine)  CLEAR_QUARANTINE=1; shift ;;
         -h|--help)           sed -n '2,32p' "$0"; exit 0 ;;
@@ -263,6 +266,34 @@ else
 fi
 
 # --------------------------------------------------------------------------- #
+# 6b. The background refresh (GFP-102).
+#
+# Registered by the installer, because price history only accumulates going
+# forward and cannot be backfilled: every day the machine does not scrape is a
+# permanent hole in the trends chart. Opt-OUT rather than opt-in for that
+# reason, with two ways out -- --no-timer here, and the `background_refresh`
+# setting at any time afterwards.
+#
+# Not fatal if it fails. An install that works but does not refresh by itself
+# is a much better outcome than no install.
+# --------------------------------------------------------------------------- #
+INTEGRATIONS_TIMER=""
+if [ "$NO_TIMER" -eq 1 ] || [ "$NO_INTEGRATE" -eq 1 ]; then
+    skip "background refresh not registered"
+elif [ "$DRY_RUN" -eq 1 ]; then
+    printf '  [36mwould: register the daily background refresh[0m
+'
+else
+    if "$SUPPORT_DIR/gplan" timer install >/dev/null 2>&1; then
+        did "background refresh registered (daily)"
+        INTEGRATIONS_TIMER="com.grocery-planner.refresh"
+    else
+        warn "could not register the background refresh -- the app still works"
+        gray "retry any time with:  gplan timer install"
+    fi
+fi
+
+# --------------------------------------------------------------------------- #
 # 7. The manifest. Written LAST, so its presence means the install completed.
 #
 # Hand-built JSON rather than a here-doc template, because the file list is
@@ -290,7 +321,8 @@ else
         printf '  ],\n'
         printf '  "integrations": {\n'
         printf '    "symlink": "%s",\n' "$INTEGRATIONS_BIN"
-        printf '    "profile": "%s"\n' "$INTEGRATIONS_PROFILE"
+        printf '    "profile": "%s",\n' "$INTEGRATIONS_PROFILE"
+        printf '    "timer": "%s"\n' "$INTEGRATIONS_TIMER"
         printf '  }\n'
         printf '}\n'
     } > "$MANIFEST"

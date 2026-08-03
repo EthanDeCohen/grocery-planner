@@ -155,6 +155,13 @@ SETTINGS: tuple[Setting, ...] = (
         describe="Fetch prices automatically on first run and on a new day (GFP-105).",
     ),
     Setting(
+        key="background_refresh",
+        default=True,
+        parse=_boolean,
+        env_var="GROCERY_PLANNER_BACKGROUND_REFRESH",
+        describe="Let the OS timer refresh prices when the app is closed (GFP-102).",
+    ),
+    Setting(
         key="log_level",
         default="WARNING",
         parse=_log_level,

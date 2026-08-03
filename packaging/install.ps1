@@ -38,12 +38,17 @@
     Install somewhere other than %LOCALAPPDATA%\Programs\GroceryPlanner.
     Mainly for testing an install without touching a real one.
 
+.PARAMETER NoTimer
+    Do not register the daily background refresh (GFP-102). The app still
+    works; it just will not update prices while it is closed.
+
 .PARAMETER NoIntegrate
-    Copy the files but do not touch PATH, the Start Menu or the registry.
+    Copy the files but do not touch PATH, the Start Menu, the registry or the
+    background timer.
     This is what makes the script testable on a developer machine: the file
-    copy is exercised for real while the three machine-wide side effects are
-    left alone. CI (GFP-116) runs WITHOUT this flag on a throwaway runner,
-    which is where the integration steps get their real test.
+    copy is exercised for real while every machine-wide side effect is left
+    alone. CI (GFP-116) runs WITHOUT this flag on a throwaway runner, which is
+    where those steps get their real test.
 
 .PARAMETER DryRun
     Print every action without performing any of it. Same spirit as
@@ -59,6 +64,7 @@
 param(
     [string]$Prefix,
     [switch]$NoIntegrate,
+    [switch]$NoTimer,
     [switch]$DryRun
 )
 
@@ -78,6 +84,8 @@ $AppName          = "Grocery Planner"
 $InstallDirName   = "GroceryPlanner"
 $StartMenuFolder  = "Grocery Planner"
 $RegistryKey      = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GroceryPlanner"
+$TaskPath         = "\GroceryPlanner\"
+$TaskName         = "Refresh"
 $ManifestName     = "install-manifest.json"
 $Publisher        = "grocery-planner"
 
@@ -263,6 +271,33 @@ if ($NoIntegrate) {
     if (-not (Test-Path $uninstallScript)) {
       Write-Skip "no uninstall.ps1 in this release, so no Add/Remove Programs entry"
     } else {
+    # --- background refresh (GFP-102) --------------------------------------- #
+    # Registered by the installer, because price history only accumulates going
+    # forward and cannot be backfilled: every day the machine does not scrape
+    # is a permanent hole in the trends chart. Opt-out rather than opt-in for
+    # that reason, with two ways out -- -NoTimer here, and the
+    # `background_refresh` setting at any time afterwards.
+    if ($NoTimer) {
+        Write-Skip "background refresh not registered (-NoTimer)"
+    } elseif (-not $DryRun) {
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $timerOut = (& $installedCli timer install 2>&1 | Out-String).Trim()
+        $timerCode = $LASTEXITCODE
+        $ErrorActionPreference = $previous
+        if ($timerCode -eq 0) {
+            Write-Did "background refresh registered (daily)"
+            $integrations["timer"] = "$TaskPath$TaskName"
+        } else {
+            # Not fatal. An install that works but does not refresh by itself
+            # is a much better outcome than no install.
+            Write-Warn "could not register the background refresh -- the app still works, and you can retry with: gplan timer install"
+            Write-Host $timerOut -ForegroundColor DarkGray
+        }
+    } else {
+        Write-Host "  would: register the daily background refresh" -ForegroundColor Cyan
+    }
+
     Invoke-Action "register in Add/Remove Programs" {
         New-Item -Path $RegistryKey -Force | Out-Null
         $size = (Get-ChildItem $installRoot -Recurse -File | Measure-Object Length -Sum).Sum
