@@ -132,6 +132,27 @@ DEAL_TYPE = "Shelf Price"
 # anything Kroger will accept.
 PRODUCT_IDENTIFIER_NS = "kroger.product_id"
 
+# GFP-99: where a product page lives. The API returns `productPageURI` as a
+# ROOT-RELATIVE path ("/p/<slug>/<productId>?cid=..."), so it needs a host.
+#
+# This host is Harris Teeter's because this module IS the Harris Teeter feed
+# (SCRAPER_KEY/MERCHANT above) -- a banner's own storefront, not a generic
+# Kroger one. Verified 2026-08-02 by opening a built URL in a real browser:
+# https://www.harristeeter.com/p/harris-teeter-boneless-chicken-breast-value-pack/0020895500000
+# resolves to the real product page ("$1.99/lb", UPC 0020895500000, 26 g
+# protein per 4 oz -- which also cross-checks the protein density this scraper
+# stores). Note that `httpx` gets a read timeout on the same URL: the
+# storefront refuses unknown clients, so an automated check CANNOT confirm
+# these links and must not be added as a test.
+PRODUCT_PAGE_HOST = "https://www.harristeeter.com"
+
+# The API appends a campaign tag identifying our own API client
+# ("?cid=dis.api.tpi_products-api_...decohenpartners-bbcg"). Stripped
+# deliberately: the bare path was verified to work, and a link handed to a
+# nutritionist's client should not carry our developer account's tracking
+# parameter. Everything before the "?" is the durable part.
+PRODUCT_PAGE_TRACKING_PARAM = "cid"
+
 # Re-exported from the GFP-97 credential registry rather than restated, so the
 # filename and the override variable cannot drift from what the seam actually
 # looks at. Existing callers and tests keep importing them from here.
@@ -455,6 +476,63 @@ def extract_protein_per_serving(product: dict[str, Any]) -> float | None:
     return None
 
 
+def product_page_url(product: dict[str, Any]) -> str | None:
+    """The storefront product page for one API product, or ``None`` (GFP-99).
+
+    Built from the API's own ``productPageURI`` rather than assembled from a
+    slug and an id. That distinction is the ticket's requirement and it matters:
+    a guessed URL shape that 404s is worse than the plain text it replaces
+    (GFP-38 deliberately chose plain text over a dead control), whereas this
+    path is what Kroger itself says the product lives at.
+
+    The campaign tag is stripped -- see :data:`PRODUCT_PAGE_TRACKING_PARAM`.
+
+    ``None`` whenever the payload does not carry a URI, or carries something
+    that is not a root-relative path. An absolute URL from the API would mean
+    the contract changed under us, and silently prefixing a host onto it would
+    produce nonsense like "https://www.harristeeter.comhttps://..." -- so it is
+    refused rather than patched over (savings.py rule 1).
+    """
+    uri = (product.get("productPageURI") or "").strip()
+    if not uri or not uri.startswith("/"):
+        return None
+    path = uri.split("?", 1)[0]
+    return f"{PRODUCT_PAGE_HOST}{path}" if path else None
+
+
+def product_image_url(product: dict[str, Any]) -> str | None:
+    """The best front-of-pack image for one API product, or ``None`` (GFP-99).
+
+    ``images`` is a list of perspectives ("front", "back", ...), each with
+    several ``sizes``. Front is preferred because it is the pack a shopper
+    recognises on a shelf; any perspective is better than none.
+
+    Only carried, never fetched: this app does no network I/O to paint a window
+    (see gui/wheretobuy.py). Storing the URL costs nothing and leaves the
+    caching/offline decision to whoever renders it.
+    """
+    images = product.get("images") or []
+    if not isinstance(images, list):
+        return None
+
+    def first_url(image: dict[str, Any]) -> str | None:
+        for size in image.get("sizes") or []:
+            url = (size or {}).get("url")
+            if url:
+                return str(url)
+        return None
+
+    ordered = sorted(
+        (i for i in images if isinstance(i, dict)),
+        key=lambda i: str(i.get("perspective", "")).lower() != "front",
+    )
+    for image in ordered:
+        url = first_url(image)
+        if url:
+            return url
+    return None
+
+
 def extract_serving_grams(product: dict[str, Any]) -> float | None:
     """A serving's weight in grams, or ``None`` if not stated in a weight unit."""
     serving = (_nutrition_block(product) or {}).get("servingSize") or {}
@@ -577,8 +655,11 @@ def product_to_row(
         "valid_to": None,
         "loyalty_required": "N",
         "notes": "; ".join(notes),
-        "source_url": None,
-        "image_url": None,
+        # GFP-99: both come from the payload, both stay None when it does not
+        # carry them -- the where-to-buy column degrades to plain text rather
+        # than rendering a dead control.
+        "source_url": product_page_url(product),
+        "image_url": product_image_url(product),
         "flipp_flyer_id": None,
         "flipp_item_id": None,
         "flipp_coupon_id": None,
