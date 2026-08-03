@@ -13,6 +13,13 @@ PUBLIC_API = [
     # GFP-107: "what should they buy today", from deals not history.
     "CheapestProtein",
     "cheapest_protein_by_store",
+    # GFP-105: one definition of "is a refresh due", shared by the
+    # app's first run and GFP-102's background timer.
+    "NEW_DAY",
+    "NO_DATA",
+    "RefreshDecision",
+    "UP_TO_DATE",
+    "refresh_decision",
     # GFP-112: the grocery list and its renderers.
     "DEFAULT_DAYS",
     "EXTENSIONS",

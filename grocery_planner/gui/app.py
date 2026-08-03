@@ -27,6 +27,7 @@ the bar had as a flag; the menu's Export writes the current (non-expired) deals.
 """
 from __future__ import annotations
 
+import os
 import sys
 
 from PySide6.QtGui import QAction, QKeySequence
@@ -50,6 +51,11 @@ from .schedule import ScheduleDialog
 from .scrape import ScrapeDialog
 from .trends import TrendsPane
 
+#: Set this to any non-empty value to stop the app fetching prices on start
+#: (GFP-105). An environment variable is a placeholder: GFP-85's global config
+#: file is where this setting belongs, and this should move there when it lands.
+NO_AUTO_REFRESH_ENV = "GROCERY_PLANNER_NO_AUTO_REFRESH"
+
 #: Roster gets the narrower half; the chart needs the width to be readable.
 SPLIT_SIZES = (340, 580)
 
@@ -66,6 +72,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"{service.count_deals(hide_expired=True)} current deals stored."
         )
+        # NOT called here: see main(). Constructing the window must not touch
+        # the network, or every GUI test would scrape.
 
     # ----------------------------------------------------------------- #
     # Menu bar — the one place a control can live now the tabs are gone
@@ -142,6 +150,45 @@ class MainWindow(QMainWindow):
         column.addWidget(self.stack, 1)     # the stack takes the slack...
         column.addWidget(self.cheapest)     # ...so the strip keeps its own height
         return central
+
+    # ----------------------------------------------------------------- #
+    # First-run / new-day refresh (GFP-105)
+    # ----------------------------------------------------------------- #
+    def maybe_auto_refresh(self) -> bool:
+        """Fetch this week's prices on first run, or on a new day.
+
+        Reported from first use: a fresh install showed an empty app, and the
+        only way to fill it was to find Data ▸ Run scrape and click through
+        every store by hand. Nothing told the user that.
+
+        Deliberately reuses the GFP-103 scrape dialog rather than scraping
+        quietly in the background. That dialog already shows a row per store
+        with its own progress and result, which satisfies the two constraints
+        that matter here: the user can SEE it happening, and they can close it.
+        Automatic network activity that cannot be seen or stopped is not
+        acceptable on someone else's machine.
+
+        Whether a refresh is due is decided by ``service.refresh_decision`` and
+        NOT by this method, so GFP-102's background timer and this cannot reach
+        different answers and double-scrape.
+
+        Returns True when a refresh was started, for tests and for callers that
+        want to know.
+        """
+        if os.environ.get(NO_AUTO_REFRESH_ENV):
+            # Opt-out. GFP-85's config file is the proper home for this; until
+            # it exists an environment variable is the honest placeholder --
+            # documented rather than silently absent.
+            return False
+
+        decision = service.refresh_decision()
+        if not decision.due or not decision.stores:
+            return False
+
+        self.statusBar().showMessage(decision.explanation, 15000)
+        dialog = self.open_scrape()
+        started = [store for store in decision.stores if dialog.start(store)]
+        return bool(started)
 
     # ----------------------------------------------------------------- #
     # Navigation (GFP-36)
@@ -223,6 +270,15 @@ def main() -> int:
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
+    # GFP-105 lives HERE and not in MainWindow.__init__ on purpose. Building a
+    # window must never touch the network: with the call in the constructor,
+    # every GUI test -- and anything else that instantiates MainWindow --
+    # would fire real scrapes. Launching the application is the event that
+    # justifies fetching prices; constructing a widget is not.
+    #
+    # After show(), so the window is already on screen when the scrape dialog
+    # appears over it rather than the app seeming to open into a dialog.
+    window.maybe_auto_refresh()
     return app.exec()
 
 
