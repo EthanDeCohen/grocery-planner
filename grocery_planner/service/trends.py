@@ -280,6 +280,23 @@ def _store_label(store_key: str) -> str:
     return store.display_name if store else store_key
 
 
+def has_price_history(conn: sqlite3.Connection | None = None) -> bool:
+    """Is there ANY captured price at all, of any age, for any store?
+
+    Deliberately unwindowed, unlike :func:`trend_stores`. This answers a
+    different question — "has this install ever collected anything?" — and the
+    GUI needs it to tell a genuinely empty database (GFP-104: show one plain
+    message, not controls governing nothing) apart from a database that simply
+    has nothing inside the selected window.
+
+    ``LIMIT 1`` rather than a count: the answer is a yes/no and the table grows
+    without bound (until GFP-42), so counting rows to learn "at least one" would
+    get slower every week for no gain.
+    """
+    own = conn or db.connect()
+    return own.execute("SELECT 1 FROM price_history LIMIT 1").fetchone() is not None
+
+
 def trend_stores(
     days: int = DEFAULT_WINDOW_DAYS,
     today: date | None = None,

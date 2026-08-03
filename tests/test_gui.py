@@ -558,10 +558,15 @@ def _seed_protein_history(days):
 
 
 def test_trends_pane_hides_the_chart_when_there_is_nothing_to_plot(window):
-    """The ticket's second acceptance criterion."""
+    """The ticket's second acceptance criterion.
+
+    GFP-104 changed the wording for a *wholly* empty database: it now says
+    "No price data yet" and hides the controls entirely, rather than explaining
+    a protein-specific reason under a heading and two dropdowns.
+    """
     assert not window.trends.trend.is_plottable
     assert not window.trends.chart.isVisible()
-    assert "No protein prices on record yet" in window.trends.subtitle.text()
+    assert "No price data yet" in window.trends.subtitle.text()
 
 
 def test_trends_pane_plots_once_there_are_enough_days(window):

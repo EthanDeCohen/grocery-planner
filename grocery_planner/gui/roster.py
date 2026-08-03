@@ -155,6 +155,13 @@ class RosterPane(QWidget):
         search = self.search_edit.text().strip()
         self.client_list.clear()
         clients = CustomerRepository.list(search=search, conn=conn)
+        # GFP-104 checked this pane for the trends pane's problem -- chrome
+        # sitting over no data -- and it does NOT have it: the empty state is
+        # already one clear sentence naming the one useful action. Hiding the
+        # search box as well was tried and reverted: it governs nothing with
+        # zero clients, but a hidden widget cannot take focus, which breaks the
+        # deliberate Down-arrow behaviour GFP-36 built into this list. Not worth
+        # a working keyboard path.
         if not clients:
             self.client_list.addItem(placeholder(
                 "No clients match this search."
