@@ -212,14 +212,15 @@ jobs:
       - name: Assert the reinstall changed nothing
         run: |
           set -euo pipefail
-          # Two exclusions, both legitimate and both narrow:
-          #   * the snapshot's own clock line
+          # Three exclusions, all narrow and all legitimate:
+          #   * the snapshot's own header -- its label and its clock, which
+          #     describe the snapshot rather than the machine
           #   * anything under logs/ -- the reinstall runs `gplan timer
           #     install`, which logs, so the log file GROWS by design. A
           #     comparison that called that a failure would be testing the
           #     logging rather than the installer.
           # Everything else must be byte-identical.
-          strip() { grep -v "^when:" "$1" | grep -v "/logs/"; }
+          strip() { grep -v -e "^when:" -e "^SNAPSHOT:" -e "/logs/" "$1"; }
           if diff <(strip "$EVIDENCE/19-before-reinstall.txt") \
                   <(strip "$EVIDENCE/21-after-reinstall.txt") \
                   > "$EVIDENCE/22-reinstall.diff"; then
