@@ -190,6 +190,22 @@ class BillLine:
     # guess would be worse than an absent value (savings.py rule 1).
     sold_by: str | None = None
     price_per_unit_uom: str | None = None
+    # GFP-112: what a SHOPPING list needs and an amortised bill does not.
+    #
+    # `cost` above is an amortised daily share and is deliberately never called
+    # a price. To actually buy this, you need the shelf price of one package and
+    # how much food that package holds -- so a list can say "2 packs, $7.98"
+    # instead of "$1.14/day", which nobody can hand to a shop assistant.
+    #
+    # `shelf_price` is the observed price for the PRICED quantity: the package
+    # for a UNIT item, one pound for a WEIGHT item (GFP-98). `package_grams` is
+    # None when the package weight was never known -- the GFP-69 label-claim
+    # path -- in which case a quantity cannot be computed and must not be
+    # guessed.
+    shelf_price: float | None = None
+    package_grams: float | None = None
+    product_identifier: str | None = None
+    product_identifier_ns: str | None = None
 
 
 @dataclass(frozen=True)
@@ -418,6 +434,10 @@ def _build_bill(
                 deal_id=item.get("deal_id"),
                 sold_by=item.get("sold_by"),
                 price_per_unit_uom=item.get("price_per_unit_uom"),
+                shelf_price=item.get("price"),
+                package_grams=size_grams,
+                product_identifier=item.get("product_identifier"),
+                product_identifier_ns=item.get("product_identifier_ns"),
             )
         )
         remaining -= grams_protein
