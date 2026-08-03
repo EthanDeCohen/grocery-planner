@@ -437,12 +437,13 @@ def price_trend(
     resolve = _resolver(own, food_fallback=by_food)
     wanted_foods = set(_food_ids(own, food)) if food else None
     meat_foods = _meat_food_ids(own) if meat_only else None
-    category_of: dict[int, str] = {}
+    # GFP-134: the SAME matcher the bill uses. A chart that filtered by a
+    # different rule than the bill would draw a line for a plan that does not
+    # exist -- and the two disagreeing is worse than either being wrong alone.
+    allowed_food_ids: set[int] | None = None
     if wanted_categories is not None:
-        category_of = {
-            r["id"]: r["category"]
-            for r in own.execute("SELECT id, category FROM foods WHERE category IS NOT NULL")
-        }
+        from .. import nutrition
+        allowed_food_ids = nutrition.food_ids_in(categories or (), conn=own)
 
     # (series key, day) -> the best point seen for it so far.
     best: dict[tuple[str, str], TrendPoint] = {}
@@ -455,10 +456,8 @@ def price_trend(
             continue
         if meat_foods is not None and resolved.food_id not in meat_foods:
             continue
-        if wanted_categories is not None:
-            category = category_of.get(resolved.food_id)
-            if category is None or category.lower() not in wanted_categories:
-                continue
+        if allowed_food_ids is not None and resolved.food_id not in allowed_food_ids:
+            continue
 
         if metric is Metric.PROTEIN:
             if resolved.protein_grams is None:

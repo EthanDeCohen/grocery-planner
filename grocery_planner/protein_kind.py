@@ -77,16 +77,36 @@ KIND_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("turkey", (r"\bturkeys?\b",)),
     ("chicken", (r"\bchickens?\b", r"\bcornish hens?\b", r"\bpoultry\b")),
     ("lamb", (r"\blambs?\b", r"\bmutton\b")),
+    # GFP-135: AN EXPLICIT SPECIES NAME BEATS A CUT WORD.
+    #
+    # This is the same principle the turkey/chicken rules above already apply
+    # to "turkey bacon"; it had simply never been applied between beef and
+    # pork. Beef's cut words -- steak, ribeye, sirloin, brisket, chuck -- name
+    # no species at all, so with beef ahead of pork, "Pork Boston Butt Steak"
+    # was classified BEEF and the word "pork" in the same name never got its
+    # turn. Measured on real data: three foods, including "Villari Prime
+    # Boneless Pork Ribeye".
+    #
+    # Not cosmetic. protein_kind drives `gplan cheapest`, the animal-protein
+    # series on both charts, and (after GFP-134) the preference filter -- so a
+    # client who ticked "beef" was being offered pork, which for a religious or
+    # medical restriction is a serious error rather than an untidy one.
+    ("pork", (r"\bpork\b",)),
+    ("beef", (r"\bbeef\b", r"\bveal\b")),
+    # Only now the cut words, which name a cut and not an animal. Reaching one
+    # of these means no species was named, and beef is the right default there:
+    # an unqualified "Ribeye Steak" is beef.
+    #
     # `burger` is safe here only because the plant-based disqualifier above runs
     # first ("Beyond Burger") and the bakery one catches "Hamburger Buns".
     ("beef", (
-        r"\bbeef\b", r"\bsteaks?\b", r"\bbrisket\b", r"\bribeye\b",
-        r"\bsirloin\b", r"\bchuck\b", r"\bveal\b",
+        r"\bsteaks?\b", r"\bbrisket\b", r"\bribeye\b",
+        r"\bsirloin\b", r"\bchuck\b",
     )),
-    # Pork last of the mammals: `sausage` and `bacon` are only pork once the
+    # The cured-pork words last: `sausage` and `bacon` are only pork once the
     # birds above have had their chance at the name.
     ("pork", (
-        r"\bpork\b", r"\bbacon\b", r"\bhams?\b", r"\bprosciutto\b",
+        r"\bbacon\b", r"\bhams?\b", r"\bprosciutto\b",
         r"\bpancetta\b", r"\bchorizo\b", r"\bsausages?\b", r"\bpepperoni\b",
     )),
 )
