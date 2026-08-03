@@ -108,3 +108,63 @@ def test_describe_omits_the_parenthetical_when_the_kind_is_unknown(window):
     rendered = describe(item)
     assert "Mystery Cut" in rendered
     assert "(" not in rendered.replace("(Pack", "")
+
+
+# --------------------------------------------------------------------------- #
+# GFP-118 -- the strip is clickable
+#
+# This panel answers "where is protein cheapest right now" and is the first
+# thing read, yet it was the one place that could not be clicked through while
+# the grocery list could.
+# --------------------------------------------------------------------------- #
+def _linked_item(url="https://www.harristeeter.com/p/drumsticks/0020030200000"):
+    return service.CheapestProtein(
+        store="harristeeter", label="Harris Teeter",
+        item_name="Chicken Drumsticks Value Pack, 1 lb", kind="chicken",
+        cost_per_gram_protein=0.0169, price=1.49, protein_grams=88.0,
+        sold_by="WEIGHT", price_per_unit_uom="lb",
+        source_url=url, product_identifier="0020030200000")
+
+
+def test_a_linked_item_renders_a_real_anchor(window):
+    rendered = describe(_linked_item())
+    assert '<a href="https://www.harristeeter.com/p/drumsticks/0020030200000"' in rendered
+    assert "View product" in rendered
+
+
+def test_the_label_never_says_buy_now(window):
+    """GFP-38's rule: a product page is not a checkout this app drives."""
+    assert "Buy now" not in describe(_linked_item())
+
+
+def test_an_item_with_no_url_degrades_to_plain_text(window):
+    """A dead control would be worse than the plain text it replaces."""
+    rendered = describe(_linked_item(url=None))
+    assert "<a href=" not in rendered
+    assert "Chicken Drumsticks" in rendered
+
+
+def test_a_url_is_escaped_so_it_cannot_break_the_markup(window):
+    rendered = describe(_linked_item(url='https://x.test/p?a=1&b="2"'))
+    assert "&amp;" in rendered and '&quot;' in rendered
+
+
+def test_the_strip_opens_links_externally_rather_than_swallowing_the_click(window):
+    """Anchors that render blue and do nothing are worse than no anchor."""
+    assert window.cheapest.body.openExternalLinks() is True
+
+
+def test_a_live_row_carries_its_url_and_sku_through_the_service(window):
+    _seed(price=1.49, sold_by="WEIGHT", uom="lb")
+    conn = db.connect()
+    conn.execute(
+        "UPDATE deals SET source_url = ?, product_identifier = ? "
+        "WHERE item_name = 'Chicken Thighs 16 oz'",
+        ("https://www.harristeeter.com/p/x/1", "0020030200000"))
+    conn.commit()
+    window.cheapest.reload()
+
+    item = window.cheapest.items[0]
+    assert item.source_url == "https://www.harristeeter.com/p/x/1"
+    assert item.product_identifier == "0020030200000"
+    assert "<a href=" in window.cheapest.body.text()
