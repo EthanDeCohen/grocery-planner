@@ -28,6 +28,18 @@ import httpx
 
 FLIPP_DATA_URL = "https://flyers-ng.flippback.com/api/flipp/data"
 FLIPP_ITEMS_URL = "https://flyers-ng.flippback.com/api/flipp/flyers/{flyer_id}/flyer_items"
+# GFP-87: the value now lives in config so a debugging session can change it
+# without editing source. The NAME stays here because callers import it, and a
+# function call at use-time means a config change takes effect without a
+# restart.
+def user_agent() -> str:
+    from .. import config
+
+    return config.user_agent()
+
+
+#: Back-compat for anything importing the constant directly. Resolved at import
+#: time, so prefer user_agent() in new code.
 USER_AGENT = "grocery-planner/0.1 (+local personal use)"
 
 # GFP-15 — where a deal's "View ad" link points.
@@ -336,7 +348,7 @@ class FlippClient:
     """Thin wrapper over the Flipp data + flyer-items endpoints."""
 
     def __init__(self, timeout: float = 30.0):
-        self._client = httpx.Client(timeout=timeout, headers={"User-Agent": USER_AGENT})
+        self._client = httpx.Client(timeout=timeout, headers={"User-Agent": user_agent()})
 
     def __enter__(self) -> "FlippClient":
         return self

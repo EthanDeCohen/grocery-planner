@@ -94,6 +94,28 @@ def _boolean(key: str, value: Any) -> bool:
     raise SettingError(key, value, "true or false")
 
 
+#: Moved here from scrapers/base.py (GFP-87). It identifies this app to a
+#: store, and a debugging session sometimes needs to change it -- which is a
+#: bad reason to edit source.
+DEFAULT_USER_AGENT = "grocery-planner/0.1 (+local personal use)"
+
+_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+def _log_level(key: str, value: Any) -> str:
+    text = str(value).strip().upper()
+    if text not in _LOG_LEVELS:
+        raise SettingError(key, value, "one of " + ", ".join(_LOG_LEVELS))
+    return text
+
+
+def _non_empty(key: str, value: Any) -> str:
+    text = str(value).strip()
+    if not text:
+        raise SettingError(key, value, "a non-empty string")
+    return text
+
+
 def _positive_int(key: str, value: Any) -> int:
     try:
         number = int(str(value).strip())
@@ -131,6 +153,20 @@ SETTINGS: tuple[Setting, ...] = (
         parse=_boolean,
         env_var="GROCERY_PLANNER_AUTO_REFRESH",
         describe="Fetch prices automatically on first run and on a new day (GFP-105).",
+    ),
+    Setting(
+        key="log_level",
+        default="WARNING",
+        parse=_log_level,
+        env_var="GROCERY_PLANNER_LOG_LEVEL",
+        describe="Console log level: DEBUG, INFO, WARNING or ERROR (GFP-87).",
+    ),
+    Setting(
+        key="user_agent",
+        default=DEFAULT_USER_AGENT,
+        parse=_non_empty,
+        env_var="GROCERY_PLANNER_USER_AGENT",
+        describe="How the scrapers identify themselves to a store (GFP-87).",
     ),
     Setting(
         key="log_retention_days",
@@ -264,6 +300,39 @@ def postal_code() -> str:
 
 def auto_refresh() -> bool:
     return get("auto_refresh")
+
+
+def user_agent() -> str:
+    """How the scrapers identify themselves (GFP-87)."""
+    return get("user_agent")
+
+
+def log_level() -> str:
+    return get("log_level")
+
+
+# --------------------------------------------------------------------------- #
+# Endpoint overrides (GFP-87)
+#
+# DEBUG-ONLY, and deliberately environment-variable-only rather than settings in
+# config.json. Two reasons:
+#   * Pointing the app at a different host is a debugging action, not a
+#     preference. Putting it in the file a user edits invites someone to be
+#     talked through setting it, which is the shape of a phishing instruction.
+#   * A stale override in a config file would be invisible and permanent; an
+#     environment variable dies with the shell.
+# Undocumented in `gplan config` output for the same reason.
+# --------------------------------------------------------------------------- #
+def endpoint_override(name: str) -> str | None:
+    """A debug base-URL override for ``name``, or None.
+
+    ``name`` is a short source key -- "flipp", "kroger", "wholefoods" -- so the
+    variable is GROCERY_PLANNER_ENDPOINT_KROGER. Returns None unless explicitly
+    set, so the real endpoint is always the default and never something a
+    partially-configured machine drifts into.
+    """
+    raw = os.environ.get(f"GROCERY_PLANNER_ENDPOINT_{name.strip().upper()}")
+    return raw.strip() or None if raw else None
 
 
 def write_defaults(overwrite: bool = False) -> Path:

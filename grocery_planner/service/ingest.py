@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from .. import config, db, importers, records, scrapers
+from .. import config, db, importers, logs, records, scrapers
 from ..scrapers import SCRAPERS
 
 
@@ -244,6 +244,7 @@ def run_scrape(
     postal_code: str | None = None,
     conn: sqlite3.Connection | None = None,
     force: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """Scrape a store's fresh deals and persist them, replacing prior scrape rows.
 
@@ -306,6 +307,33 @@ def run_scrape(
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     today = now[:10]
     own = conn or db.connect()
+
+    # GFP-87: --dry-run stops HERE -- after the scrape and the stats, before the
+    # first destructive statement. That placement is the whole point: run_scrape
+    # REPLACES a store's rows (the DELETE below), so "what would this do?" is a
+    # question worth being able to ask without finding out. The guard is still
+    # evaluated first, so a dry run also tells you whether the replace would
+    # have been refused (GFP-67).
+    if dry_run:
+        _guard_replacement(own, store, source, zip_code, len(rows), force)
+        existing = own.execute(
+            "SELECT COUNT(*) FROM deals WHERE store=? AND source=? AND postal_code=?",
+            (store, source, zip_code),
+        ).fetchone()[0]
+        logs.get_logger(__name__).info(
+            "DRY RUN: would replace %s row(s) with %s for store=%s source=%s zip=%s",
+            existing, len(rows), store, source, zip_code,
+        )
+        return {
+            "flyer": flyer,
+            "stats": stats,
+            "postal_code": zip_code,
+            "records": {"created": 0, "updated": 0},
+            "dry_run": True,
+            "would_replace": existing,
+            "would_write": len(rows),
+        }
+
     _guard_replacement(own, store, source, zip_code, len(rows), force)
     cols = importers.DEAL_COLUMNS
     own.execute(
