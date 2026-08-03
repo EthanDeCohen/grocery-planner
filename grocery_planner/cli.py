@@ -936,6 +936,49 @@ def timer_status() -> None:
         typer.echo(f"  {state.detail.splitlines()[0] if state.detail else ''}")
 
 
+@app.command("update")
+def update_cmd(
+    check_only: bool = typer.Option(
+        True, "--check/--no-check", hidden=True,
+        help="Reserved. This command only ever checks.",
+    ),
+) -> None:
+    """Is a newer version available (GFP-96).
+
+    Checks now, ignoring the once-a-day gate -- someone typing this is asking
+    on purpose. It still honours `update_check` in the config: a user who
+    turned this off means it, and doing it anyway because they typed the
+    command would be the wrong lesson.
+
+    NEVER downloads or installs anything. It prints the version and the page.
+    """
+    from . import updates
+
+    if not app_config.get("update_check"):
+        typer.secho(
+            "Update checks are turned off (config `update_check`).",
+            fg=typer.colors.YELLOW,
+        )
+        typer.echo(f"You are running grocery-planner {__version__}.")
+        typer.echo(f"Releases: {updates.RELEASES_PAGE}")
+        raise typer.Exit(0)
+
+    typer.echo(f"You are running grocery-planner {__version__}.")
+    found = updates.check(force=True)
+    if found is None:
+        # Deliberately one message for "up to date" and "could not reach
+        # GitHub". Distinguishing them would mean reporting a network error to
+        # someone who asked a question about versions, and the ticket is
+        # explicit that a check must fail silently.
+        typer.secho("No newer version found.", fg=typer.colors.GREEN)
+        typer.echo(f"Releases: {updates.RELEASES_PAGE}")
+        raise typer.Exit(0)
+
+    typer.secho(found.message, fg=typer.colors.CYAN)
+    typer.echo(f"Download it from: {found.url}")
+    typer.echo("Nothing has been downloaded or installed.")
+
+
 @app.command("uninstall-plan")
 def uninstall_plan_cmd(
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),

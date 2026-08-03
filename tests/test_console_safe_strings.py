@@ -35,7 +35,8 @@ CONSOLE_REACHABLE = ["cli.py", "bill.py", "savings.py", "records.py", "scheduler
                      # list are echoed verbatim by `gplan config`, and logs.py's
                      # by `gplan logs`. Clean today; listed so they stay that
                      # way, since neither module looks like output code.
-                     "config.py", "logs.py", "paths.py", "install_paths.py"]
+                     "config.py", "logs.py", "paths.py", "install_paths.py",
+                     "updates.py", "background.py", "uninstall.py"]
 
 #: The console encoding to hold the line at. cp1252 is the default on a
 #: US/Western-European Windows install, which is the shipping target.

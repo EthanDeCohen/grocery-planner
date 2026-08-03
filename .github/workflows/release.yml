@@ -1,0 +1,170 @@
+# ===========================================================================
+# Publish a release (GFP-96).
+# ===========================================================================
+# GFP-96 needs an in-app update check to have something to check AGAINST, and
+# noted that this did not exist: the binaries were CI artifacts, which expire,
+# require a GitHub login to download, and have no version anyone can compare
+# to. This is the prerequisite it named.
+#
+# TAG-TRIGGERED, and the tag is the source of truth for the version. The first
+# job refuses to build if the tag and grocery_planner.__version__ disagree,
+# because the update check compares exactly those two strings: a mismatch does
+# not fail loudly, it tells every existing install either that no update
+# exists when one does, or that one exists forever after they take it.
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# COST: two runners, one of them macOS at 10x, so roughly 80-100 allowance-
+# minutes per release. Releases are rare and each one is the artifact a
+# customer actually downloads, so this is the least questionable macOS spend
+# in the project. See ci.yml for the allowance history (GFP-94).
+# ===========================================================================
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Deliberately no workflow_dispatch: a release without a tag would produce a
+  # build whose version nothing can verify, which is the exact failure the
+  # guard below exists to prevent.
+
+permissions:
+  contents: write        # required to create the release
+
+jobs:
+  # ---------------------------------------------------------------------- #
+  # Cheap, fast, and first. Finding a version mismatch after paying for two
+  # PyInstaller builds would be finding it in the most expensive place.
+  # ---------------------------------------------------------------------- #
+  verify-version:
+    name: the tag and __version__ must agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Compare
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION=$(python -c "import re,pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('grocery_planner/__init__.py').read_text()).group(1))")
+          echo "tag:        $GITHUB_REF_NAME  -> $TAG"
+          echo "__version__: $VERSION"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo
+            echo "MISMATCH. The in-app update check (GFP-96) compares the release"
+            echo "tag against grocery_planner.__version__. If they differ, every"
+            echo "install is told the wrong thing -- and keeps being told it."
+            echo "Bump __version__ (and pyproject.toml) to match the tag, or tag"
+            echo "the version that is actually in the code."
+            exit 1
+          fi
+
+  build:
+    name: build (${{ matrix.os }})
+    needs: verify-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true          # a half-published release is worse than none
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[build,gui]"
+
+      - name: Build
+        working-directory: packaging
+        run: |
+          pyinstaller gplan.spec --noconfirm --distpath ../dist --workpath ../build
+          pyinstaller gplan-gui.spec --noconfirm --distpath ../dist --workpath ../build
+
+      # The ZIP is what a customer downloads, so it contains everything the
+      # installer needs NEXT TO ITSELF -- install.ps1 looks for the binaries
+      # beside it, so a release that shipped them separately would not install.
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = "grocery-planner-${{ github.ref_name }}-windows"
+          New-Item -ItemType Directory -Force -Path $name | Out-Null
+          Copy-Item dist/gplan.exe, dist/gplan-gui.exe $name/
+          Copy-Item packaging/install.ps1, packaging/uninstall.ps1 $name/
+          Copy-Item packaging/INSTALL.md, packaging/UNINSTALL.md $name/
+          # Prove the binary in the ZIP runs before anyone downloads it.
+          & "$name/gplan.exe" version
+          Compress-Archive -Path $name -DestinationPath "$name.zip" -Force
+          "ASSET=$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          NAME="grocery-planner-${{ github.ref_name }}-macos"
+          mkdir -p "$NAME"
+          cp dist/gplan "$NAME/"
+          cp -R "dist/gplan-gui.app" "$NAME/Grocery Planner.app"
+          cp packaging/install.sh packaging/uninstall.sh "$NAME/"
+          cp packaging/INSTALL.md packaging/UNINSTALL.md "$NAME/"
+          chmod +x "$NAME/install.sh" "$NAME/uninstall.sh" "$NAME/gplan"
+          "$NAME/gplan" version
+          # ditto, not zip: it preserves the .app bundle's symlinks and
+          # resource forks. A bundle round-tripped through plain zip can arrive
+          # unlaunchable, which nobody discovers until a customer double-clicks.
+          ditto -c -k --sequesterRsrc --keepParent "$NAME" "$NAME.zip"
+          echo "ASSET=$NAME.zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  publish:
+    name: publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: List what will be published
+        run: ls -la assets
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*.zip
+          generate_release_notes: true
+          # Not a draft and not a prerelease: the update check reads
+          # /releases/latest, which SKIPS both. A draft release would publish
+          # binaries that no installed copy can ever be told about.
+          draft: false
+          prerelease: false
+          body: |
+            ## Install
+
+            Download the ZIP for your operating system, unzip it, and run the
+            installer inside — `install.ps1` on Windows, `./install.sh` on
+            macOS. Full instructions are in `INSTALL.md` in the ZIP.
+
+            Installing again over an existing copy is safe and keeps your data.
+
+            **macOS:** this build is not signed by Apple, so the first launch is
+            refused. Right-click the app and choose Open, once — or run
+            `./install.sh --clear-quarantine`. See `INSTALL.md`.
+
+            To remove it: `UNINSTALL.md`, also in the ZIP and installed
+            alongside the app.
