@@ -35,12 +35,13 @@ rather than hiding half of it behind a prettier hard-coded list.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QGridLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -106,7 +107,16 @@ class BillPanel(QWidget):
         self.caveat_label.setWordWrap(True)
         layout.addWidget(self.caveat_label)
 
-        self.amortisation_label = QLabel(bill.AMORTIZATION_NOTE)
+        # GFP-124: the amortisation caveat is TRUE and load-bearing -- it stops
+        # somebody reading $1.86 as "what I will spend at the till today". But a
+        # caveat that has to be read on every visit is in the wrong place: it is
+        # onboarding text occupying permanent space above everything actionable.
+        #
+        # So it moves to the headline's tooltip: read once, findable on purpose,
+        # never deleted. Deleting it outright would be the wrong fix.
+        self.headline.setToolTip(bill.AMORTIZATION_NOTE)
+        self.amortisation_label = QLabel("")
+        self.amortisation_label.setVisible(False)
         self.amortisation_label.setWordWrap(True)
         layout.addWidget(self.amortisation_label)
 
@@ -124,6 +134,14 @@ class BillPanel(QWidget):
         # a horizontal scrollbar hides the last of them (the price).
         self.lines_list.setWordWrap(True)
         layout.addWidget(self.lines_list, 1)
+
+        # GFP-130: what was left out, and why. Under the itemised list, since
+        # it explains that list rather than competing with it.
+        self.excluded_label = QLabel("")
+        self.excluded_label.setWordWrap(True)
+        self.excluded_label.setStyleSheet("color: #666;")
+        self.excluded_label.setVisible(False)
+        layout.addWidget(self.excluded_label)
 
         self.footer = QLabel("")
         self.footer.setWordWrap(True)
@@ -220,6 +238,101 @@ class BillPanel(QWidget):
         self.reload()
 
     # ----------------------------------------------------------------- #
+    def _render_lines(self, plan: bill.Bill) -> None:
+        """One widget row per item: what it is, what it gives, what it costs,
+        where to buy it, and a link (GFP-123).
+
+        A QListWidget row cannot hold a clickable link, so each row is a real
+        widget set as the item's own. That is what lets the store and the ad
+        link live ON the item instead of in a second panel repeating its name.
+        """
+        self.lines_list.clear()
+        if not plan.lines:
+            self.lines_list.addItem(placeholder(
+                "No deal on offer can be priced per gram of protein for these "
+                "preferences."
+            ))
+            return
+
+        for line in plan.lines:
+            item = QListWidgetItem(self.lines_list)
+            row = self._line_row(line)
+            item.setSizeHint(row.sizeHint())
+            self.lines_list.addItem(item)
+            self.lines_list.setItemWidget(item, row)
+
+    def _line_row(self, line: bill.BillLine) -> QWidget:
+        row = QWidget()
+        box = QVBoxLayout(row)
+        box.setContentsMargins(4, 4, 4, 4)
+        box.setSpacing(1)
+
+        food = f"  ·  {line.grams_food:.0f} g food" if line.grams_food else ""
+        headline = QLabel(
+            f"{line.item_name}  —  {line.grams_protein:.0f} g protein{food}"
+            f"  ·  {_money(line.cost)}/day"
+        )
+        headline.setWordWrap(True)
+        box.addWidget(headline)
+
+        # The store and the link, on the same row as the item they belong to.
+        if line.source_url:
+            where = QLabel(
+                f'<span style="color:#666;">{_store_tag(line.store)}</span> — '
+                f'<a href="{line.source_url}">View ad</a>'
+            )
+            where.setTextFormat(Qt.RichText)
+            where.setOpenExternalLinks(True)
+        else:
+            # GFP-38's rule, kept: no captured link is said plainly rather than
+            # rendered as a dead "Buy now" that goes nowhere.
+            where = QLabel(f"{_store_tag(line.store)} — no ad link captured")
+            where.setTextFormat(Qt.PlainText)
+            where.setStyleSheet("color: #666;")
+        box.addWidget(where)
+        return row
+
+    def _render_excluded(self, plan: bill.Bill) -> None:
+        """What was left out, and why (GFP-130).
+
+        The panel used to show what the plan CONTAINS and stay silent about
+        what it left out -- and silence is indistinguishable from "there was
+        nothing else". A nutritionist looking at a plan with no beef in it
+        could not tell whether beef was dear this week, whether the client is
+        marked as not eating it, or whether nothing beef-ish could be priced.
+        Three different situations, three different responses.
+
+        Grouped and counted rather than listed: hundreds of rows would be
+        ignored, and the question being answered is "why isn't X in here?",
+        not "what is in the catalogue?".
+        """
+        reasons: list[str] = []
+        allowed = self._checked_categories()
+        if allowed:
+            reasons.append(
+                f"excluded by preference: everything outside "
+                f"{', '.join(sorted(allowed))}"
+            )
+        if plan.excluded_deals:
+            reasons.append(
+                f"{plan.excluded_deals} deal"
+                f"{'' if plan.excluded_deals == 1 else 's'} could not be priced "
+                "per gram of protein"
+            )
+        priced_but_unused = max(0, plan.considered_deals - len(plan.lines))
+        if priced_but_unused:
+            reasons.append(
+                f"{priced_but_unused} priced deal"
+                f"{'' if priced_but_unused == 1 else 's'} lost to something cheaper"
+            )
+
+        if not reasons:
+            self.excluded_label.setText("")
+            self.excluded_label.setVisible(False)
+            return
+        self.excluded_label.setText("Not included — " + "; ".join(reasons) + ".")
+        self.excluded_label.setVisible(True)
+
     def _render(self, comparison: bill.BillComparison) -> None:
         self.comparison = comparison
         plan = comparison.constrained
@@ -242,27 +355,25 @@ class BillPanel(QWidget):
                 )
         else:
             # Nothing ticked: the two solves are the same, so one figure.
-            self.comparison_label.setText(
-                "Cheapest way to hit the target from everything on offer. "
-                "Tick a preference to price a narrower plan."
-            )
+            # GFP-124: was two sentences. The checkbox row directly beneath
+            # already demonstrates what the preferences do, so explaining it in
+            # words was telling the user something the UI was showing them.
+            self.comparison_label.setText("Cheapest way to hit the target.")
 
         self.caveat_label.setText(comparison.caveat)
         self.caveat_label.setVisible(bool(comparison.caveat))
 
-        # --- itemised lines, each with its store tag --------------------- #
-        self.lines_list.clear()
-        if not plan.lines:
-            self.lines_list.addItem(placeholder(
-                "No deal on offer can be priced per gram of protein for these "
-                "preferences."
-            ))
-        for line in plan.lines:
-            food = f"  ·  {line.grams_food:.0f} g food" if line.grams_food else ""
-            self.lines_list.addItem(
-                f"[{_store_tag(line.store)}]  {line.item_name}  —  "
-                f"{line.grams_protein:.0f} g protein{food}  ·  {_money(line.cost)}/day"
-            )
+        # --- itemised lines: ONE row per item, carrying everything ------- #
+        #
+        # GFP-123. This used to be two panels side by side -- "What makes it
+        # up" here and "Where to buy" in a third column -- listing the SAME
+        # items in different words. The user read them as two unrelated boxes,
+        # which is exactly what two bordered rectangles of equal weight say.
+        #
+        # Condensed into one panel, that duplication could not survive: every
+        # fact both panels carried is now on a single row, and nothing is said
+        # twice.
+        self._render_lines(plan)
 
         # --- what did not make it in ------------------------------------- #
         parts = [
@@ -272,11 +383,9 @@ class BillPanel(QWidget):
             parts.append(f"{plan.shortfall_grams:.0f} g short")
         priced = plan.considered_deals
         parts.append(f"{priced} deal{'' if priced == 1 else 's'} priced")
-        if plan.excluded_deals:
-            # Never hidden: an unpriceable deal is information about coverage,
-            # not something to quietly drop (GFP-48).
-            parts.append(
-                f"{plan.excluded_deals} could not be priced per gram of protein"
-            )
         self.footer.setText(" · ".join(parts) + ".")
+        # The unpriceable count moved into the excluded panel, where it sits
+        # beside the other reasons something is missing instead of trailing the
+        # coverage line as an unexplained number (GFP-130).
+        self._render_excluded(plan)
         self.bill_changed.emit()
