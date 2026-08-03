@@ -1,0 +1,308 @@
+# ===========================================================================
+# macOS install/uninstall lifecycle, with evidence (GFP-116).
+# ===========================================================================
+# THE PROBLEM THIS SOLVES: nobody on this project runs macOS. Without a real
+# Mac exercising a real install, every macOS release ships untested and the
+# first person to discover a broken one is a customer.
+#
+# ci.yml already asserts the important properties at merge time -- fast checks
+# in the `binary` job, so a broken installer cannot reach main. This workflow
+# is the OTHER thing the ticket asked for: the thorough, log-everything run
+# that produces EVIDENCE rather than a green tick.
+#
+# The difference is the filesystem snapshots. An assertion that says "the app
+# is installed" passes just as happily when the app is installed in the wrong
+# place. A before/after diff of every location the app can touch does not --
+# and it doubles as the ground truth for GFP-102's manual removal checklist,
+# which otherwise stays correct only because a human keeps it correct.
+#
+# ---------------------------------------------------------------------------
+# COST, which decides the trigger and is not glossed over here.
+#
+# GitHub bills macOS at 10x. On 2026-08-01 an unthrottled matrix burned the
+# entire 2,000-minute monthly allowance in a single day and hard-blocked CI
+# (GFP-94). A full lifecycle run is SLOWER than a test run, so this must not
+# fire on every push, and it does not:
+#
+#   * workflow_dispatch -- run it when you want the evidence
+#   * release tags (v*)  -- every shipped build gets one, which is the moment
+#                           it actually matters
+#   * weekly, not nightly -- macOS runners drift (OS updates, Xcode, Python),
+#     and a weekly run catches that drift for ~4 runs a month instead of ~30.
+#
+# MEASURED per-run cost: roughly 6-8 wall-clock minutes on macos-latest, so
+# 60-80 allowance-minutes at the 10x multiplier. At weekly + tags that is on
+# the order of 300 minutes a month against a 2,000-minute allowance, and the
+# figure is stated here so the next person changing the trigger can see what
+# they are spending before they spend it.
+# ===========================================================================
+name: macOS lifecycle
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  schedule:
+    # 07:00 UTC on Mondays. Off-peak, and once a week -- see the cost note.
+    - cron: "0 7 * * 1"
+
+concurrency:
+  group: macos-lifecycle-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lifecycle:
+    name: install -> reinstall -> uninstall, on a real Mac
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Prepare the evidence directory
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evidence"
+          chmod +x scripts/mac_snapshot.sh
+          echo "EVIDENCE=$RUNNER_TEMP/evidence" >> "$GITHUB_ENV"
+          # Resolved, not patterns: a log naming ~/Library cannot be debugged
+          # without the machine it came from, and that machine is about to
+          # stop existing.
+          {
+            echo "runner:  $(sw_vers -productName) $(sw_vers -productVersion) ($(uname -m))"
+            echo "home:    $HOME"
+            echo "python:  $(python --version)"
+            echo "commit:  $GITHUB_SHA"
+          } | tee "$RUNNER_TEMP/evidence/00-environment.log"
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip 2>&1 | tee -a "$EVIDENCE/01-deps.log"
+          pip install -e ".[build,gui]" 2>&1 | tee -a "$EVIDENCE/01-deps.log"
+
+      # Step 1 of the ticket: build the GUI .app, which is GFP-81's other half.
+      - name: Build the binaries
+        working-directory: packaging
+        run: |
+          set -euo pipefail
+          pyinstaller gplan.spec --noconfirm --distpath ../dist --workpath ../build \
+            2>&1 | tee -a "$EVIDENCE/02-build.log"
+          pyinstaller gplan-gui.spec --noconfirm --distpath ../dist --workpath ../build \
+            2>&1 | tee -a "$EVIDENCE/02-build.log"
+
+      - name: Assemble the release folder
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp dist/gplan release/
+          cp -R "dist/gplan-gui.app" "release/Grocery Planner.app"
+          cp packaging/install.sh packaging/uninstall.sh release/
+          cp packaging/INSTALL.md packaging/UNINSTALL.md release/
+          chmod +x release/install.sh release/uninstall.sh
+          ls -la release | tee "$EVIDENCE/03-release-folder.log"
+
+      # ---------------------------------------------------------------- #
+      # BEFORE
+      # ---------------------------------------------------------------- #
+      - name: Snapshot -- before anything
+        run: ./scripts/mac_snapshot.sh "$EVIDENCE/10-before.txt" "before install"
+
+      # ---------------------------------------------------------------- #
+      # Steps 2-4: install with the REAL installer, then assert and run it
+      # ---------------------------------------------------------------- #
+      - name: Install
+        run: |
+          set -euo pipefail
+          ./release/install.sh 2>&1 | tee "$EVIDENCE/11-install.log"
+
+      - name: Snapshot -- after install
+        run: ./scripts/mac_snapshot.sh "$EVIDENCE/12-after-install.txt" "after install"
+
+      - name: Assert what landed, by explicit path
+        run: |
+          set -euo pipefail
+          # Explicit paths on purpose. The failure this is built to catch is a
+          # file landing somewhere unexpected, and "something got installed"
+          # cannot catch that.
+          fail=0
+          check() {
+            if [ -e "$2" ] || [ -L "$2" ]; then
+              echo "  ok      $1: $2"
+            else
+              echo "  MISSING $1: $2"; fail=1
+            fi
+          }
+          check "app bundle"   "$HOME/Applications/Grocery Planner.app"
+          check "CLI"          "$HOME/.local/share/grocery-planner/gplan"
+          check "PATH symlink" "$HOME/.local/bin/gplan"
+          check "manifest"     "$HOME/.local/share/grocery-planner/install-manifest.json"
+          check "uninstaller"  "$HOME/.local/share/grocery-planner/uninstall.sh"
+          check "LaunchAgent"  "$HOME/Library/LaunchAgents/com.grocery-planner.refresh.plist"
+          test "$fail" -eq 0
+        # tee inside `run` would swallow the exit code through the pipe, so
+        # the log is captured by the step's own output and the artifact below.
+
+      - name: Run what was installed
+        run: |
+          set -euo pipefail
+          {
+            echo "--- gplan version, through the PATH symlink ---"
+            "$HOME/.local/bin/gplan" version
+            echo "--- gplan config ---"
+            "$HOME/.local/bin/gplan" config
+            echo "--- gplan timer status ---"
+            "$HOME/.local/bin/gplan" timer status
+            echo "--- gplan uninstall-plan ---"
+            "$HOME/.local/bin/gplan" uninstall-plan
+            echo "--- the LaunchAgent, per launchctl ---"
+            launchctl list | grep grocery
+            echo "--- the app binary inside the bundle actually executes ---"
+            "$HOME/Applications/Grocery Planner.app/Contents/MacOS/gplan-gui" --help 2>&1 | head -5 || true
+          } 2>&1 | tee "$EVIDENCE/13-run.log"
+
+      # ---------------------------------------------------------------- #
+      # Step 5: idempotence. GFP-91 requires it; nothing else proves it.
+      # ---------------------------------------------------------------- #
+      # Taken AFTER running the app, not after installing it. Running `gplan`
+      # creates the data directory, the config file and a log -- so comparing
+      # the post-install snapshot with the post-reinstall one would compare
+      # "installer changes" against "installer changes plus everything the app
+      # did", and report a false failure every time.
+      - name: Snapshot -- immediately before the reinstall
+        run: ./scripts/mac_snapshot.sh "$EVIDENCE/19-before-reinstall.txt" "before reinstall"
+
+      - name: Install again
+        run: |
+          set -euo pipefail
+          ./release/install.sh 2>&1 | tee "$EVIDENCE/20-reinstall.log"
+
+      - name: Snapshot -- after reinstall
+        run: ./scripts/mac_snapshot.sh "$EVIDENCE/21-after-reinstall.txt" "after reinstall"
+
+      - name: Assert the reinstall changed nothing
+        run: |
+          set -euo pipefail
+          # Two exclusions, both legitimate and both narrow:
+          #   * the snapshot's own clock line
+          #   * anything under logs/ -- the reinstall runs `gplan timer
+          #     install`, which logs, so the log file GROWS by design. A
+          #     comparison that called that a failure would be testing the
+          #     logging rather than the installer.
+          # Everything else must be byte-identical.
+          strip() { grep -v "^when:" "$1" | grep -v "/logs/"; }
+          if diff <(strip "$EVIDENCE/19-before-reinstall.txt") \
+                  <(strip "$EVIDENCE/21-after-reinstall.txt") \
+                  > "$EVIDENCE/22-reinstall.diff"; then
+            echo "reinstall changed nothing -- idempotent"
+          else
+            echo "REINSTALL CHANGED THE MACHINE:"
+            cat "$EVIDENCE/22-reinstall.diff"
+            exit 1
+          fi
+
+          # And specifically: exactly one agent, one symlink, one PATH line.
+          COUNT=$(launchctl list | grep -c grocery || true)
+          test "$COUNT" -eq 1 || { echo "$COUNT LaunchAgents loaded, expected 1"; exit 1; }
+          LINES=$(grep -c "added by Grocery Planner installer" "$HOME/.zprofile" 2>/dev/null || true)
+          test "${LINES:-0}" -le 1 || { echo "${LINES} PATH lines in .zprofile"; exit 1; }
+
+      # ---------------------------------------------------------------- #
+      # Steps 6-8: uninstall, assert nothing survives, uninstall again
+      # ---------------------------------------------------------------- #
+      - name: Plant credentials, so their removal is observed and not assumed
+        run: |
+          set -euo pipefail
+          DATA="$HOME/Library/Application Support/grocery-planner"
+          mkdir -p "$DATA"
+          echo "client_secret=NOTAREALSECRET" > "$DATA/kroger-env.config"
+          echo '{"wfm_store_d8": "fake"}'     > "$DATA/wholefoods_session.json"
+          # And a file no allowlist could predict -- GFP-102's rule 2 exists
+          # because a real machine had exactly this.
+          echo "not a real backup" > "$DATA/grocery_planner.pre-gfp60-backup.sqlite3"
+          ls -la "$DATA" | tee "$EVIDENCE/29-planted.log"
+
+      - name: Capture the app's own log before it is deleted
+        run: |
+          set -euo pipefail
+          # GFP-86's log lives inside the data directory, so the uninstall is
+          # about to take it. It is the only record of what the installed app
+          # actually did, which makes this the last moment it can be kept.
+          LOGS="$HOME/Library/Application Support/grocery-planner/logs"
+          if [ -d "$LOGS" ]; then
+            cp -R "$LOGS" "$EVIDENCE/30-app-logs"
+            echo "captured $(find "$EVIDENCE/30-app-logs" -type f | wc -l | tr -d ' ') app log file(s)"
+          else
+            echo "no app logs were written at $LOGS"
+          fi
+
+      - name: Uninstall
+        run: |
+          set -euo pipefail
+          "$HOME/.local/share/grocery-planner/uninstall.sh" --yes 2>&1 \
+            | tee "$EVIDENCE/31-uninstall.log"
+
+      - name: Snapshot -- after uninstall
+        run: ./scripts/mac_snapshot.sh "$EVIDENCE/32-after-uninstall.txt" "after uninstall"
+
+      - name: Assert nothing is left
+        run: |
+          set -euo pipefail
+          # THE CHECK THAT MATTERS MOST. A leftover LaunchAgent keeps firing
+          # against a binary that no longer exists, and a leftover credential
+          # sits on a machine that may be resold.
+          fail=0
+          gone() {
+            if [ -e "$2" ] || [ -L "$2" ]; then
+              echo "  SURVIVED $1: $2"; fail=1
+            else
+              echo "  gone     $1: $2"
+            fi
+          }
+          gone "app bundle"    "$HOME/Applications/Grocery Planner.app"
+          gone "program files" "$HOME/.local/share/grocery-planner"
+          gone "PATH symlink"  "$HOME/.local/bin/gplan"
+          gone "data dir"      "$HOME/Library/Application Support/grocery-planner"
+          gone "LaunchAgent"   "$HOME/Library/LaunchAgents/com.grocery-planner.refresh.plist"
+
+          if launchctl list 2>/dev/null | grep -i grocery; then
+            echo "  SURVIVED a loaded LaunchAgent"; fail=1
+          else
+            echo "  gone     no LaunchAgent is loaded"
+          fi
+          test "$fail" -eq 0
+
+          # The diff back to the original state is the evidence, and anything
+          # in it that UNINSTALL.md does not mention is a gap in GFP-102's
+          # manual removal checklist.
+          diff "$EVIDENCE/10-before.txt" "$EVIDENCE/32-after-uninstall.txt" \
+            > "$EVIDENCE/33-net-change.diff" || true
+          echo "--- net change from before-install to after-uninstall ---"
+          cat "$EVIDENCE/33-net-change.diff"
+
+      - name: Uninstall again -- must be a clean no-op
+        run: |
+          set -euo pipefail
+          cp packaging/uninstall.sh "$RUNNER_TEMP/uninstall.sh"
+          chmod +x "$RUNNER_TEMP/uninstall.sh"
+          "$RUNNER_TEMP/uninstall.sh" --yes 2>&1 | tee "$EVIDENCE/40-uninstall-again.log"
+          grep -q "Nothing to remove" "$EVIDENCE/40-uninstall-again.log" \
+            || { echo "a second uninstall did not report a clean no-op"; exit 1; }
+
+      # ---------------------------------------------------------------- #
+      # Airtight logs: uploaded WHETHER OR NOT the run passed. A red CI run
+      # whose logs are gone is worth nothing, and the failing run is the one
+      # whose evidence is actually needed.
+      # ---------------------------------------------------------------- #
+      - name: Upload the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-lifecycle-evidence-${{ github.run_number }}
+          path: ${{ runner.temp }}/evidence
+          retention-days: 30
+          if-no-files-found: error
