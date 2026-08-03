@@ -34,6 +34,11 @@ Write-Host "Using gplan: $gplan" -ForegroundColor Cyan
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("gplan_smoke_" + [Guid]::NewGuid().ToString("N").Substring(0,8))
 $dataDir = Join-Path $work "data"
 $env:GROCERY_PLANNER_DB = Join-Path $work "smoke.sqlite3"
+# GFP-91: the config file too, now that `gplan config set` can WRITE it. The DB
+# has been isolated since the start; without the same treatment here, running
+# the smoke test would overwrite the developer's own ZIP code.
+$previousConfig = $env:GROCERY_PLANNER_CONFIG
+$env:GROCERY_PLANNER_CONFIG = Join-Path $work "config.json"
 
 $dealsHeader  = "item_name,sub_category,deal_type,deal_description,regular_price,sale_price,discount_amount,discount_percent,valid_from,valid_to,loyalty_required,notes"
 $pricesHeader = "item_name,brand,category,regular_price,sale_price,unit,price_per_unit,on_sale,loyalty_required,date_collected,notes"
@@ -207,12 +212,21 @@ try {
     Test-Case "schedule remove (gone)"   @("schedule", "remove", "foodlion")               1
     Test-Case "schedule run (none set)"  @("schedule", "run", "--once")                    1 "No schedules"
     Test-Case "unknown store error"      @("list", "deals", "-s", "bogus")                 1
+    # GFP-91: the first command the installer tells a brand-new user to run.
+    # Exercised against the real binary because that is the form they run it in.
+    Test-Case "config set"               @("config", "set", "postal_code", "10001")        0 "postal_code = 10001"
+    Test-Case "config took effect"       @("config")                                       0 "10001"
+    Test-Case "config set (bad value)"   @("config", "set", "postal_code", "banana")       1 "5-digit"
+    Test-Case "config set (bad key)"     @("config", "set", "zip", "10001")                1 "no setting called"
+    Test-Case "config survived it"       @("config")                                       0 "10001"
 
     if ($IncludeScrape) {
         Test-Case "live scrape foodlion" @("scrape", "foodlion")                           0 "deals"
     }
 }
 finally {
+    if ($previousConfig) { $env:GROCERY_PLANNER_CONFIG = $previousConfig }
+    else { Remove-Item Env:\GROCERY_PLANNER_CONFIG -ErrorAction SilentlyContinue }
     if (-not $KeepData) {
         Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
         Remove-Item Env:\GROCERY_PLANNER_DB -ErrorAction SilentlyContinue

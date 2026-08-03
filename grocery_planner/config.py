@@ -352,6 +352,46 @@ def write_defaults(overwrite: bool = False) -> Path:
     return target
 
 
+def set_value(key: str, value: Any) -> Any:
+    """Validate one setting and write it to the file. Returns the parsed value.
+
+    Added for GFP-91: the installer's last act is to tell a new user how to set
+    their ZIP code, and "open this JSON file in a text editor" is not an
+    instruction a nutritionist should be given by an installer.
+
+    Two things it is careful about, both because this file is hand-edited:
+
+    * **Unknown keys survive.** A key this version does not recognise is
+      usually a setting from a newer one, and silently dropping it on an
+      unrelated write would be a nasty surprise on downgrade-then-upgrade.
+      :func:`load` already warns about them rather than treating them as an
+      error; this matches that stance.
+    * **A malformed file is not overwritten.** Rewriting it would destroy
+      whatever the user was in the middle of typing, and they can still fix it
+      by hand -- which is the whole reason the format is JSON.
+    """
+    if key not in BY_KEY:
+        raise KeyError(f"unknown setting {key!r}; known: {sorted(BY_KEY)}")
+    parsed = BY_KEY[key].parse(key, value)      # raises SettingError if bad
+
+    target = path()
+    problems: list[str] = []
+    body = _read_file(target, problems)
+    if problems:
+        raise SettingError(
+            key, value,
+            f"a readable config file — {target} could not be parsed, so it was "
+            "left untouched. Fix or delete it, then try again",
+        )
+
+    # Store the PARSED value, so the file ends up with a real bool/int rather
+    # than the string a shell handed us.
+    body[key] = parsed
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
+    return parsed
+
+
 def describe() -> list[tuple[str, Any, str, str]]:
     """``(key, value, origin, description)`` for every setting, for display.
 

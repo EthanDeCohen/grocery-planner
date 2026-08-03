@@ -180,14 +180,117 @@ jobs:
           if (-not (Test-Path dist/gplan-gui.exe)) { throw "gplan-gui.exe was not built" }
           "gplan-gui.exe: {0:N1} MB" -f ((Get-Item dist/gplan-gui.exe).Length / 1MB)
 
+      # GFP-91: assemble what a user actually downloads. The installers and the
+      # docs ship INSIDE the ZIP alongside the binaries -- install.ps1 looks
+      # for the binaries next to itself, so a release that separated them would
+      # not install.
+      - name: Assemble the release folder (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item dist/gplan.exe, dist/gplan-gui.exe release/
+          Copy-Item packaging/install.ps1, packaging/INSTALL.md release/
+
+      - name: Assemble the release folder (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp dist/gplan release/
+          cp -R "dist/gplan-gui.app" "release/Grocery Planner.app"
+          cp packaging/install.sh packaging/INSTALL.md release/
+          chmod +x release/install.sh
+
+      # GFP-91: the installers are PowerShell and shell, so pytest cannot run
+      # them -- tests/test_installer_scripts.py can only check that the pinned
+      # names have not drifted. THIS is where they are executed for real, and
+      # it is the only place the machine-wide steps (PATH, Start Menu, symlink,
+      # shell profile) are ever exercised: a dev machine is not a place to test
+      # writing to someone's PATH, and a runner is thrown away afterwards.
+      #
+      # NOT yet covered: the Add/Remove Programs entry, which install.ps1
+      # deliberately skips while there is no uninstall.ps1 to point it at -- an
+      # entry whose Uninstall button does nothing is worse than no entry, since
+      # the user believes the credentials are gone. GFP-92 adds the script and
+      # GFP-116 asserts the removal end to end.
+      #
+      # Run TWICE, because idempotence is an explicit requirement of the ticket
+      # and the second run is the only thing that tests it.
+      - name: Install for real, twice (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          ./release/install.ps1 -DryRun
+          ./release/install.ps1
+          ./release/install.ps1        # idempotence: must change nothing
+
+          $root = Join-Path $env:LOCALAPPDATA "Programs\GroceryPlanner"
+          foreach ($f in @("gplan.exe", "gplan-gui.exe", "install-manifest.json")) {
+              if (-not (Test-Path (Join-Path $root $f))) { throw "missing after install: $f" }
+          }
+
+          # The installed binary must run from where it was installed.
+          & (Join-Path $root "gplan.exe") version
+
+          # PATH: exactly ONE entry, however many times the installer ran.
+          $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+          $hits = @($userPath.Split(";") | Where-Object { $_.TrimEnd("\") -ieq $root.TrimEnd("\") })
+          if ($hits.Count -ne 1) { throw "PATH has $($hits.Count) entries for $root, expected 1" }
+
+          # Start Menu: one shortcut, not two.
+          $menu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Grocery Planner"
+          $links = @(Get-ChildItem $menu -Filter *.lnk -ErrorAction SilentlyContinue)
+          if ($links.Count -ne 1) { throw "expected 1 Start Menu shortcut, found $($links.Count)" }
+
+          # The manifest is what the uninstaller (GFP-92) reads, so a malformed
+          # one is a silent failure to remove credentials later.
+          $manifest = Get-Content (Join-Path $root "install-manifest.json") -Raw | ConvertFrom-Json
+          if ($manifest.schema -ne 1) { throw "unexpected manifest schema: $($manifest.schema)" }
+          if (-not $manifest.version) { throw "manifest records no version" }
+          Write-Host "installed version: $($manifest.version)"
+
+      - name: Install for real, twice (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          ./release/install.sh --dry-run
+          ./release/install.sh
+          ./release/install.sh          # idempotence: must change nothing
+
+          ROOT="$HOME/.local/share/grocery-planner"
+          test -x "$ROOT/gplan"                  || { echo "no CLI at $ROOT/gplan"; exit 1; }
+          test -f "$ROOT/install-manifest.json"  || { echo "no manifest"; exit 1; }
+          test -d "$HOME/Applications/Grocery Planner.app" || { echo "no .app"; exit 1; }
+
+          # The symlink must point at the installed binary, not at the ZIP the
+          # user is about to delete.
+          test -L "$HOME/.local/bin/gplan" || { echo "no symlink on PATH"; exit 1; }
+          LINK="$(readlink "$HOME/.local/bin/gplan")"
+          test "$LINK" = "$ROOT/gplan" || { echo "symlink points at $LINK"; exit 1; }
+
+          "$HOME/.local/bin/gplan" version
+
+          # The PATH line must appear at most once however many times we ran.
+          if [ -f "$HOME/.zprofile" ]; then
+            COUNT=$(grep -c "added by Grocery Planner installer" "$HOME/.zprofile" || true)
+            test "$COUNT" -le 1 || { echo "$COUNT PATH lines in .zprofile"; exit 1; }
+          fi
+
+          python3 - "$ROOT/install-manifest.json" <<'PY'
+          import json, sys
+          m = json.load(open(sys.argv[1]))
+          assert m["schema"] == 1, m["schema"]
+          assert m["version"], "manifest records no version"
+          assert m["files"], "manifest lists no files"
+          print("installed version:", m["version"])
+          PY
+
       # The .app is a DIRECTORY, so it is listed explicitly -- a glob that
       # matched only files would upload an empty artifact and pass.
       - uses: actions/upload-artifact@v4
         with:
           name: gplan-${{ matrix.os }}
-          path: |
-            dist/gplan
-            dist/gplan.exe
-            dist/gplan-gui.exe
-            dist/gplan-gui.app
+          path: release
           if-no-files-found: error

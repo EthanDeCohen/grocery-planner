@@ -16,6 +16,7 @@ Local-first commands over the SQLite store:
 """
 from __future__ import annotations
 
+import os
 from datetime import date
 from enum import Enum
 from pathlib import Path
@@ -758,8 +759,15 @@ def logs_cmd(
             typer.echo(f"  {line}")
 
 
-@app.command("config")
+config_app = typer.Typer(
+    help="Global settings (GFP-85).", no_args_is_help=False
+)
+app.add_typer(config_app, name="config")
+
+
+@config_app.callback(invoke_without_command=True)
 def config_cmd(
+    ctx: typer.Context,
     write: bool = typer.Option(
         False, "--write", help="Create config.json with the defaults if absent."
     ),
@@ -769,7 +777,12 @@ def config_cmd(
     Origin matters as much as value: "why is it using that ZIP" is answered by
     knowing whether it came from the environment, the file, or a built-in
     default.
+
+    ``invoke_without_command`` keeps ``gplan config`` printing the table it
+    always has, now that ``gplan config set`` exists beneath it.
     """
+    if ctx.invoked_subcommand is not None:
+        return
     if write:
         written = app_config.write_defaults()
         typer.secho(f"Config file: {written}", fg=typer.colors.GREEN)
@@ -787,6 +800,46 @@ def config_cmd(
         typer.secho(f"  ! {problem}", fg=typer.colors.YELLOW)
     if resolved.problems:
         raise typer.Exit(code=1)
+
+
+@config_app.command("set")
+def config_set(
+    key: str = typer.Argument(..., help="Setting name, e.g. 'postal_code'."),
+    value: str = typer.Argument(..., help="New value."),
+) -> None:
+    """Change one setting and save it (GFP-91).
+
+    The installer hands a brand-new user straight to this command, so its
+    failure messages have to be usable by someone who has never seen the app
+    before: an unknown key lists the real ones, and a bad value says what was
+    expected rather than 'invalid'.
+    """
+    try:
+        parsed = app_config.set_value(key, value)
+    except KeyError:
+        typer.secho(f"There is no setting called '{key}'.", fg=typer.colors.RED)
+        typer.echo("\nSettings you can change:")
+        for setting in app_config.SETTINGS:
+            typer.echo(f"  {setting.key:<20} {setting.describe}")
+        raise typer.Exit(code=1)
+    except app_config.SettingError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    typer.secho(f"{key} = {parsed}", fg=typer.colors.GREEN)
+    typer.echo(f"Saved to {app_config.path()}")
+
+    # An environment override silently wins over the file, so a value that was
+    # just "saved" may not be the value the app uses. Saying nothing here is
+    # how someone spends an afternoon on a ZIP code that never took effect.
+    override = os.environ.get(app_config.BY_KEY[key].env_var)
+    if override is not None:
+        typer.secho(
+            f"  ! {app_config.BY_KEY[key].env_var} is set to {override!r} in your "
+            "environment and takes precedence, so this change has no effect "
+            "until you unset it.",
+            fg=typer.colors.YELLOW,
+        )
 
 
 @app.command()
