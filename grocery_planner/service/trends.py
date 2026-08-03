@@ -177,7 +177,7 @@ class PriceTrend:
         if self.observed_days == 0:
             return (
                 f"No {self.noun} on record yet. Run a scrape "
-                "(Data ▸ Run scrape…) — a chart needs at least "
+                "(Data > Run scrape…) — a chart needs at least "
                 f"{MIN_POINTS_TO_PLOT} days of history."
             )
         return (

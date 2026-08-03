@@ -320,7 +320,7 @@ class BillComparison:
                 f"These are not comparable: even unconstrained, the current deals "
                 f"cover only {self.baseline.covered_grams:.0f} g of the "
                 f"{self.baseline.target_grams:.0f} g target. Run a scrape "
-                f"(Data ▸ Run scrape…) for fresher prices."
+                f"(Data > Run scrape…) for fresher prices."
             )
         return "These are not comparable: at least one plan fell short of the target."
 
