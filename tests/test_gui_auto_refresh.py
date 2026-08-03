@@ -15,8 +15,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from grocery_planner import db, jobs, service
-from grocery_planner.gui.app import NO_AUTO_REFRESH_ENV
+from grocery_planner import config, db, jobs, service
 from grocery_planner.service import refresh
 
 
@@ -126,7 +125,25 @@ def test_it_does_not_run_again_when_prices_are_current(window):
     assert window.maybe_auto_refresh() is False
 
 
-def test_the_opt_out_is_honoured(window, monkeypatch):
+def test_the_opt_out_is_honoured_from_the_environment(window, monkeypatch):
     """Automatic network activity on someone else's machine must be refusable."""
-    monkeypatch.setenv(NO_AUTO_REFRESH_ENV, "1")
+    monkeypatch.setenv("GROCERY_PLANNER_AUTO_REFRESH", "false")
+    assert window.maybe_auto_refresh() is False
+
+
+def test_the_opt_out_is_honoured_from_the_config_file(window, monkeypatch, tmp_path):
+    """GFP-85 gave this a real home; the env var was a documented placeholder.
+
+    Both paths are tested because the config layer gives every setting an
+    environment override, and a user turning this off in config.json must not
+    need to know that.
+    """
+    import json
+
+    target = tmp_path / "config.json"
+    target.write_text(json.dumps({"auto_refresh": False}), encoding="utf-8")
+    monkeypatch.setenv(config.CONFIG_ENV_VAR, str(target))
+    monkeypatch.delenv("GROCERY_PLANNER_AUTO_REFRESH", raising=False)
+
+    assert config.auto_refresh() is False
     assert window.maybe_auto_refresh() is False
