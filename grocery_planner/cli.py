@@ -448,6 +448,10 @@ def trends(
     store: str = typer.Option(None, "--store", "-s", help="Limit to one store key."),
     food: str = typer.Option(None, "--food", "-f", help="Limit to one food (name or slug)."),
     postal_code: str = typer.Option(None, "--postal-code", "-z", help="Limit to one ZIP."),
+    meat: bool = typer.Option(
+        False, "--meat",
+        help="Animal protein only (meat and seafood), the chart's Animal protein tab.",
+    ),
     points: bool = typer.Option(
         False, "--points", "-p", help="Print every day's value, not just the summary."
     ),
@@ -477,7 +481,7 @@ def trends(
     try:
         trend = service.price_trend(
             metric=chosen_metric, dimension=dimension, days=days, store=store,
-            food=food, postal_code=postal_code, conn=conn,
+            food=food, postal_code=postal_code, meat_only=meat, conn=conn,
         )
     except service.UnscopedPriceTrendError:
         # The service states this in its own vocabulary (`food=`, `Dimension`);
@@ -502,9 +506,12 @@ def trends(
         typer.echo(trend.reason)
         raise typer.Exit()
 
+    # Says WHICH subset is being ranked. The chart names it in a tab (GFP-109);
+    # a CLI that printed the same header for both would be the quieter lie.
+    scope = "animal protein" if meat else "all protein"
     typer.echo(
-        f"Cheapest {unit} per day by {dimension.value}, last {trend.days} days "
-        f"· {trend.observed_days} day(s) observed"
+        f"Cheapest {unit} per day by {dimension.value} ({scope}), "
+        f"last {trend.days} days · {trend.observed_days} day(s) observed"
     )
     if not trend.is_plottable:
         typer.echo(trend.reason)

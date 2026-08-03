@@ -242,6 +242,29 @@ def _resolver(conn: sqlite3.Connection, *, food_fallback: bool):
     return resolve
 
 
+def _meat_food_ids(conn: sqlite3.Connection) -> set[int]:
+    """Every food id classified as meat (GFP-106), seafood included.
+
+    Classification is ensured first, so a food added by this morning's scrape is
+    not silently absent from an Animal-protein view — which would understate the
+    cheapest meat rather than merely omit a row, and understating is the
+    dangerous direction for a number someone shops from.
+
+    Fetched as one set rather than per row: the caller is already inside a loop
+    over a whole window of history, and a query per item is what the probe-price
+    optimisation in this module exists to avoid.
+    """
+    from .. import protein_kind as pk
+
+    pk.ensure_classified(conn)
+    kinds = sorted(pk.MEAT_KINDS)
+    rows = conn.execute(
+        f"SELECT id FROM foods WHERE protein_kind IN ({','.join('?' * len(kinds))})",
+        tuple(kinds),
+    ).fetchall()
+    return {int(row["id"]) for row in rows}
+
+
 def _food_ids(conn: sqlite3.Connection, food: str) -> list[int]:
     """Every catalog id ``food`` names, by slug or by name, case-insensitively."""
     rows = conn.execute(
@@ -336,6 +359,7 @@ def price_trend(
     store: str | None = None,
     food: str | None = None,
     postal_code: str | None = None,
+    meat_only: bool = False,
     today: date | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> PriceTrend:
@@ -351,6 +375,19 @@ def price_trend(
     ``food`` filter is what makes :data:`Metric.PRICE` legal (see the module
     docstring), and ``postal_code`` matters once clients have their own ZIPs
     (GFP-53) — history from two ZIPs is two markets, not one series.
+
+    ``meat_only`` (GFP-109) restricts to foods classified as animal protein by
+    GFP-106, seafood included. It exists because the unrestricted answer is
+    *arithmetically right and practically useless*: the cheapest $/g protein at
+    Whole Foods was a pancake mix with added whey, which no nutritionist puts on
+    a client's shopping list. This is the single definition of "counts as meat"
+    shared by the chart's Animal-protein tab, ``gplan trends --meat`` and the
+    GFP-107 strip — three call sites that must not be able to disagree, the same
+    rule GFP-40 was built on.
+
+    Note it excludes the GFP-69 label-claim path by construction: those rows have
+    a protein figure but no matched food, so nothing classifies them, and an
+    on-pack protein claim is not evidence of meat.
 
     Raises :class:`UnscopedPriceTrendError` for an unscoped price series and
     :class:`UnknownFoodError` for a ``food`` the catalog does not know.
@@ -386,9 +423,11 @@ def price_trend(
 
     # A food scope and a food dimension both need each row attributed to a food,
     # which the protein chain alone cannot always do -- see `_resolver`.
-    by_food = dimension is Dimension.FOOD or food is not None
+    # meat_only also needs food attribution, for the same reason a food scope does.
+    by_food = dimension is Dimension.FOOD or food is not None or meat_only
     resolve = _resolver(own, food_fallback=by_food)
     wanted_foods = set(_food_ids(own, food)) if food else None
+    meat_foods = _meat_food_ids(own) if meat_only else None
 
     # (series key, day) -> the best point seen for it so far.
     best: dict[tuple[str, str], TrendPoint] = {}
@@ -398,6 +437,8 @@ def price_trend(
         resolved = resolve(row["store"], row["item_name"])
 
         if wanted_foods is not None and resolved.food_id not in wanted_foods:
+            continue
+        if meat_foods is not None and resolved.food_id not in meat_foods:
             continue
 
         if metric is Metric.PROTEIN:
@@ -466,12 +507,18 @@ def protein_price_trend(
     conn: sqlite3.Connection | None = None,
     *,
     postal_code: str | None = None,
+    meat_only: bool = False,
 ) -> PriceTrend:
     """Cheapest $/g protein per store per day — the main window's question.
 
     A named shorthand for the :func:`price_trend` defaults, kept because this
     one combination is the headline of the whole product and reads better at
     its call sites than four keyword arguments would.
+
+    ``meat_only`` is what the chart's Animal-protein tab passes (GFP-109). The
+    default stays ``False`` so the Overall-protein tab, and every existing
+    caller, keep the behaviour they already had — the tabs were chosen over a
+    changed default precisely so neither view is demoted.
     """
     return price_trend(
         metric=Metric.PROTEIN,
@@ -479,6 +526,7 @@ def protein_price_trend(
         days=days,
         store=store,
         postal_code=postal_code,
+        meat_only=meat_only,
         today=today,
         conn=conn,
     )
