@@ -8,6 +8,7 @@ Local-first commands over the SQLite store:
     gplan records           all-time record low/high per item (GFP-75)
     gplan trends            price / $/g protein over time (GFP-40)
     gplan db-path           print the database location
+    gplan client ...        add/edit/remove clients (GFP-33)
     gplan formula ...       manage user-defined formulas
     gplan profile ...       set/get profile values used by formulas
 """
@@ -33,6 +34,7 @@ from . import (
 )
 from . import records as rec
 from .scrapers import SCRAPERS
+from .service import clients as client_service
 from .stores import BY_KEY
 
 app = typer.Typer(add_completion=False, help="Local-first grocery price/deal planner.")
@@ -40,10 +42,12 @@ formula_app = typer.Typer(help="Manage user-defined formulas.")
 profile_app = typer.Typer(help="Set/get profile values (used as formula variables).")
 schedule_app = typer.Typer(help="Automatic background refresh (GFP-7).")
 nutrition_app = typer.Typer(help="Nutrition catalog (protein data): GFP-23/GFP-24.")
+client_app = typer.Typer(help="Clients: add, edit, remove, restore (GFP-33).")
 app.add_typer(formula_app, name="formula")
 app.add_typer(profile_app, name="profile")
 app.add_typer(schedule_app, name="schedule")
 app.add_typer(nutrition_app, name="nutrition")
+app.add_typer(client_app, name="client")
 
 
 class Kind(str, Enum):
@@ -926,6 +930,255 @@ def nutrition_classify(
               f"{f.protein_per_100g:.1f}" if f.protein_per_100g is not None else "-")
              for f in foods[:40]],
         )
+
+
+# --------------------------------------------------------------------------- #
+# Clients (GFP-33)
+#
+# Every command here goes through grocery_planner.service.clients -- the same
+# functions the GUI roster calls -- so the two front ends cannot disagree about
+# what "add a client" or "delete a client" means. No SQL and no
+# CustomerRepository call lives in this file.
+# --------------------------------------------------------------------------- #
+class WeightUnit(str, Enum):
+    """The unit a typed weight is in. Never defaulted -- see GFP-28/GFP-29."""
+
+    kg = "kg"
+    lb = "lb"
+
+
+def _client_or_exit(identifier: str, include_deleted: bool = False):
+    """Resolve a client by id or name, or exit 1 with the reason.
+
+    Shared by every command that takes a client, so "no such client" and
+    "that name matches two people" read the same everywhere.
+    """
+    try:
+        return client_service.resolve_client(identifier, include_deleted=include_deleted)
+    except client_service.ClientError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+
+def _weight_cell(client) -> str:
+    """A client's weight in the unit they were entered in, or an honest dash.
+
+    Never converted to kg for display and never filled in with a 0 -- a
+    client with no weight has no weight (GFP-28).
+    """
+    if client.weight_display is None:
+        return "-"
+    return f"{client.weight_display:g} {client.weight_unit}"
+
+
+def _target_cell(target) -> str:
+    return f"{target.daily_grams:.0f} {target.daily_unit}" if target else "no target"
+
+
+@client_app.command("list")
+def client_list(
+    search: str = typer.Option("", "--search", "-q", help="Filter by name substring."),
+    include_deleted: bool = typer.Option(
+        False, "--all", "-a", help="Include removed clients (they are recoverable)."
+    ),
+) -> None:
+    """List clients with their weight and daily protein target."""
+    summaries = client_service.list_client_summaries(
+        search=search, include_deleted=include_deleted
+    )
+    _print_table(
+        ["id", "name", "weight", "target/day", "status"],
+        [
+            (
+                str(s.client.id),
+                s.client.name,
+                _weight_cell(s.client),
+                _target_cell(s.target),
+                "removed" if s.client.is_deleted else "active",
+            )
+            for s in summaries
+        ],
+    )
+    typer.echo(f"{len(summaries)} client(s).")
+
+
+@client_app.command("show")
+def client_show(
+    client: str = typer.Argument(..., help="Client id or name."),
+) -> None:
+    """Show one client's full record."""
+    record = _client_or_exit(client, include_deleted=True)
+    target = client_service.client_target(record)
+    rows = [
+        ("id", str(record.id)),
+        ("name", record.name),
+        ("weight", _weight_cell(record)),
+        ("weight (canonical)", f"{record.weight_kg:g} kg" if record.weight_kg else "-"),
+        ("protein factor", f"{record.protein_factor:g}"),
+        ("daily target", _target_cell(target)),
+        ("weekly target",
+         f"{target.weekly_grams:.0f} {target.weekly_unit}" if target else "no target"),
+        ("height (cm)", f"{record.height_cm:g}" if record.height_cm else "-"),
+        ("age", str(record.age) if record.age else "-"),
+        ("sex", record.sex or "-"),
+        ("activity", record.activity_level or "-"),
+        ("goal", record.goal or "-"),
+        ("notes", record.notes or "-"),
+        ("added", record.created_at or "-"),
+        ("updated", record.updated_at or "-"),
+        ("removed", record.deleted_at or "-"),
+    ]
+    _print_table(["field", "value"], rows)
+    if target is None:
+        # GFP-29's rule, said out loud rather than left as a blank cell.
+        typer.secho(
+            "No weight on file, so there is no protein target to compute.",
+            fg=typer.colors.YELLOW,
+        )
+
+
+@client_app.command("add")
+def client_add(
+    name: str = typer.Argument(..., help="The client's full name."),
+    weight: float = typer.Option(None, "--weight", "-w", help="Body weight (needs --unit)."),
+    unit: WeightUnit = typer.Option(
+        None, "--unit", "-u", help="Unit of --weight: kg or lb. Never assumed."
+    ),
+    factor: float = typer.Option(
+        None, "--factor", "-f", help="Grams of protein per kg of body weight per day."
+    ),
+    height_cm: float = typer.Option(None, "--height-cm", help="Height in centimetres."),
+    age: int = typer.Option(None, "--age"),
+    sex: str = typer.Option(None, "--sex"),
+    activity: str = typer.Option(None, "--activity", help="Activity level."),
+    goal: str = typer.Option(None, "--goal"),
+    notes: str = typer.Option(None, "--notes"),
+) -> None:
+    """Add a client: gplan client add "Jane Doe" --weight 150 --unit lb.
+
+    A weight is optional, but a weight without a unit is refused rather than
+    guessed at -- 150 lb read as 150 kg is a 2.2x protein-target error.
+    """
+    fields = {
+        "height_cm": height_cm, "age": age, "sex": sex,
+        "activity_level": activity, "goal": goal, "notes": notes,
+    }
+    if factor is not None:
+        fields["protein_factor"] = factor
+    try:
+        saved = client_service.create_client(
+            name,
+            weight=weight,
+            weight_unit=unit.value if unit else None,
+            **{k: v for k, v in fields.items() if v is not None},
+        )
+    except client_service.ClientError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    typer.secho(f"Added {saved.name} (id {saved.id}).", fg=typer.colors.GREEN)
+    typer.echo(f"  weight: {_weight_cell(saved)}   "
+               f"target: {_target_cell(client_service.client_target(saved))}")
+
+
+@client_app.command("edit")
+def client_edit(
+    client: str = typer.Argument(..., help="Client id or name."),
+    name: str = typer.Option(None, "--name", help="New name."),
+    weight: float = typer.Option(
+        None, "--weight", "-w",
+        help="New body weight, read in --unit (or the unit already on file).",
+    ),
+    unit: WeightUnit = typer.Option(
+        None, "--unit", "-u",
+        help="Unit for --weight. Alone, it only changes how the weight is shown.",
+    ),
+    clear_weight: bool = typer.Option(
+        False, "--clear-weight", help="Remove the weight (and so the protein target)."
+    ),
+    factor: float = typer.Option(None, "--factor", "-f", help="Protein g per kg per day."),
+    height_cm: float = typer.Option(None, "--height-cm"),
+    age: int = typer.Option(None, "--age"),
+    sex: str = typer.Option(None, "--sex"),
+    activity: str = typer.Option(None, "--activity"),
+    goal: str = typer.Option(None, "--goal"),
+    notes: str = typer.Option(None, "--notes", help='Pass "" to clear.'),
+) -> None:
+    """Change one client's details. Only the options you pass are touched.
+
+    Unmentioned fields keep their value -- fixing a typo in a name never
+    silently blanks a weight. ``--unit`` on its own re-displays the same body
+    weight in the other unit (90 kg becomes 198.4 lb); to say "that number
+    was actually pounds", pass ``--weight`` and ``--unit`` together.
+    """
+    record = _client_or_exit(client)
+    if clear_weight and weight is not None:
+        typer.secho("Pass either --weight or --clear-weight, not both.",
+                    fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    fields = {
+        "name": name, "height_cm": height_cm, "age": age, "sex": sex,
+        "activity_level": activity, "goal": goal, "notes": notes,
+    }
+    if factor is not None:
+        fields["protein_factor"] = factor
+    changes = {k: v for k, v in fields.items() if v is not None}
+
+    weight_arg = None if clear_weight else (
+        client_service.UNSET if weight is None else weight
+    )
+    unit_arg = client_service.UNSET if unit is None else unit.value
+    try:
+        saved = client_service.update_client(
+            record.id, weight=weight_arg, weight_unit=unit_arg, **changes
+        )
+    except client_service.ClientError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    typer.secho(f"Updated {saved.name} (id {saved.id}).", fg=typer.colors.GREEN)
+    typer.echo(f"  weight: {_weight_cell(saved)}   "
+               f"target: {_target_cell(client_service.client_target(saved))}")
+
+
+@client_app.command("delete")
+def client_delete(
+    client: str = typer.Argument(..., help="Client id or name."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip the prompt (for scripts). Still recoverable."
+    ),
+) -> None:
+    """Remove a client, after confirming exactly who is being removed.
+
+    Client records are hand-typed during an intake conversation and cannot be
+    re-scraped like a price, so this asks first and names the person, and the
+    removal itself is recoverable with ``gplan client restore``.
+    """
+    record = _client_or_exit(client)
+    typer.echo(
+        f"About to remove: {record.name} (id {record.id}), "
+        f"weight {_weight_cell(record)}, added {record.created_at or 'unknown'}."
+    )
+    if not yes:
+        # The default is No: a stray Enter must not delete an irreplaceable
+        # record. Aborting exits 1 and nothing is written.
+        typer.confirm("Remove this client?", default=False, abort=True)
+    try:
+        removed = client_service.delete_client(record.id, confirm=True)
+    except client_service.ClientError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    typer.secho(f"Removed {removed.name} (id {removed.id}).", fg=typer.colors.YELLOW)
+    typer.echo(f"  Recoverable: gplan client restore {removed.id}")
+
+
+@client_app.command("restore")
+def client_restore(
+    client: str = typer.Argument(..., help="Client id or name of a removed client."),
+) -> None:
+    """Bring back a removed client (the other half of delete safety)."""
+    record = _client_or_exit(client, include_deleted=True)
+    restored = client_service.restore_client(record.id)
+    typer.secho(f"Restored {restored.name} (id {restored.id}).", fg=typer.colors.GREEN)
 
 
 def _is_iso_date(value: str) -> bool:
