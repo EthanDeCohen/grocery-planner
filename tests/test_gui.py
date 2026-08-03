@@ -57,9 +57,14 @@ def test_the_deal_browsing_table_is_gone(window):
 
 
 def test_every_retired_control_is_reachable_from_the_menu_bar(window):
-    """The GFP-35 acceptance criterion, asserted directly."""
+    """The GFP-35 acceptance criterion, asserted directly.
+
+    Help joined the bar in GFP-96 and is deliberately included here: this list
+    is exact so that a control cannot be added without someone deciding it
+    belongs on the menu bar.
+    """
     titles = [a.text().replace("&", "") for a in window.menuBar().actions()]
-    assert titles == ["File", "Data", "Settings"]
+    assert titles == ["File", "Data", "Settings", "Help"]
 
     assert "Export deals…" in _menu_actions(window, "File")
     assert "Run scrape…" in _menu_actions(window, "Data")
@@ -631,3 +636,54 @@ def test_spread_preserves_input_order(window):
 
     spread = _spread([200.0, 100.0, 150.0], gap=14.0, top=0.0, bottom=300.0)
     assert spread[0] > spread[2] > spread[1]   # same relative order as the input
+
+
+# --------------------------------------------------------------------------- #
+# GFP-96: the update notice. Passive, or it is the wrong shape.
+# --------------------------------------------------------------------------- #
+def test_the_help_menu_starts_with_nothing_to_offer(window):
+    """A menu entry that would do nothing is worse than a greyed-out one: the
+    user clicks it, a browser opens, and there is no update there."""
+    assert not window.update_action.isEnabled()
+    assert "No updates" in window.update_action.text()
+
+
+def test_an_update_is_announced_passively(window):
+    """A status-bar line and a menu item -- never a modal. This is a
+    local-first desktop tool for somebody doing their actual job, and a
+    blocking update nag is the wrong shape."""
+    before = list(window._dialogs)
+    window.mention_update("Version 9.9.9 is available (you have 0.1.0).",
+                          "https://example.invalid/releases")
+
+    assert "9.9.9" in window.statusBar().currentMessage()
+    assert window.update_action.isEnabled()
+    assert list(window._dialogs) == before, "an update opened a dialog"
+
+
+def test_the_notice_carries_no_urgency(window):
+    """No exclamation marks, no 'now', no count of days behind. It is a line
+    in a status bar, not a demand."""
+    window.mention_update("Version 9.9.9 is available (you have 0.1.0).", "u")
+    message = window.statusBar().currentMessage()
+    assert "!" not in message
+    assert "must" not in message.lower()
+
+
+def test_the_menu_remembers_where_to_send_you(window):
+    window.mention_update("Version 9.9.9 is available.", "https://example.invalid/rel")
+    assert window._update_url == "https://example.invalid/rel"
+
+
+def test_constructing_the_window_never_checks_for_updates(monkeypatch):
+    """Same rule as GFP-105's auto-refresh: building a window must not touch
+    the network, or every GUI test would make an HTTP call. The check is
+    started in main(), not __init__."""
+    from grocery_planner import updates
+
+    def explode(*args, **kwargs):
+        raise AssertionError("constructing MainWindow checked for updates")
+
+    monkeypatch.setattr(updates, "check", explode)
+    monkeypatch.setattr(updates, "check_quietly", explode)
+    gui_app.MainWindow()        # must not raise

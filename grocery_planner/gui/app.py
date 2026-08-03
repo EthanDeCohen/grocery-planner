@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import sys
 
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -106,6 +107,36 @@ class MainWindow(QMainWindow):
         self.schedule_action.triggered.connect(self.open_schedule)
         settings_menu.addAction(self.schedule_action)
 
+        # GFP-96. Present but DISABLED until a check finds something, so the
+        # menu never offers an action that would do nothing -- and so the app
+        # has somewhere to put the news other than a modal.
+        help_menu = bar.addMenu("&Help")
+        self.update_action = QAction("No updates available", self)
+        self.update_action.setEnabled(False)
+        self.update_action.setStatusTip(
+            "Open the releases page in your browser. Nothing is downloaded "
+            "or installed automatically."
+        )
+        self.update_action.triggered.connect(self.open_releases_page)
+        help_menu.addAction(self.update_action)
+
+    def open_releases_page(self) -> None:
+        """Hand off to the browser, and stop there.
+
+        This is the whole of GFP-96's action surface. The app tells you an
+        update exists and opens the page; a person downloads it and runs the
+        installer. Nothing here writes an executable, and nothing here should
+        ever learn how -- a silent self-update is a remote-code-execution path
+        by design, which is a much bigger trust ask on a tool holding
+        health-adjacent data about third parties than on a text editor.
+        """
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+
+        from .. import updates
+
+        QDesktopServices.openUrl(QUrl(getattr(self, "_update_url", updates.RELEASES_PAGE)))
+
     def _build_central(self) -> QWidget:
         """Roster + trends, the client page stacked behind them, and the strip.
 
@@ -148,6 +179,21 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------- #
     # First-run / new-day refresh (GFP-105)
     # ----------------------------------------------------------------- #
+    def mention_update(self, message: str, url: str) -> None:
+        """Say a newer version exists, once, quietly, and never again.
+
+        A status-bar line and a menu item. NOT a modal: this is a local-first
+        desktop tool for somebody doing their actual job, and a blocking update
+        nag is the wrong shape. The message has no timeout because unlike the
+        other status-bar messages it is not about something the user just did,
+        so there is nothing for it to become stale against -- and it is
+        replaced the moment they do anything else.
+        """
+        self.statusBar().showMessage(f"{message}  Get it from the Help menu.")
+        self.update_action.setText("Update available…")
+        self.update_action.setEnabled(True)
+        self._update_url = url
+
     def maybe_auto_refresh(self) -> bool:
         """Fetch this week's prices on first run, or on a new day.
 
@@ -261,6 +307,27 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Exported {written} deals to {path}.", 8000)
 
 
+class _UpdateCheck(QThread):
+    """Ask GitHub whether a newer release exists, off the UI thread.
+
+    A thread rather than a direct call because this runs while the user is
+    trying to start working, and the check has a 5-second timeout. Blocking the
+    event loop for five seconds on a bad connection would make the update check
+    the slowest thing about opening the app -- for a feature nobody asked for.
+
+    Emits nothing at all when there is no update, when the check fails, or when
+    the user has turned it off. Silence is the normal outcome.
+    """
+
+    found = Signal(str, str)        # message, url
+
+    def run(self) -> None:          # pragma: no cover -- exercised by hand
+        from .. import updates
+        result = updates.check_quietly()
+        if result is not None:
+            self.found.emit(result.message, result.url)
+
+
 def main() -> int:
     """Launch the desktop app; returns the Qt exit code."""
     # GFP-86: the GUI is the unattended-est path of all -- a scheduled refresh
@@ -281,6 +348,12 @@ def main() -> int:
     # After show(), so the window is already on screen when the scrape dialog
     # appears over it rather than the app seeming to open into a dialog.
     window.maybe_auto_refresh()
+    # GFP-96: passive, and in main() for the same reason as the refresh above
+    # -- constructing a window must never touch the network. Held on the
+    # window so Python does not collect the thread mid-flight.
+    window.update_check = _UpdateCheck(window)
+    window.update_check.found.connect(window.mention_update)
+    window.update_check.start()
     return app.exec()
 
 

@@ -162,6 +162,13 @@ SETTINGS: tuple[Setting, ...] = (
         describe="Let the OS timer refresh prices when the app is closed (GFP-102).",
     ),
     Setting(
+        key="update_check",
+        default=True,
+        parse=_boolean,
+        env_var="GROCERY_PLANNER_UPDATE_CHECK",
+        describe="Check GitHub once a day for a newer version (GFP-96).",
+    ),
+    Setting(
         key="log_level",
         default="WARNING",
         parse=_log_level,
