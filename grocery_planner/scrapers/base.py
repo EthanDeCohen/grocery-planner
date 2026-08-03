@@ -26,6 +26,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
+from . import retry
+
 FLIPP_DATA_URL = "https://flyers-ng.flippback.com/api/flipp/data"
 FLIPP_ITEMS_URL = "https://flyers-ng.flippback.com/api/flipp/flyers/{flyer_id}/flyer_items"
 # GFP-87: the value now lives in config so a debugging session can change it
@@ -349,6 +351,11 @@ class FlippClient:
 
     def __init__(self, timeout: float = 30.0):
         self._client = httpx.Client(timeout=timeout, headers={"User-Agent": user_agent()})
+        # GFP-108: set by a caller that wants to SHOW a retry happening -- the
+        # GFP-103 scrape row, so it says "retrying" instead of sitting on
+        # "Scraping..." with no explanation. None means retry silently.
+        self._on_retry = None
+
 
     def __enter__(self) -> "FlippClient":
         return self
@@ -361,9 +368,15 @@ class FlippClient:
 
     def fetch_data(self, postal_code: str) -> dict[str, Any]:
         """Return the full Flipp payload (contains both ``flyers`` and ``coupons``)."""
-        resp = self._client.get(
-            FLIPP_DATA_URL,
-            params={"locale": "en", "postal_code": postal_code, "sid": generate_sid()},
+        # GFP-108: retried, because a Flipp blip used to discard a whole run.
+        resp = retry.request(
+            lambda: self._client.get(
+                FLIPP_DATA_URL,
+                params={"locale": "en", "postal_code": postal_code,
+                        "sid": generate_sid()},
+            ),
+            what="Flipp data",
+            on_retry=self._on_retry,
         )
         resp.raise_for_status()
         payload = resp.json()
@@ -372,9 +385,15 @@ class FlippClient:
         return payload
 
     def fetch_flyer_items(self, flyer_id: int | str) -> list[dict[str, Any]]:
-        resp = self._client.get(
-            FLIPP_ITEMS_URL.format(flyer_id=flyer_id),
-            params={"locale": "en", "sid": generate_sid()},
+        # The paged half: a blip here used to throw away every flyer already
+        # fetched, so the longer the scrape the more one hiccup cost.
+        resp = retry.request(
+            lambda: self._client.get(
+                FLIPP_ITEMS_URL.format(flyer_id=flyer_id),
+                params={"locale": "en", "sid": generate_sid()},
+            ),
+            what=f"Flipp flyer {flyer_id}",
+            on_retry=self._on_retry,
         )
         resp.raise_for_status()
         items = resp.json()

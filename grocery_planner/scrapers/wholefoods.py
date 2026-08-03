@@ -255,7 +255,7 @@ from typing import Any, Iterable
 import httpx
 
 from .. import credentials, db, matching
-from . import base
+from . import base, retry
 
 STORE_KEY = "wholefoods"
 MERCHANT = "Whole Foods Market"
@@ -642,6 +642,11 @@ class WholeFoodsClient:
             follow_redirects=True,
         )
 
+        # GFP-108: set by a caller that wants to SHOW a retry happening -- the
+        # GFP-103 scrape row, so it says "retrying" instead of sitting on
+        # "Scraping..." with no explanation. None means retry silently.
+        self._on_retry = None
+
     def __enter__(self) -> "WholeFoodsClient":
         return self
 
@@ -658,7 +663,12 @@ class WholeFoodsClient:
         the current ``buildId`` and (if the session is alive) this query's
         own results, read out of ``__NEXT_DATA__``.
         """
-        resp = self._client.get(BASE_URL + SEARCH_HTML_PATH, params={"k": query})
+        resp = retry.request(                                  # GFP-108
+            lambda: self._client.get(BASE_URL + SEARCH_HTML_PATH,
+                                     params={"k": query}),
+            what="Whole Foods bootstrap",
+            on_retry=self._on_retry,
+        )
         resp.raise_for_status()
         html = resp.text
         build_id = _extract_build_id(html)
@@ -668,9 +678,16 @@ class WholeFoodsClient:
 
     def search(self, build_id: str, query: str) -> dict[str, Any]:
         """Fetch one query's results via the lighter ``_next/data`` JSON route."""
-        resp = self._client.get(
-            BASE_URL + SEARCH_DATA_PATH.format(build_id=build_id),
-            params={"k": query},
+        # GFP-108. The paged half, and the one worth retrying most: a scrape
+        # runs one of these per search term, so a blip late in the list used
+        # to discard every term already fetched.
+        resp = retry.request(
+            lambda: self._client.get(
+                BASE_URL + SEARCH_DATA_PATH.format(build_id=build_id),
+                params={"k": query},
+            ),
+            what=f"Whole Foods search {query!r}",
+            on_retry=self._on_retry,
         )
         resp.raise_for_status()
         payload = resp.json()
