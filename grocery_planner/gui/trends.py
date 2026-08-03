@@ -24,6 +24,7 @@ from datetime import date
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import service
+from ..records import RETENTION_FLOOR_DAYS
 from ..stores import STORES
 
 # Categorical slots 1-4 of the house palette, in fixed order, validated for
@@ -49,6 +51,25 @@ OTHER_LIGHT, OTHER_DARK = "#6b6a66", "#96958d"
 LINE_WIDTH = 2
 MARKER_RADIUS = 4  # 8px marker, per the mark spec
 GRID_LINES = 4
+
+# GFP-41: the ranges the selector offers. Every one of them must be <=
+# records.RETENTION_FLOOR_DAYS, because retention (GFP-42) only promises to
+# keep that much -- an axis labelled "last 365 days" over 90 days of retained
+# history is a quiet lie of exactly the kind service/trends.py refuses to tell.
+# A test enforces the cap rather than trusting this comment.
+RANGE_CHOICES: tuple[tuple[int, str], ...] = tuple(
+    (days, label) for days, label in (
+        (7, "Last 7 days"), (30, "Last 30 days"), (90, "Last 90 days"),
+    ) if days <= RETENTION_FLOOR_DAYS
+)
+#: Widest range on offer -- the store selector is populated from this rather
+#: than the current window, so narrowing the range cannot make the store you
+#: were looking at vanish from the picker you would need to get back to it.
+WIDEST_RANGE = max(days for days, _ in RANGE_CHOICES)
+#: userData for the "every store" entry. Empty rather than None because
+#: QComboBox.currentData() returns None for a missing role, and the two would
+#: then be indistinguishable.
+ALL_STORES = ""
 
 _MARGIN_LEFT = 62
 _MARGIN_TOP, _MARGIN_BOTTOM = 14, 26
@@ -223,7 +244,12 @@ class TrendChart(QWidget):
 
 
 class TrendsPane(QWidget):
-    """Chart, legend and the latest known price per store — or an honest reason."""
+    """Chart, selectors, legend and the latest known price — or an honest reason.
+
+    The store and range selectors (GFP-41) narrow ``service.protein_price_trend``
+    rather than filtering an already-drawn chart, so what is plotted and what
+    ``gplan trends --store X --days N`` prints are the same query.
+    """
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -234,6 +260,8 @@ class TrendsPane(QWidget):
         font.setBold(True)
         self.title.setFont(font)
         layout.addWidget(self.title)
+
+        layout.addLayout(self._build_selectors())
 
         self.subtitle = QLabel("")
         self.subtitle.setWordWrap(True)
@@ -252,11 +280,75 @@ class TrendsPane(QWidget):
         self.latest.setTextFormat(Qt.RichText)
         layout.addWidget(self.latest)
 
+        self._any_history = False   # replaced by the first _refresh_store_choices
         self.reload()
 
     # ----------------------------------------------------------------- #
+    def _build_selectors(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+
+        self.store_select = QComboBox()
+        self.store_select.addItem("All stores", ALL_STORES)
+        self.range_select = QComboBox()
+        for days, label in RANGE_CHOICES:
+            self.range_select.addItem(label, days)
+        default = self.range_select.findData(service.DEFAULT_WINDOW_DAYS)
+        self.range_select.setCurrentIndex(default if default >= 0 else 0)
+
+        for label, widget in (("Store", self.store_select), ("Range", self.range_select)):
+            row.addWidget(QLabel(label))
+            row.addWidget(widget)
+        row.addStretch(1)
+
+        # Connected last, so building the widgets above cannot fire a reload
+        # before __init__ has finished creating the chart they would redraw.
+        for widget in (self.store_select, self.range_select):
+            widget.currentIndexChanged.connect(self.reload)
+        return row
+
+    def _refresh_store_choices(self) -> None:
+        """Rebuild the store list from data, keeping the user's pick if it survives.
+
+        Repopulating a QComboBox emits currentIndexChanged, which is wired to
+        reload() -- so signals are blocked here. Without that, every reload
+        would schedule another reload.
+        """
+        wanted = self.store_select.currentData()
+        stores = service.trend_stores(days=WIDEST_RANGE)
+        # Remembered so an empty chart can tell "nothing has ever been scraped"
+        # apart from "your filter excluded everything" -- see _explain_empty.
+        self._any_history = bool(stores)
+
+        self.store_select.blockSignals(True)
+        try:
+            self.store_select.clear()
+            self.store_select.addItem("All stores", ALL_STORES)
+            for key, label in stores:
+                self.store_select.addItem(label, key)
+            found = self.store_select.findData(wanted)
+            # A store can leave the list (its history aged out). Falling back to
+            # "All stores" beats silently plotting a different store's line
+            # under the name the user last chose.
+            self.store_select.setCurrentIndex(found if found >= 0 else 0)
+        finally:
+            self.store_select.blockSignals(False)
+
+    @property
+    def selected_store(self) -> str | None:
+        """The store filter to pass to the service — ``None`` means every store."""
+        return self.store_select.currentData() or None
+
+    @property
+    def selected_days(self) -> int:
+        return self.range_select.currentData()
+
+    # ----------------------------------------------------------------- #
     def reload(self) -> None:
-        trend = service.protein_price_trend()
+        self._refresh_store_choices()
+        trend = service.protein_price_trend(
+            days=self.selected_days, store=self.selected_store
+        )
         self.trend = trend
         self.chart.set_trend(trend)
         self.chart.setVisible(trend.is_plottable)
@@ -268,7 +360,7 @@ class TrendsPane(QWidget):
                 "Lower is better."
             )
         else:
-            self.subtitle.setText(trend.reason)
+            self.subtitle.setText(self._explain_empty(trend))
 
         # Shown either way: it is the relief for the two light-mode series
         # colours that sit under 3:1, and the only content at all when there
@@ -282,6 +374,23 @@ class TrendsPane(QWidget):
             ("Latest known:<br>" + "<br>".join(rows)) if rows else ""
         )
         self.latest.setVisible(bool(rows))
+
+    def _explain_empty(self, trend: service.PriceTrend) -> str:
+        """Why the chart is blank — the selectors made this ambiguous.
+
+        ``PriceTrend.reason`` says "run a scrape", which is right for an empty
+        database and wrong the moment a filter is what emptied the result: the
+        data exists, the user just excluded it. Telling someone to scrape when
+        they only need to widen a dropdown sends them off to fix nothing.
+        """
+        narrowed = self.selected_store is not None or self.selected_days < WIDEST_RANGE
+        if trend.observed_days == 0 and self._any_history and narrowed:
+            store = self.store_select.currentText() if self.selected_store else "any store"
+            return (
+                f"No protein prices for {store} in the last {trend.days} days. "
+                "There is history further back — widen the range, or pick All stores."
+            )
+        return trend.reason
 
     def _build_legend(self, trend: service.PriceTrend) -> None:
         while self.legend_layout.count():
