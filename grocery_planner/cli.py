@@ -557,6 +557,50 @@ def trends(
 
 
 @app.command()
+def cheapest(
+    all_protein: bool = typer.Option(
+        False, "--all-protein",
+        help="Include non-meat protein (whey, tofu, plant). Meat only by default.",
+    ),
+    postal_code: str = typer.Option(None, "--postal-code", "-z", help="Limit to one ZIP."),
+) -> None:
+    """The cheapest protein on offer at each store right now (GFP-107).
+
+    The same query behind the app's bottom strip, so the two cannot disagree.
+    Reads current offers, not history: a historical low nobody can buy today is
+    the wrong number to shop from — `gplan records` answers that question.
+
+    Expired offers are excluded outright. Sending someone to a shop for an offer
+    that ended is worse than sending them nowhere.
+    """
+    items = service.cheapest_protein_by_store(
+        meat_only=not all_protein, postal_code=postal_code, conn=db.connect()
+    )
+    if not items:
+        typer.echo(
+            "Nothing to rank yet — no protein with a usable size in the current "
+            "offers. Try `gplan scrape <store>`."
+        )
+        raise typer.Exit()
+
+    scope = "all protein" if all_protein else "animal protein"
+    typer.echo(f"Cheapest {scope} on offer, per store:")
+    _print_table(
+        ["store", "$/g protein", "kind", "price", "item"],
+        [(
+            item.label,
+            f"{item.cost_per_gram_protein:.4f}",
+            item.kind or "-",
+            # GFP-98: a WEIGHT item's price buys one POUND, not the package.
+            (f"{_money(item.price)}/{item.price_per_unit_uom}"
+             if item.sold_by == "WEIGHT" and item.price_per_unit_uom
+             else _money(item.price)),
+            item.item_name[:44],
+        ) for item in items],
+    )
+
+
+@app.command()
 def stores() -> None:
     """Show tracked stores, row counts, and scraper readiness (GFP-4)."""
     conn = db.connect()
