@@ -1,0 +1,41 @@
+-- GFP-106: which animal a protein food actually is, as data rather than a guess
+-- made at read time.
+--
+-- WHY A NEW COLUMN INSTEAD OF USING foods.category. That column already carries
+-- TWO different vocabularies, from two sources that never agreed:
+--
+--   coarse, from the store catalogs (Kroger/HT via GFP-98, Whole Foods):
+--       'Meat' (207), 'Dairy' (85), 'Plant Protein' (73), 'Seafood' (60),
+--       'Supplements' (43)                                     -- Title Case
+--   specific, from USDA reference data (GFP-24):
+--       'beef' (31), 'chicken' (27), 'pork' (26), 'fish' (42),
+--       'tofu' (23), 'whey' (23)                               -- lowercase
+--
+-- The rows a DEAL actually matches to are the catalog ones, and those say only
+-- 'Meat'. They never say which animal. Meanwhile the specific kinds live on the
+-- USDA reference rows, which deals do not match to. Overloading `category` with
+-- a third meaning would make that worse, so the question gets its own field
+-- whose single job is: which kind of protein is this?
+--
+-- FOUR STATES, deliberately, because "we have not looked yet" and "we looked and
+-- could not tell" are different facts and collapsing them costs a re-scan of the
+-- whole catalog on every run:
+--
+--   'chicken' / 'beef' / ...  a specific kind (see protein_kind.KINDS)
+--   'other'                   classified, and it is not meat (dairy, tofu, whey)
+--   'unknown'                 classified, could not determine the kind
+--   NULL                      NOT YET CLASSIFIED
+--
+-- Measured before writing this: of 256 meat-matched priced deals, 212 (~83%)
+-- have their species recoverable from the item name. The other 17% become
+-- 'unknown' rather than being guessed -- savings.py rule 1, absent stays absent.
+--
+-- Purely additive. Nothing reads this column yet except the classifier and the
+-- panel it feeds (GFP-107); every existing query over foods, food_nutrients,
+-- deal_food_match and the $/g-protein engine is untouched, and dairy / plant
+-- protein / supplements keep working exactly as before.
+ALTER TABLE foods ADD COLUMN protein_kind TEXT;
+
+-- The classifier fills NULLs in bulk and the GFP-107 panel filters on kind, so
+-- both want this rather than a scan of a catalog that grows with every scrape.
+CREATE INDEX IF NOT EXISTS idx_foods_protein_kind ON foods(protein_kind);

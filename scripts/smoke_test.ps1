@@ -170,6 +170,11 @@ try {
     Test-Case "trends by food (empty)"   @("trends", "--by", "food")                       0 "No protein prices"
     Test-Case "trends price unscoped"    @("trends", "--metric", "price")                  2 "--food"
     Test-Case "trends bad metric"        @("trends", "--metric", "bogus")                  2 "unknown metric"
+    # GFP-106: the curated seed catalog is always present, so classification has
+    # real work to do even on a throwaway DB, and re-running must be a no-op.
+    Test-Case "nutrition classify"       @("nutrition", "classify")                        0 "foods:"
+    Test-Case "nutrition classify again" @("nutrition", "classify")                        0 "Nothing new to classify"
+    Test-Case "nutrition classify show"  @("nutrition", "classify", "--show", "chicken")   0 "chicken"
     Test-Case "schedule remove"          @("schedule", "remove", "foodlion")               0 "Removed"
     Test-Case "schedule remove (gone)"   @("schedule", "remove", "foodlion")               1
     Test-Case "schedule run (none set)"  @("schedule", "run", "--once")                    1 "No schedules"
