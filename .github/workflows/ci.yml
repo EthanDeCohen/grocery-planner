@@ -104,14 +104,28 @@ jobs:
         with:
           python-version: "3.13"
 
+      # GFP-81 adds the `gui` extra: the .app bundle cannot be built without
+      # PySide6 installed. It is a heavy install on a 10x runner, which is
+      # affordable only because this job no longer runs on pull requests.
       - name: Install package + build deps
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[build]"
+          pip install -e ".[build,gui]"
 
       - name: Build the CLI binary
         working-directory: packaging
         run: pyinstaller gplan.spec --noconfirm --distpath ../dist --workpath ../build
+
+      # GFP-81: the GUI binary, and on macOS a real .app bundle. PyInstaller
+      # cannot cross-compile (GFP-10), so this is the ONLY place a macOS .app
+      # can be produced -- nobody on the team runs macOS, and without this the
+      # GUI would ship there untested and unbuilt.
+      #
+      # gplan-gui.spec excludes Qt WebEngine deliberately (see GFP-79); that is
+      # what keeps this bundle ~50 MB rather than ~250 MB.
+      - name: Build the GUI binary
+        working-directory: packaging
+        run: pyinstaller gplan-gui.spec --noconfirm --distpath ../dist --workpath ../build
 
       - name: Smoke test the binary (Windows)
         if: runner.os == 'Windows'
@@ -136,10 +150,44 @@ jobs:
           ./dist/gplan schedule set foodlion --every 6h
           ./dist/gplan schedule list
 
+      # GFP-81: prove the .app is a real bundle, not just that PyInstaller
+      # exited 0. A malformed bundle still produces a directory, so check the
+      # things macOS actually requires: the Info.plist, the declared identifier,
+      # and an executable at the path the plist names. Launching the GUI itself
+      # is not possible here -- a CI runner has no display -- so this asserts
+      # structure, and GFP-116 will assert that INSTALLING it works.
+      - name: Verify the macOS .app bundle
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          APP="dist/gplan-gui.app"
+          test -d "$APP" || { echo "no .app bundle at $APP"; exit 1; }
+          PLIST="$APP/Contents/Info.plist"
+          test -f "$PLIST" || { echo "bundle has no Info.plist"; exit 1; }
+          IDENT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$PLIST")
+          echo "bundle identifier: $IDENT"
+          test "$IDENT" = "com.grocery-planner.gui" \
+            || { echo "unexpected bundle identifier: $IDENT"; exit 1; }
+          BIN=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$PLIST")
+          test -x "$APP/Contents/MacOS/$BIN" \
+            || { echo "no executable at Contents/MacOS/$BIN"; exit 1; }
+          echo "bundle size: $(du -sh "$APP" | cut -f1)"
+
+      - name: Check the Windows GUI binary exists
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path dist/gplan-gui.exe)) { throw "gplan-gui.exe was not built" }
+          "gplan-gui.exe: {0:N1} MB" -f ((Get-Item dist/gplan-gui.exe).Length / 1MB)
+
+      # The .app is a DIRECTORY, so it is listed explicitly -- a glob that
+      # matched only files would upload an empty artifact and pass.
       - uses: actions/upload-artifact@v4
         with:
           name: gplan-${{ matrix.os }}
           path: |
             dist/gplan
             dist/gplan.exe
+            dist/gplan-gui.exe
+            dist/gplan-gui.app
           if-no-files-found: error
