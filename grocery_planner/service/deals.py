@@ -25,9 +25,21 @@ _EXPIRED_SQL = f"CASE WHEN {_HAS_END_DATE} AND valid_to < ? THEN 1 ELSE 0 END"
 # GFP-38 added source_url/image_url here rather than in a second query: the
 # where-to-buy column needs a corroborating link for a row it already has, and
 # a row that carries its own provenance cannot go out of sync with itself.
+# GFP-50 adds three more for the same reason: a bill line has to be traceable
+# back to the exact deal row it came from (``deal_id``), and a price that is
+# denominated PER WEIGHT has to be taggable as such wherever it is rendered
+# (``sold_by``/``price_per_unit_uom``, GFP-98). Both are provenance the row
+# already holds; fetching them here keeps a line self-describing rather than
+# sending every consumer back to the deals table.
+#
+# ``id AS deal_id``: the bare name is too easy to collide with a joined table's
+# own id, and "deal_id" says what it identifies at the call site.
+# EXPORT_COLUMNS is an explicit allow-list with extrasaction="ignore", so
+# widening this does NOT change the CSV export.
 _DEAL_COLUMNS = (
-    "store, item_name, sub_category, deal_type, sale_price, "
-    "dollar_price, valid_from, valid_to, source_url, image_url"
+    "id AS deal_id, store, item_name, sub_category, deal_type, sale_price, "
+    "dollar_price, valid_from, valid_to, source_url, image_url, "
+    "sold_by, price_per_unit, price_per_unit_uom"
 )
 
 
