@@ -19,6 +19,8 @@ nutrition and ingest:
 - :mod:`.ingest` — pulling fresh deals from a store scraper into SQLite.
 - :mod:`.shopping` / :mod:`.shoppingfmt` — a grocery list a client can
   actually shop from, and its printable/CSV/HTML renderings (GFP-112).
+- :mod:`.refresh` — whether a refresh is due, so the app's first run and
+  GFP-102's background timer cannot both decide to scrape (GFP-105).
 - :mod:`.cheapest` — what to buy RIGHT NOW: the cheapest animal protein on
   offer at each store, from `deals` rather than history (GFP-107).
 - :mod:`.trends` — price and $/g protein over time, by store or by food, from
@@ -38,6 +40,13 @@ directly, which was the inconsistency this ticket flagged.
 from __future__ import annotations
 
 from .cheapest import CheapestProtein, cheapest_protein_by_store
+from .refresh import (
+    NEW_DAY,
+    NO_DATA,
+    UP_TO_DATE,
+    RefreshDecision,
+    refresh_decision,
+)
 from .shopping import (
     DEFAULT_DAYS,
     GroceryItem,
@@ -87,6 +96,10 @@ from .trends import (
 
 __all__ = [
     "CheapestProtein",
+    "NEW_DAY",
+    "NO_DATA",
+    "RefreshDecision",
+    "UP_TO_DATE",
     "DEFAULT_DAYS",
     "EXTENSIONS",
     "GroceryItem",
@@ -122,6 +135,7 @@ __all__ = [
     "price_trend",
     "grocery_list_for",
     "protein_price_trend",
+    "refresh_decision",
     "render_grocery_list",
     "run_scrape",
     "scraper_status",

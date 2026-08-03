@@ -343,8 +343,14 @@ def test_the_roster_module_holds_no_client_sql_of_its_own():
     """No repository, no connection, no SQL in the pane -- the ticket's rule."""
     from pathlib import Path
 
-    roster_source = Path(
-        __import__("grocery_planner.gui.roster", fromlist=["roster"]).__file__
+    import grocery_planner
+
+    # Located by PATH rather than by importing the module: importing it pulls in
+    # PySide6, which CI does not install (`.[dev]`), and this assertion is about
+    # the SOURCE TEXT -- it does not need Qt to be loadable. Importing would have
+    # turned a check that can always run into one that always skips.
+    roster_source = (
+        Path(grocery_planner.__file__).parent / "gui" / "roster.py"
     ).read_text(encoding="utf-8")
     body = roster_source.split('"""', 2)[2]     # past the module docstring
     assert "CustomerRepository" not in body
