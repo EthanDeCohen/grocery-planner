@@ -45,8 +45,24 @@ class _FakeScraper:
 
 
 def _row(name, price):
-    from tests.test_service import _fake_row  # reuse the canonical shape
-    return _fake_row(name, price)
+    """A scraped row, shaped the way ingest expects.
+
+    Written out here rather than imported from tests/test_service.py: there is
+    no tests/__init__.py, so `from tests.test_service import ...` resolves only
+    when the repository root happens to be on sys.path. It does locally and
+    does not on CI, which is the kind of difference that costs a run to find.
+    """
+    return {
+        "item_name": name, "sub_category": "Produce", "deal_type": "Weekly Ad",
+        "deal_description": "", "regular_price": None, "sale_price": price,
+        "dollar_price": price, "discount_amount": None, "discount_percent": None,
+        "valid_from": "2026-06-08", "valid_to": "2026-06-16",
+        "loyalty_required": "Y", "notes": "",
+        # run_scrape builds its INSERT generically from importers.DEAL_COLUMNS
+        # (GFP-15), so a synthetic row has to supply every column that names.
+        "source_url": None, "image_url": None,
+        "flipp_flyer_id": None, "flipp_item_id": None, "flipp_coupon_id": None,
+    }
 
 
 @pytest.fixture
@@ -91,12 +107,17 @@ def test_a_dry_run_still_scrapes(conn, fake_store):
     assert fake_store.calls == 1
 
 
-def test_a_dry_run_is_not_recorded_as_a_job(conn, fake_store, env_db):
+def test_a_dry_run_is_not_recorded_as_a_job(conn, fake_store):
     """Otherwise jobs.last_success would claim a refresh that never landed, and
-    GFP-105 would skip a real one."""
-    result = runner.invoke(app, ["scrape", "foodlion", "--dry-run"])
-    # The command reports honestly...
-    assert "DRY RUN" in result.stdout or result.exit_code == 0
+    GFP-105's auto-refresh would then skip a real one.
+
+    This is the reason `gplan scrape --dry-run` deliberately does NOT go
+    through jobs.run_tracked_scrape, even though every other scrape does.
+    """
+    before = conn.execute("SELECT COUNT(*) FROM scraping_jobs").fetchone()[0]
+    service.run_scrape("foodlion", conn=conn, dry_run=True)
+    after = conn.execute("SELECT COUNT(*) FROM scraping_jobs").fetchone()[0]
+    assert after == before, "a dry run recorded itself as a completed scrape"
 
 
 def test_a_dry_run_still_evaluates_the_replace_guard(conn, fake_store):
