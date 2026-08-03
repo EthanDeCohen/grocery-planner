@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import config, service
+from .. import config, logs, service
 from .cheapest import CheapestMeatStrip
 from .client import ClientDetailPage
 from .formulas import FormulaDialog
@@ -263,6 +263,12 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     """Launch the desktop app; returns the Qt exit code."""
+    # GFP-86: the GUI is the unattended-est path of all -- a scheduled refresh
+    # fires with nobody watching. console=False because a windowed build has no
+    # console to write to.
+    logs.setup(console=False)
+    logs.get_logger(__name__).info("gui starting")
+
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
