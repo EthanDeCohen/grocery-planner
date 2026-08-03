@@ -16,6 +16,7 @@ Three guards, each mirroring a rule documented in db_script/README.md:
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import re
 import sys
@@ -50,6 +51,33 @@ def _load_snapshot_module():
     return module
 
 
+def _normalised_sha256(path: Path) -> str:
+    """Hash a script the way ``grocery_planner.db._checksum`` does (GFP-117).
+
+    A bare ``sha256(read_bytes())`` here was a real bug, and a subtle one: it
+    made this guard disagree with the code it guards. GFP-98 added
+    ``.gitattributes`` (``*.ddl text eol=lf``) and taught ``db.py`` to normalise
+    line endings before hashing, precisely because a Windows checkout turns an
+    LF-authored script into CRLF and changes its bytes without changing its
+    content. The application was fixed; this test was not, and its pinned value
+    stayed a CRLF-specific hash.
+
+    The effect was that the suite passed ONLY on a working copy old enough to
+    predate ``.gitattributes``, and failed on every fresh clone, every git
+    worktree and every CI runner. Nobody noticed because PR-time CI has been
+    paused since GFP-94 and the last macOS run predates the GFP-98 merge.
+
+    Normalising makes the pinned hash identical for a CRLF and an LF checkout,
+    so this can never again depend on how a machine happened to check the file
+    out. Deliberately mirrors ``db._checksum``'s implementation rather than
+    importing a private function, so this file stays importable without the
+    package's runtime dependencies -- but if that ever changes, they must be
+    changed together.
+    """
+    raw = path.read_bytes()
+    return hashlib.sha256(raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).hexdigest()
+
+
 def _expected_checksum() -> str:
     """Parse db_script/init/0001_GFP-9.ddl.sha256: the first non-comment,
     non-blank line's first whitespace-separated token is the pinned hash."""
@@ -73,18 +101,7 @@ def test_init_baseline_checksum_is_pinned():
     longer matches the file on disk, someone edited the frozen baseline --
     fail loudly and point at the rule, rather than let it quietly reintroduce
     the GFP-59 double-description bug the freeze exists to prevent."""
-    # Hashed the way grocery_planner.db hashes every other script since GFP-98
-    # -- with line endings normalised out -- rather than byte-exact. This guard
-    # kept the byte-exact form GFP-98 removed everywhere else, so the pin was
-    # really a pin on "whichever line endings the author's working tree had".
-    # .gitattributes now checks *.ddl out as LF while the tree this hash was
-    # first taken in still holds CRLF, so a fresh clone failed this test having
-    # changed nothing: exactly the false "someone edited the frozen baseline"
-    # GFP-98 fixed in db.py. Normalising makes both trees agree, and a real
-    # edit to the baseline still changes the hash and still fails.
-    from grocery_planner import db
-
-    actual = db._checksum(INIT_BASELINE)
+    actual = _normalised_sha256(INIT_BASELINE)
     expected = _expected_checksum()
     assert actual == expected, (
         f"{INIT_BASELINE} no longer matches its pinned checksum "
