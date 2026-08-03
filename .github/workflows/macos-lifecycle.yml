@@ -148,6 +148,10 @@ jobs:
         # the log is captured by the step's own output and the artifact below.
 
       - name: Run what was installed
+        # The one step that executes a GUI binary, so the one step that can
+        # hang. A per-step cap means a hang costs five minutes at 10x instead
+        # of the whole job timeout.
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           {
@@ -162,7 +166,28 @@ jobs:
             echo "--- the LaunchAgent, per launchctl ---"
             launchctl list | grep grocery
             echo "--- the app binary inside the bundle actually executes ---"
-            "$HOME/Applications/Grocery Planner.app/Contents/MacOS/gplan-gui" --help 2>&1 | head -5 || true
+            # --refresh-once, NOT --help. The bundle is a GUI-subsystem binary
+            # and any argument it does not recognise falls through to main(),
+            # which creates a QApplication -- on a runner with no display that
+            # blocks forever rather than failing. Measured: it hung a 10x job
+            # until the timeout. --refresh-once is handled before the Qt import
+            # and exits, which is also the path GFP-102's timer actually uses.
+            #
+            # The outer timeout is belt and braces: nothing in this job should
+            # ever be able to hang a macOS runner again.
+            BUNDLE="$HOME/Applications/Grocery Planner.app/Contents/MacOS/gplan-gui"
+            if command -v timeout >/dev/null 2>&1; then
+              timeout 120 "$BUNDLE" --refresh-once
+            else
+              # macOS has no coreutils `timeout` by default.
+              "$BUNDLE" --refresh-once &
+              pid=$!
+              ( sleep 120; kill -9 "$pid" 2>/dev/null ) & watchdog=$!
+              wait "$pid"; status=$?
+              kill "$watchdog" 2>/dev/null || true
+              test "$status" -eq 0 || { echo "bundle exited $status"; exit 1; }
+            fi
+            echo "the bundled binary ran and exited cleanly"
           } 2>&1 | tee "$EVIDENCE/13-run.log"
 
       # ---------------------------------------------------------------- #
