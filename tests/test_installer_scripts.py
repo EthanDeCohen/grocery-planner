@@ -203,3 +203,43 @@ def test_the_default_install_root_is_under_the_user_profile():
     """Per-user, on whichever platform the tests happen to run."""
     root = ip.default_install_root()
     assert str(root).startswith(str(pathlib.Path.home())) or "AppData" in str(root)
+
+
+# --------------------------------------------------------------------------- #
+# Shell scripts, checked for the mistakes only their own OS would reveal
+# --------------------------------------------------------------------------- #
+SHELL_SCRIPTS = sorted(PACKAGING.glob("*.sh")) + sorted((ROOT / "scripts").glob("*.sh"))
+
+
+@pytest.mark.parametrize("path", SHELL_SCRIPTS, ids=lambda p: p.name)
+def test_every_shell_helper_is_defined(path):
+    """Catches calling a helper that exists only in the OTHER script.
+
+    Found the hard way: install.sh gained a line calling `did`, which is
+    uninstall.sh's helper -- install.sh calls it `green`. `bash -n` passes,
+    because an undefined function is a runtime error rather than a syntax one.
+    It surfaced only on the macOS runner, minutes into a 10x-billed job, after
+    the install had already copied 54 MB.
+    """
+    body = path.read_text(encoding="utf-8")
+    defined = set(re.findall(r"^(\w+)\(\)", body, re.M))
+    helpers = ("green", "gray", "skip", "warn", "did", "bad", "note", "run",
+               "is_timer", "remove_path")
+    used = set(re.findall(r"^\s*(" + "|".join(helpers) + r")\b", body, re.M))
+    missing = used - defined
+    assert not missing, f"{path.name} calls undefined helper(s): {sorted(missing)}"
+
+
+@pytest.mark.parametrize("path", SHELL_SCRIPTS, ids=lambda p: p.name)
+def test_no_shell_script_has_windows_line_endings(path):
+    """A .sh with CRLF gives `bad interpreter: /bin/bash^M` on macOS, which
+    reads as a missing bash rather than a line-ending problem and sends whoever
+    hits it a long way in the wrong direction.
+
+    .gitattributes pins these to LF; this is the check that the pin works. It
+    fails on a Windows checkout made BEFORE that pin existed, which is correct
+    -- such a tree would ship a broken installer.
+    """
+    assert b"\r\n" not in path.read_bytes(), (
+        f"{path.name} has CRLF line endings and would not run on macOS"
+    )

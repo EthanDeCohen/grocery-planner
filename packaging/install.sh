@@ -285,7 +285,7 @@ elif [ "$DRY_RUN" -eq 1 ]; then
 '
 else
     if "$SUPPORT_DIR/gplan" timer install >/dev/null 2>&1; then
-        did "background refresh registered (daily)"
+        green "background refresh registered (daily)"
         INTEGRATIONS_TIMER="com.grocery-planner.refresh"
     else
         warn "could not register the background refresh -- the app still works"

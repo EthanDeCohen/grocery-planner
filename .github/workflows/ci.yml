@@ -325,8 +325,12 @@ jobs:
           # would blink a black window onto a customer's screen every morning.
           $action = (Get-ScheduledTask -TaskPath "\GroceryPlanner\" -TaskName "Refresh").Actions[0]
           Write-Host "task runs: $($action.Execute) $($action.Arguments)"
-          if ($action.Execute -notlike "*gplan-gui.exe") {
-              throw "the task invokes a console binary ($($action.Execute)); a window would appear"
+          # schtasks stores Execute WITH the surrounding quotes it was given,
+          # so trim them before matching -- otherwise the string ends in `"`
+          # and every comparison against *.exe fails.
+          $exe = $action.Execute.Trim('"')
+          if ($exe -notlike "*gplan-gui.exe") {
+              throw "the task invokes a console binary ($exe); a window would appear"
           }
           if ($action.Arguments -notlike "*--refresh-once*") {
               throw "the task does not pass --refresh-once"
