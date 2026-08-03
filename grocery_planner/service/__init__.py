@@ -17,6 +17,8 @@ nutrition and ingest:
   ``service.fetch_deals`` with nothing but the noun to say which is which.
 - :mod:`.deals` — deal query, ranking, filtering and export (GFP-16/GFP-17/GFP-8).
 - :mod:`.ingest` — pulling fresh deals from a store scraper into SQLite.
+- :mod:`.shopping` / :mod:`.shoppingfmt` — a grocery list a client can
+  actually shop from, and its printable/CSV/HTML renderings (GFP-112).
 - :mod:`.cheapest` — what to buy RIGHT NOW: the cheapest animal protein on
   offer at each store, from `deals` rather than history (GFP-107).
 - :mod:`.trends` — price and $/g protein over time, by store or by food, from
@@ -36,6 +38,13 @@ directly, which was the inconsistency this ticket flagged.
 from __future__ import annotations
 
 from .cheapest import CheapestProtein, cheapest_protein_by_store
+from .shopping import (
+    DEFAULT_DAYS,
+    GroceryItem,
+    GroceryList,
+    grocery_list_for,
+)
+from .shoppingfmt import EXTENSIONS, RENDERERS, render as render_grocery_list, write as write_grocery_list
 from .deals import (
     DEAL_TYPE_GROUPS,
     EXPORT_COLUMNS,
@@ -78,6 +87,11 @@ from .trends import (
 
 __all__ = [
     "CheapestProtein",
+    "DEFAULT_DAYS",
+    "EXTENSIONS",
+    "GroceryItem",
+    "GroceryList",
+    "RENDERERS",
     "DEAL_TYPE_GROUPS",
     "DEFAULT_WINDOW_DAYS",
     "EXPORT_COLUMNS",
@@ -106,10 +120,13 @@ __all__ = [
     "has_price_history",
     "is_expired",
     "price_trend",
+    "grocery_list_for",
     "protein_price_trend",
+    "render_grocery_list",
     "run_scrape",
     "scraper_status",
     "stores_with_deals",
     "today_iso",
     "trend_stores",
+    "write_grocery_list",
 ]

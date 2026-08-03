@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -35,11 +36,31 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import db, targets
+from .. import db, service, targets
 from ..customers import CustomerRepository
 from .billpanel import BillPanel
 from .biometrics import BiometricsPanel
 from .wheretobuy import WhereToBuyPane
+
+def _format_for(path: str, selected_filter: str) -> str:
+    """Which renderer to use, from the filename the user chose.
+
+    The extension wins because it is what the saved file will actually be --
+    a user who types "list.csv" into an HTML-filtered dialog means CSV. The
+    dialog filter is only the fallback when they typed no extension at all,
+    and HTML is the final default because it is the format with genuinely
+    clickable links (GFP-112).
+    """
+    lowered = path.lower()
+    for fmt, ext in service.EXTENSIONS.items():
+        if lowered.endswith(ext):
+            return fmt
+    if "csv" in selected_filter.lower():
+        return "csv"
+    if "text" in selected_filter.lower():
+        return "text"
+    return "html"
+
 
 #: Column widths. The bill is the widest because it is what the page is for.
 COLUMN_SIZES = (300, 420, 260)
@@ -68,6 +89,18 @@ class ClientDetailPage(QWidget):
         font.setPointSize(font.pointSize() + 3)
         self.name_label.setFont(font)
         header.addWidget(self.name_label, 1)
+
+        # GFP-112: the action the whole page exists to enable. Everything else
+        # here TELLS the nutritionist something; this is the only control that
+        # produces something they can hand to a client.
+        self.grocery_btn = QPushButton("Create grocery list…")
+        self.grocery_btn.setToolTip(
+            "Turn this client's protein plan into a shopping list you can "
+            "print, save as CSV, or open in a browser with clickable links."
+        )
+        self.grocery_btn.setAutoDefault(False)
+        self.grocery_btn.clicked.connect(self.on_create_grocery_list)
+        header.addWidget(self.grocery_btn)
         layout.addLayout(header)
 
         self.target_label = QLabel("")
@@ -151,3 +184,50 @@ class ClientDetailPage(QWidget):
         """Recompute everything for the current client — e.g. after a scrape."""
         if self.customer_id is not None:
             self.show_client(self.customer_id)
+
+    # ----------------------------------------------------------------- #
+    # GFP-112 — the grocery list
+    # ----------------------------------------------------------------- #
+    def on_create_grocery_list(self) -> None:
+        """Ask where to save, then write the list in the chosen format.
+
+        The format is taken from the file extension the user picks rather than
+        from a separate dropdown: they are already choosing a filename, and a
+        second control asking the same question twice is the kind of chrome
+        GFP-104 removed from the trends pane.
+        """
+        if self.customer_id is None:
+            return
+        customer = CustomerRepository.get(self.customer_id, conn=db.connect())
+        if customer is None:
+            self.target_label.setText("That client is no longer on file.")
+            return
+
+        glist = service.grocery_list_for(customer, conn=db.connect())
+        if glist is None:
+            # Same rule as the rest of the page: no weight, no invented target.
+            self.target_label.setText(
+                f"{customer.name} has no weight on file, so there is no protein "
+                "target to shop for."
+            )
+            return
+
+        safe_name = "".join(
+            c for c in customer.name if c.isalnum() or c in " -_"
+        ).strip().replace(" ", "-").lower() or "client"
+        path, selected = QFileDialog.getSaveFileName(
+            self,
+            "Save grocery list",
+            f"{safe_name}-grocery-list.html",
+            "Web page, clickable links (*.html);;Text file (*.txt);;CSV (*.csv)",
+        )
+        if not path:
+            return
+
+        fmt = _format_for(path, selected)
+        written = service.write_grocery_list(glist, path, fmt)
+        count = len(glist.items)
+        self.target_label.setText(
+            f"Wrote {count} item{'' if count == 1 else 's'} for {glist.days} days "
+            f"to {written}"
+        )

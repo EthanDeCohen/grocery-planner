@@ -13,6 +13,15 @@ PUBLIC_API = [
     # GFP-107: "what should they buy today", from deals not history.
     "CheapestProtein",
     "cheapest_protein_by_store",
+    # GFP-112: the grocery list and its renderers.
+    "DEFAULT_DAYS",
+    "EXTENSIONS",
+    "GroceryItem",
+    "GroceryList",
+    "RENDERERS",
+    "grocery_list_for",
+    "render_grocery_list",
+    "write_grocery_list",
     "DEAL_TYPE_GROUPS",
     # GFP-36: the price-trends pane needs the numbers behind its chart from the
     # same front-end-agnostic layer as everything else, so service.trends is

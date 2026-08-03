@@ -604,6 +604,66 @@ def cheapest(
     )
 
 
+@client_app.command("groceries")
+def client_groceries(
+    who: str = typer.Argument(..., help="Client id or name."),
+    days: int = typer.Option(
+        service.DEFAULT_DAYS, "--days", "-d", help="How many days to shop for."
+    ),
+    fmt: str = typer.Option(
+        "text", "--format", "-f", help="text | csv | html. html has clickable links."
+    ),
+    out: Path = typer.Option(
+        None, "--out", "-o", help="Write to a file instead of printing."
+    ),
+) -> None:
+    """Build a grocery list for a client (GFP-112).
+
+    Turns the amortised daily bill into whole packages someone can actually
+    buy: quantities round UP (you cannot buy 0.4 of a packet, and rounding down
+    would silently miss the target), and a per-weight item is bought by weight
+    rather than by package.
+
+    `--format html` is the one with genuinely clickable product links, and it
+    prints properly from any browser on macOS or Windows.
+    """
+    conn = db.connect()
+    try:
+        customer = client_service.resolve_client(who, conn=conn)
+    except client_service.ClientError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2)
+
+    try:
+        glist = service.grocery_list_for(customer, days=days, conn=conn)
+    except ValueError as exc:
+        typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2)
+
+    if glist is None:
+        typer.secho(
+            f"{customer.name} has no weight on file, so there is no protein "
+            "target to shop for. Set one with `gplan client edit`.",
+            fg=typer.colors.YELLOW,
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        rendered = service.render_grocery_list(glist, fmt)
+    except ValueError as exc:
+        typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2)
+
+    if out is None:
+        typer.echo(rendered)
+        return
+    written = service.write_grocery_list(glist, out, fmt)
+    typer.secho(
+        f"Wrote {len(glist.items)} item(s) for {glist.days} days to {written}",
+        fg=typer.colors.GREEN,
+    )
+
+
 @app.command()
 def stores() -> None:
     """Show tracked stores, row counts, and scraper readiness (GFP-4)."""

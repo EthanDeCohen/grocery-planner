@@ -39,7 +39,11 @@ _EXPIRED_SQL = f"CASE WHEN {_HAS_END_DATE} AND valid_to < ? THEN 1 ELSE 0 END"
 _DEAL_COLUMNS = (
     "id AS deal_id, store, item_name, sub_category, deal_type, sale_price, "
     "dollar_price, valid_from, valid_to, source_url, image_url, "
-    "sold_by, price_per_unit, price_per_unit_uom"
+    "sold_by, price_per_unit, price_per_unit_uom, "
+    # GFP-112: the retailer's own product id (GFP-111), so a grocery list can
+    # print a SKU and a future order file can name a product the retailer
+    # recognises -- a display name identifies nothing to an ordering system.
+    "product_identifier, product_identifier_ns"
 )
 
 
