@@ -182,6 +182,12 @@ class Customer:
     #: a normal state, not a broken record. targets.py falls back to
     #: ``weight_kg`` and says which it used.
     desired_weight_kg: float | None = None
+    #: GFP-127. Dollars per week. Nullable, and null is NOT zero -- a client
+    #: with no budget is unmeasured, not permanently over one.
+    #:
+    #: Never an input to the optimiser: it is a line the plan is measured
+    #: against. See grocery_planner/budget.py.
+    weekly_budget: float | None = None
     protein_factor: float = DEFAULT_PROTEIN_FACTOR
     notes: str | None = None
     created_at: str | None = None
@@ -247,7 +253,7 @@ class Customer:
 
 _COLUMNS = (
     "id, name, weight_kg, weight_unit, height_cm, age, sex, activity_level, "
-    "goal, desired_weight_kg, protein_factor, notes, created_at, updated_at, deleted_at"
+    "goal, desired_weight_kg, weekly_budget, protein_factor, notes, created_at, updated_at, deleted_at"
 )
 
 
@@ -263,6 +269,7 @@ def _row_to_customer(row: sqlite3.Row) -> Customer:
         activity_level=row["activity_level"],
         goal=row["goal"],
         desired_weight_kg=row["desired_weight_kg"],
+        weekly_budget=row["weekly_budget"],
         protein_factor=row["protein_factor"],
         notes=row["notes"],
         created_at=row["created_at"],
@@ -341,13 +348,13 @@ class CustomerRepository:
             cur = own.execute(
                 "INSERT INTO customers("
                 "name, weight_kg, weight_unit, height_cm, age, sex, "
-                "activity_level, goal, desired_weight_kg, protein_factor, notes, created_at, updated_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "activity_level, goal, desired_weight_kg, weekly_budget, protein_factor, notes, created_at, updated_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     customer.name, customer.weight_kg, customer.weight_unit,
                     customer.height_cm, customer.age, customer.sex,
                     customer.activity_level, customer.goal, customer.desired_weight_kg,
-                    customer.protein_factor,
+                    customer.weekly_budget, customer.protein_factor,
                     customer.notes, now, now,
                 ),
             )
@@ -356,13 +363,13 @@ class CustomerRepository:
 
         own.execute(
             "UPDATE customers SET name=?, weight_kg=?, weight_unit=?, height_cm=?, "
-            "age=?, sex=?, activity_level=?, goal=?, desired_weight_kg=?, protein_factor=?, notes=?, "
+            "age=?, sex=?, activity_level=?, goal=?, desired_weight_kg=?, weekly_budget=?, protein_factor=?, notes=?, "
             "updated_at=? WHERE id=?",
             (
                 customer.name, customer.weight_kg, customer.weight_unit,
                 customer.height_cm, customer.age, customer.sex,
                 customer.activity_level, customer.goal, customer.desired_weight_kg,
-                customer.protein_factor,
+                customer.weekly_budget, customer.protein_factor,
                 customer.notes, now, customer.id,
             ),
         )

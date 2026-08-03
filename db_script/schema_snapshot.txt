@@ -29,6 +29,7 @@ TABLE customers
   protein_factor: REAL NOT NULL DEFAULT 1.6
   sex: TEXT
   updated_at: TEXT NOT NULL DEFAULT datetime('now')
+  weekly_budget: REAL
   weight_kg: REAL
   weight_unit: TEXT
 
