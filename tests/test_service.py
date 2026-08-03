@@ -25,6 +25,7 @@ PUBLIC_API = [
     "TrendSeries",
     "UnknownFoodError",
     "UnscopedPriceTrendError",
+    "has_price_history",
     "price_trend",
     "protein_price_trend",
     # GFP-41: the chart's store selector is built from the stores that actually

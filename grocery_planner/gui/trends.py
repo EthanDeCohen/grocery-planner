@@ -261,7 +261,12 @@ class TrendsPane(QWidget):
         self.title.setFont(font)
         layout.addWidget(self.title)
 
-        layout.addLayout(self._build_selectors())
+        # A WIDGET wrapping the row, not a bare layout: GFP-104 has to hide the
+        # selectors wholesale on an empty database, and a QLayout cannot be
+        # hidden — only the widget holding it can.
+        self.selectors = QWidget()
+        self.selectors.setLayout(self._build_selectors())
+        layout.addWidget(self.selectors)
 
         self.subtitle = QLabel("")
         self.subtitle.setWordWrap(True)
@@ -281,6 +286,7 @@ class TrendsPane(QWidget):
         layout.addWidget(self.latest)
 
         self._any_history = False   # replaced by the first _refresh_store_choices
+        self._has_data = False      # replaced by the first reload()
         self.reload()
 
     # ----------------------------------------------------------------- #
@@ -344,8 +350,46 @@ class TrendsPane(QWidget):
         return self.range_select.currentData()
 
     # ----------------------------------------------------------------- #
+    @property
+    def has_data(self) -> bool:
+        """Has this install ever captured a price? Drives the empty state."""
+        return self._has_data
+
+    def _show_nothing_yet(self) -> None:
+        """GFP-104: on a genuinely empty database, show ONE plain message.
+
+        Reported from first use: the heading, both dropdowns and a "no prices"
+        line all sat over an empty pane. Controls that look operable but govern
+        nothing are worse than no controls -- a Store dropdown listing no stores
+        and a Range dropdown ranging over nothing invite a user to fiddle with
+        them instead of doing the one thing that would help.
+
+        Distinct from every other empty case here, all of which are preserved:
+        those mean "there IS data, just not this data", so their controls are
+        exactly what the user needs.
+        """
+        self.trend = service.PriceTrend(days=self.selected_days)
+        for widget in (self.title, self.selectors, self.chart, self.legend, self.latest):
+            widget.setVisible(False)
+        self.subtitle.setVisible(True)
+        self.subtitle.setText(
+            "No price data yet.\n\n"
+            "Use Data ▸ Run scrape… and press “Scrape all” to fetch this "
+            "week's prices. Everything on this page fills in once that finishes."
+        )
+
     def reload(self) -> None:
+        self._has_data = service.has_price_history()
+        # Refreshed even when hiding everything: the selectors keep their state
+        # while invisible, so skipping this would leave a stale store selected
+        # and silently reapply it the moment data returned.
         self._refresh_store_choices()
+        if not self._has_data:
+            self._show_nothing_yet()
+            return
+
+        for widget in (self.title, self.selectors):
+            widget.setVisible(True)
         trend = service.protein_price_trend(
             days=self.selected_days, store=self.selected_store
         )

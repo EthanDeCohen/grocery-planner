@@ -176,7 +176,9 @@ def test_a_store_that_leaves_the_list_falls_back_to_all_stores(window):
 # The empty state stays honest once a filter can be what emptied it
 # --------------------------------------------------------------------------- #
 def test_an_empty_database_still_says_run_a_scrape(window):
-    assert "No protein prices on record yet" in window.trends.subtitle.text()
+    # GFP-104 rewrote this case: a wholly empty database gets one plain message
+    # and no controls, instead of a protein-specific reason under two dropdowns.
+    assert "No price data yet" in window.trends.subtitle.text()
 
 
 def test_a_filter_that_empties_the_chart_says_so_rather_than_run_a_scrape(window):
