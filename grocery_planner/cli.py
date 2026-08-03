@@ -1439,6 +1439,10 @@ def client_add(
         None, "--desired-weight",
         help="Goal weight the protein target is computed from (uses --unit).",
     ),
+    weekly_budget: float = typer.Option(
+        None, "--weekly-budget",
+        help="Dollars per week. Reported against, never used to pick the plan.",
+    ),
     unit: WeightUnit = typer.Option(
         None, "--unit", "-u", help="Unit of --weight: kg or lb. Never assumed."
     ),
@@ -1464,6 +1468,8 @@ def client_add(
     }
     if factor is not None:
         fields["protein_factor"] = factor
+    if weekly_budget is not None:
+        fields["weekly_budget"] = weekly_budget
     if desired_weight is not None:
         # GFP-132: the target is grams per pound of DESIRED weight. Converted
         # here through the same helper --weight uses, so a goal weight cannot

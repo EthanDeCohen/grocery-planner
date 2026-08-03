@@ -1,0 +1,26 @@
+-- GFP-127: a per-client weekly budget.
+--
+-- WHAT THIS IS NOT, because the first draft of the ticket got it wrong and the
+-- user corrected it three times: THE BUDGET IS NOT AN INPUT TO THE OPTIMISER.
+-- The optimiser keeps doing exactly what it does -- lowest cost per gram of
+-- protein for the target -- and cost remains its OUTPUT. This column is a line
+-- the resulting plan is measured against, nothing more.
+--
+-- A budget-constrained solver could silently under-deliver protein to make a
+-- number fit, which on a tool that computes what somebody eats is the worst
+-- failure available. Keeping the budget out of the solve makes that impossible
+-- rather than merely discouraged.
+--
+-- WEEKLY, not daily, because that is how people shop and how they think about
+-- food money. The daily figure already exists and stays exact; GFP-128 adds the
+-- 7-day view this is compared against.
+--
+-- NULLABLE, and null means "no budget set" rather than zero. A nutritionist who
+-- has not discussed money with a client is in an ordinary state, and a client
+-- silently carrying a budget of $0 would be reported as permanently over it.
+-- Same "absent stays absent, never a guess" rule as the rest of this codebase.
+--
+-- Stored in whole currency units (dollars), REAL, matching how deals.dollar_price
+-- is already stored. No currency column: this app is single-currency today, and
+-- inventing one now would be a column nothing reads.
+ALTER TABLE customers ADD COLUMN weekly_budget REAL;
