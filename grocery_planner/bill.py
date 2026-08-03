@@ -122,7 +122,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Iterable
 
-from . import db, preferences, savings, service, targets
+from . import db, nutrition, preferences, savings, service, targets
 from .customers import Customer, CustomerRepository
 
 # A UI should quote this (or something that says the same thing in fewer
@@ -382,12 +382,18 @@ def _build_bill(
     excluded_deals = len(all_deals) - len(ranked)
 
     if applied_categories:
-        allowed = set(applied_categories)
-        cache: dict[int, str | None] = {}
+        # GFP-134: resolved through nutrition.food_ids_in, which understands
+        # that foods.category holds two taxonomies at once -- broad buckets
+        # ("Meat") beside specific kinds ("chicken") -- and matches on
+        # protein_kind as well.
+        #
+        # Comparing the category STRING here is what made a client who ticked
+        # "chicken" miss the cheapest chicken in the database: Harris Teeter
+        # Drumsticks are filed under "Meat", so they failed a string equality
+        # test and the bill was built from breast at 2.5x the price.
+        allowed_ids = nutrition.food_ids_in(applied_categories, conn=conn)
         candidates = [
-            item
-            for item in ranked
-            if _category_lookup(conn, item.get("food_id"), cache) in allowed
+            item for item in ranked if item.get("food_id") in allowed_ids
         ]
     else:
         candidates = ranked

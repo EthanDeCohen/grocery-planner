@@ -1,0 +1,33 @@
+-- GFP-135: re-run the protein-kind classifier after correcting its rules.
+--
+-- The rules changed (grocery_planner/protein_kind.py): an explicit species name
+-- now beats a cut word, so "Pork Boston Butt Steak" is pork rather than beef.
+-- But protein_kind is STORED, and classify_all deliberately only touches rows
+-- where it IS NULL -- that is what makes it cheap to re-run and is the reason
+-- UNKNOWN is written explicitly instead of left null.
+--
+-- So corrected rules do not reach an existing database on their own. There IS a
+-- manual escape hatch, `gplan nutrition classify --reclassify`, and its help
+-- text even says "use after editing the rules" -- but a nutritionist upgrading
+-- their copy has no reason to know that, and would go on being offered pork
+-- when they ticked beef.
+--
+-- CLEARING THE COLUMN IS SAFE because it is DERIVED DATA. Nothing else writes
+-- protein_kind: it is computed from foods.name by rules that live in code, and
+-- ensure_classified() refills it on the next thing that needs a kind -- which
+-- is every launch of the GUI (GFP-107's cheapest-meat strip) and every
+-- `gplan cheapest`. No user input is being discarded, and nothing hand-edited
+-- lives here.
+--
+-- Measured effect on the dev database: three foods change from beef to pork --
+--     Pork Ham Steak Bnls Smoked Uncured, 8 Ounce
+--     Pork Boston Butt Steak Value Pack
+--     Villari Foods Prime Boneless Pork Ribeye
+-- and nothing else moves. The six other name/kind disagreements that scan
+-- turns up are correct and deliberate: "Chicken of the Sea" tuna is fish,
+-- "Beef Tallow" and plant-based "Beef" are other.
+--
+-- If the rules change again, add another migration like this one. It is two
+-- lines and it is the only thing that makes a rule change reach the people
+-- already running the app.
+UPDATE foods SET protein_kind = NULL;
