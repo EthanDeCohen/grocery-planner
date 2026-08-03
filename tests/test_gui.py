@@ -230,9 +230,10 @@ def test_scrape_dialog_offers_only_stores_with_a_scraper(scrape_dialog):
     assert scrape_dialog.scrape_btn.isEnabled()
 
 
-def test_progress_bar_is_hidden_until_a_scrape_runs(scrape_dialog):
-    assert not scrape_dialog.progress.isVisible()
-    assert scrape_dialog.progress.minimum() == scrape_dialog.progress.maximum() == 0
+def test_there_are_no_rows_until_a_scrape_runs(scrape_dialog):
+    """GFP-103: the single shared progress bar became one bar per run."""
+    assert scrape_dialog._rows == {}
+    assert scrape_dialog.running_stores == []
 
 
 def test_force_is_off_by_default_and_reaches_the_worker(scrape_dialog):
@@ -247,16 +248,21 @@ def test_force_is_off_by_default_and_reaches_the_worker(scrape_dialog):
 
 
 def test_a_finished_scrape_reaches_the_status_bar(window, scrape_dialog):
-    scrape_dialog._on_scrape_done({"stats": {"total": 7, "weekly_ad": 5,
-                                             "digital_coupons": 2}})
-    assert "Stored 7 deals" in scrape_dialog.message.text()
+    scrape_dialog._row_for("foodlion")
+    scrape_dialog._on_done("foodlion", {"stats": {"total": 7, "weekly_ad": 5,
+                                                  "digital_coupons": 2}})
+    assert "Stored 7 deals" in scrape_dialog._rows["foodlion"].status.text()
     assert "Stored 7 deals" in window.statusBar().currentMessage()
-    assert not scrape_dialog.progress.isVisible()
+    # GFP-103: with several runs in flight a bare summary names no store.
+    assert "Food Lion" in window.statusBar().currentMessage()
+    assert not scrape_dialog._rows["foodlion"].running
 
 
 def test_a_failed_scrape_reaches_the_status_bar(window, scrape_dialog):
-    scrape_dialog._on_scrape_failed("flyer 404")
+    scrape_dialog._row_for("foodlion")
+    scrape_dialog._on_failed("foodlion", "flyer 404")
     assert "Scrape failed: flyer 404" in window.statusBar().currentMessage()
+    assert "Scrape failed: flyer 404" in scrape_dialog._rows["foodlion"].status.text()
     assert scrape_dialog.scrape_btn.isEnabled()   # re-armed, not left dead
 
 
