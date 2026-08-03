@@ -279,6 +279,25 @@ _WEIGHT_BASE_UNITS = frozenset({"pound", "lb", "lbs", "ounce", "oz", "kg", "kilo
 
 BASE_URL = "https://www.wholefoodsmarket.com"
 SEARCH_HTML_PATH = "/grocery/search"
+
+# GFP-115: where a product page lives, built from the asin.
+#
+# UNLIKE KROGER, this is CONSTRUCTED rather than read from the payload. The
+# Whole Foods product payload carries no URL field at all -- verified by
+# dumping a live product and walking every string in it recursively; the only
+# URLs anywhere are `productImages` (Amazon media). So the shape had to be
+# established and then confirmed, which the ticket insists on because a guessed
+# pattern that 404s is worse than no link (GFP-38 chose plain text over a dead
+# control for exactly this reason).
+#
+# Confirmed 2026-08-03 in a real browser: /grocery/product/B0787WTY4C returns
+# "Bell & Evans Boneless Skinless Chicken Breast", $6.99/lb, 27 g protein per
+# 4 oz -- the same product this scraper stores, at the same 27401 ZIP.
+# `/product/<asin>` also works but 302s here, so the canonical form is used.
+#
+# As with Kroger, an automated check is NOT possible: httpx is refused by these
+# storefronts, so no test may fetch this URL.
+PRODUCT_PAGE_PATH = "/grocery/product/{asin}"
 SEARCH_DATA_PATH = "/_next/data/{build_id}/grocery/search.json"
 
 # From the GFP-97 credential registry, not restated, so the filename cannot
@@ -649,6 +668,33 @@ def _extract_protein_grams(nutrition_facts: dict[str, Any]) -> float | None:
     return None
 
 
+def product_page_url(asin: str | None) -> str | None:
+    """The storefront product page for an asin, or ``None`` (GFP-115).
+
+    ``None`` for a missing asin rather than a link to a bare host: a link to
+    the homepage is not a link to the product, and the where-to-buy column
+    already degrades to plain text when there is nothing to point at.
+    """
+    cleaned = (asin or "").strip()
+    return f"{BASE_URL}{PRODUCT_PAGE_PATH.format(asin=cleaned)}" if cleaned else None
+
+
+def product_image_url(product: dict[str, Any]) -> str | None:
+    """The first product image, or ``None`` (GFP-115).
+
+    ``productImages`` is a plain list of absolute Amazon media URLs, unlike
+    Kroger's perspective/size tree, so there is no "front" to prefer -- the
+    first entry is what the storefront leads with.
+
+    Carried, never fetched: this app does no network I/O to paint a window
+    (see gui/wheretobuy.py).
+    """
+    for candidate in product.get("productImages") or []:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
 def _find_own_size_text(product: dict[str, Any]) -> str | None:
     """The ``variationsList`` size string for THIS product's own asin.
 
@@ -818,8 +864,11 @@ def product_to_row(
         "valid_to": None,
         "loyalty_required": "N",
         "notes": "; ".join(notes),
-        "source_url": None,
-        "image_url": None,
+        # GFP-115: both from the payload's own asin/images, both None when it
+        # carries neither -- the where-to-buy column degrades to plain text
+        # rather than rendering a dead control.
+        "source_url": product_page_url(asin),
+        "image_url": product_image_url(product),
         "flipp_flyer_id": None,
         "flipp_item_id": None,
         "flipp_coupon_id": None,

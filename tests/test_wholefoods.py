@@ -548,3 +548,44 @@ def test_registered_in_scrapers():
     assert wf.MERCHANT == "Whole Foods Market"
     assert wf.DEFAULT_POSTAL_CODE
     assert callable(wf.scrape)
+
+
+# --------------------------------------------------------------------------- #
+# GFP-115 -- product page and image links
+#
+# The asin below is REAL. https://www.wholefoodsmarket.com/grocery/product/B0787WTY4C
+# was opened in a browser and confirmed to show "Bell & Evans Boneless Skinless
+# Chicken Breast", $6.99/lb, 27 g protein per 4 oz -- the same product this
+# scraper stores. That check cannot be automated: httpx is refused by the
+# storefront, so a test that fetched it would fail for an unrelated reason.
+# --------------------------------------------------------------------------- #
+REAL_ASIN = "B0787WTY4C"
+
+
+def test_the_product_url_uses_the_canonical_grocery_path():
+    assert wf.product_page_url(REAL_ASIN) == (
+        "https://www.wholefoodsmarket.com/grocery/product/B0787WTY4C"
+    )
+
+
+def test_no_asin_means_no_link_rather_than_a_bare_host():
+    """A link to the homepage is not a link to the product (GFP-38)."""
+    assert wf.product_page_url(None) is None
+    assert wf.product_page_url("") is None
+    assert wf.product_page_url("   ") is None
+
+
+def test_the_first_product_image_is_used():
+    product = {"productImages": [
+        "https://m.media-amazon.com/images/I/61fW5t1cdkL.jpg",
+        "https://m.media-amazon.com/images/I/61ZqqoxiP8L.jpg",
+    ]}
+    assert wf.product_image_url(product) == (
+        "https://m.media-amazon.com/images/I/61fW5t1cdkL.jpg"
+    )
+
+
+def test_missing_or_blank_images_are_none():
+    assert wf.product_image_url({}) is None
+    assert wf.product_image_url({"productImages": []}) is None
+    assert wf.product_image_url({"productImages": ["", "  "]}) is None
