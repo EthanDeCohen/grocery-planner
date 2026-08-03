@@ -41,12 +41,33 @@ from .scrapers import SCRAPERS
 from .service import clients as client_service
 from .stores import BY_KEY
 
-# GFP-86: configure logging once, as the process starts. Idempotent, never
-# raises, and degrades to console-only if the log directory cannot be created --
-# diagnostics must not be a reason the app fails to run.
-logs.setup()
-
 app = typer.Typer(add_completion=False, help="Local-first grocery price/deal planner.")
+
+
+@app.callback()
+def _main(
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v",
+        help="Turn console logging up to DEBUG for this run (GFP-87).",
+    ),
+) -> None:
+    """Runs before every command.
+
+    GFP-86 configures logging once, as the process starts: idempotent, never
+    raises, and degrades to console-only if the log directory cannot be
+    created -- diagnostics must not be a reason the app fails to run.
+
+    GFP-87: --verbose is what makes "please reproduce it with logging turned
+    up" a thing a user can actually be asked to do. The FILE always keeps
+    DEBUG; this only changes what reaches the console, because the file is the
+    forensic record and the console is for the person watching.
+    """
+    import logging
+
+    level = logging.DEBUG if verbose else getattr(
+        logging, app_config.log_level(), logging.WARNING
+    )
+    logs.setup(level=level)
 formula_app = typer.Typer(help="Manage user-defined formulas.")
 profile_app = typer.Typer(help="Set/get profile values (used as formula variables).")
 schedule_app = typer.Typer(help="Automatic background refresh (GFP-7).")
@@ -109,6 +130,10 @@ def scrape(
     postal_code: str = typer.Option(
         None, "--postal-code", "-z", help="ZIP for the flyer lookup (default: store's own)."
     ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Scrape and report what WOULD be written, without touching the database.",
+    ),
     force: bool = typer.Option(
         False, "--force",
         help=(
@@ -151,7 +176,17 @@ def scrape(
         # was still due and scrape the same store AGAIN on next launch, which
         # is precisely the double-scrape GFP-105 exists to prevent. A scrape is
         # a scrape whoever started it.
-        result = jobs.run_tracked_scrape(store, postal_code=postal_code, force=force)
+        if dry_run:
+            # Not tracked as a job: a dry run did not scrape FOR the database,
+            # so recording it would make jobs.last_success claim a refresh that
+            # never landed -- and GFP-105 would then skip a real one.
+            result = service.run_scrape(
+                store, postal_code=postal_code, force=force, dry_run=True
+            )
+        else:
+            result = jobs.run_tracked_scrape(
+                store, postal_code=postal_code, force=force
+            )
     except service.ScrapeGuardError as exc:
         # GFP-71: without --force, a guard tripping here used to be a dead
         # end -- nothing user-facing could pass force=True to run_scrape(),
@@ -165,6 +200,15 @@ def scrape(
             fg=typer.colors.YELLOW, err=True,
         )
         raise typer.Exit(1)
+    if result.get("dry_run"):
+        typer.secho(
+            f"DRY RUN — nothing was written. Would have replaced "
+            f"{result['would_replace']} stored row(s) with {result['would_write']} "
+            f"scraped row(s) for {zip_code}.",
+            fg=typer.colors.YELLOW,
+        )
+        raise typer.Exit()
+
     flyer, stats = result["flyer"], result["stats"]
     typer.secho(
         f"Flyer {flyer.get('name')} ({flyer.get('id')}), valid {stats['valid_from']} to "
