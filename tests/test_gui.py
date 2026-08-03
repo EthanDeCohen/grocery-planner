@@ -339,7 +339,7 @@ def test_empty_roster_explains_itself(window):
 def test_roster_lists_clients_with_their_protein_target(window):
     _add("Ana Ruiz", 62.0, "kg")
     window.roster.reload()
-    assert _entries(window.roster.client_list) == ["Ana Ruiz — 99 g/day  (62 kg)"]
+    assert _entries(window.roster.client_list) == ["Ana Ruiz — 109 g/day  (62 kg)"]
 
 
 def test_roster_shows_the_weight_in_the_unit_it_was_entered_in(window):
@@ -439,7 +439,7 @@ def test_selecting_a_client_opens_the_detail_page(window):
 
     assert window.stack.currentWidget() is window.client_page
     assert window.client_page.name_label.text() == "Ana Ruiz"
-    assert "99 g/day" in window.client_page.target_label.text()
+    assert "109 g/day" in window.client_page.target_label.text()
 
 
 def test_back_returns_to_the_roster(window):

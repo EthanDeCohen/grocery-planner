@@ -26,7 +26,7 @@ from typer.testing import CliRunner
 
 from grocery_planner import customers
 from grocery_planner.cli import app
-from grocery_planner.customers import KG_PER_LB, Customer, CustomerRepository
+from grocery_planner.customers import kg_to_lb, KG_PER_LB, Customer, CustomerRepository
 from grocery_planner.service import clients as client_service
 
 runner = CliRunner()
@@ -51,11 +51,12 @@ def test_pounds_are_stored_as_kilograms_and_read_back_as_pounds(env_db):
     # ...and echoed back in the unit the nutritionist typed, exactly.
     assert saved.weight_display == pytest.approx(90.0)
 
-    # And the number the product is about is the 65-ish one, not the 144 a
-    # pounds-as-kilograms read would produce.
+    # And the number the product is about is the 72 a 90 lb client gets, not
+    # the 159 a pounds-as-kilograms read would produce (GFP-132: 0.8 g per
+    # POUND of desired weight; 90 lb x 0.8 = 72).
     target = client_service.client_target(saved)
-    assert target.daily_grams == pytest.approx(90 * KG_PER_LB * 1.6)
-    assert 60 < target.daily_grams < 70
+    assert target.daily_grams == pytest.approx(90 * 0.8)
+    assert 70 < target.daily_grams < 75
 
     reread = client_service.get_client(saved.id)
     assert reread.weight_kg == pytest.approx(saved.weight_kg)
@@ -73,8 +74,8 @@ def test_the_same_number_in_kg_and_lb_are_different_clients(env_db):
 
     kg_target = client_service.client_target(in_kg).daily_grams
     lb_target = client_service.client_target(in_lb).daily_grams
-    assert kg_target == pytest.approx(144.0)
-    assert lb_target == pytest.approx(65.3, abs=0.1)
+    assert kg_target == pytest.approx(kg_to_lb(90) * 0.8)
+    assert lb_target == pytest.approx(72.0, abs=0.1)
 
 
 def test_editing_a_weight_converts_exactly_as_create_does(env_db):
@@ -119,7 +120,7 @@ def test_changing_only_the_unit_restates_the_weight_it_does_not_reinterpret_it(e
     assert switched.weight_unit == "lb"
     assert switched.weight_display == pytest.approx(198.4, abs=0.1)
     # The protein target is a property of the mass, so it did not move either.
-    assert client_service.client_target(switched).daily_grams == pytest.approx(144.0)
+    assert client_service.client_target(switched).daily_grams == pytest.approx(kg_to_lb(90) * 0.8)
 
 
 def test_restate_weight_round_trips_without_float_dust(env_db):
@@ -424,7 +425,7 @@ def test_the_gui_add_dialog_stores_pounds_as_kilograms(window):
     assert saved.weight_kg == pytest.approx(90 * KG_PER_LB)
     assert saved.weight_unit == "lb"
     assert saved.weight_display == pytest.approx(90.0)
-    assert client_service.client_target(saved).daily_grams == pytest.approx(65.3, abs=0.1)
+    assert client_service.client_target(saved).daily_grams == pytest.approx(72.0, abs=0.1)
 
 
 def test_the_gui_edit_dialog_round_trips_a_pounds_client_unchanged(window):

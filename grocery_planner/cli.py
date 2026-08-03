@@ -1435,11 +1435,16 @@ def client_show(
 def client_add(
     name: str = typer.Argument(..., help="The client's full name."),
     weight: float = typer.Option(None, "--weight", "-w", help="Body weight (needs --unit)."),
+    desired_weight: float = typer.Option(
+        None, "--desired-weight",
+        help="Goal weight the protein target is computed from (uses --unit).",
+    ),
     unit: WeightUnit = typer.Option(
         None, "--unit", "-u", help="Unit of --weight: kg or lb. Never assumed."
     ),
     factor: float = typer.Option(
-        None, "--factor", "-f", help="Grams of protein per kg of body weight per day."
+        None, "--factor", "-f",
+        help="Protein g per POUND of desired weight per day (0.8-1.0, GFP-132)."
     ),
     height_cm: float = typer.Option(None, "--height-cm", help="Height in centimetres."),
     age: int = typer.Option(None, "--age"),
@@ -1459,6 +1464,24 @@ def client_add(
     }
     if factor is not None:
         fields["protein_factor"] = factor
+    if desired_weight is not None:
+        # GFP-132: the target is grams per pound of DESIRED weight. Converted
+        # here through the same helper --weight uses, so a goal weight cannot
+        # be stored in different units from the current one -- and refused
+        # without a unit for the same reason a bare --weight is: 150 lb read
+        # as 150 kg is a 2.2x error, and it is no less wrong for a goal.
+        if unit is None:
+            typer.secho(
+                "--desired-weight needs --unit too. A goal weight without a "
+                "unit is a guess, and 150 lb read as 150 kg is a 2.2x "
+                "protein-target error.",
+                fg=typer.colors.RED, err=True,
+            )
+            raise typer.Exit(2)
+        from .customers import lb_to_kg
+        fields["desired_weight_kg"] = (
+            lb_to_kg(desired_weight) if unit.value == "lb" else desired_weight
+        )
     try:
         saved = client_service.create_client(
             name,
@@ -1489,7 +1512,10 @@ def client_edit(
     clear_weight: bool = typer.Option(
         False, "--clear-weight", help="Remove the weight (and so the protein target)."
     ),
-    factor: float = typer.Option(None, "--factor", "-f", help="Protein g per kg per day."),
+    factor: float = typer.Option(
+        None, "--factor", "-f",
+        help="Protein g per POUND of desired weight per day (0.8-1.0).",
+    ),
     height_cm: float = typer.Option(None, "--height-cm"),
     age: int = typer.Option(None, "--age"),
     sex: str = typer.Option(None, "--sex"),

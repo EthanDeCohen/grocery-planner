@@ -53,7 +53,13 @@ from typing import Any
 from simpleeval import simple_eval
 
 from . import db, formulas
-from .customers import Customer, CustomerRepository
+from .customers import (
+    MAX_PROTEIN_FACTOR,
+    MIN_PROTEIN_FACTOR,
+    Customer,
+    CustomerRepository,
+    kg_to_lb,
+)
 
 DAYS_PER_WEEK = 7
 
@@ -67,7 +73,26 @@ FORMULA_NAME = "protein_target_daily"
 # Used only when no FORMULA_NAME row exists yet -- the ticket's baseline
 # g/kg formula, expressed as data rather than a literal Python multiply so
 # the "no hard-coded multiplier" rule holds even on a formula-free DB.
-DEFAULT_FORMULA_EXPRESSION = "weight_kg * protein_factor"
+#
+# GFP-132 CORRECTED THIS. It was ``weight_kg * protein_factor`` -- grams per
+# KILOGRAM of CURRENT weight -- and it was wrong twice over. The nutritionist's
+# formula is:
+#
+#     protein (g/day) = 0.8 to 1.0 grams per POUND of DESIRED body weight
+#
+# so a client who wants to weigh 150 lb eats 120-150 g/day.
+#
+# The expression is written in POUNDS, deliberately, even though the database
+# stores kilograms. Storing the factor in g/kg would mean 1.7637 -- a number
+# that is a unit conversion hiding inside a user-editable field, and the first
+# person to read it cannot tell whether it is a clinical judgement or an
+# artefact of the metric system. In pounds the nutritionist says "point eight"
+# and types 0.8. Nobody converts anything by hand, which is where unit bugs
+# come from.
+#
+# GFP-89's rule holds and is what makes this safe: KG_PER_LB is a DEFINITION
+# and lives in code as a constant; the FACTOR is a threshold and stays data.
+DEFAULT_FORMULA_EXPRESSION = "desired_weight_lb * protein_factor"
 
 # The customer-specific variable names this module supplies to a
 # FORMULA_NAME formula, over and above the live profile context (see
@@ -76,7 +101,11 @@ DEFAULT_FORMULA_EXPRESSION = "weight_kg * protein_factor"
 # elsewhere (the GUI's formula editor) can derive its probe from what this
 # module actually supplies rather than hand-maintaining a second list that
 # can drift.
-PROTEIN_TARGET_VARS = ("weight_kg", "protein_factor")
+# ``desired_weight_lb`` is DERIVED, never stored -- the database keeps one
+# canonical unit (kilograms) and this is computed at read time. ``weight_kg``
+# stays available so a nutritionist's own saved formula that used it keeps
+# working.
+PROTEIN_TARGET_VARS = ("weight_kg", "desired_weight_lb", "protein_factor")
 
 
 @dataclass(frozen=True)
@@ -93,10 +122,78 @@ class ProteinTarget:
     daily_unit: str = GRAMS_PER_DAY
     weekly_unit: str = GRAMS_PER_WEEK
 
+    # ------------------------------------------------------------------ #
+    # GFP-132: the prescription is a RANGE, not a point.
+    #
+    # "0.8 or 1 g per pound of desired body weight" -- a client aiming for
+    # 150 lb eats 120-150 g/day. The app used to flatten that to a single
+    # number it had effectively invented. Both ends are carried now, and
+    # ``daily_grams`` remains whatever the client's own factor produces --
+    # the nutritionist's chosen point INSIDE the band, not a recomputation
+    # of it.
+    #
+    # Nullable because a saved custom formula (GFP-64) may express something
+    # that has no band at all -- an age- or activity-based rule, say. In that
+    # case there is one number and no range, and saying so beats inventing
+    # ends for it.
+    # ------------------------------------------------------------------ #
+    daily_low_grams: float | None = None
+    daily_high_grams: float | None = None
+    #: "desired" | "current" | "none" -- WHICH weight this was computed from,
+    #: so a caller can say so rather than implying it was the desired one.
+    weight_basis: str = "none"
+
+    @property
+    def has_range(self) -> bool:
+        return self.daily_low_grams is not None and self.daily_high_grams is not None
+
+    @property
+    def in_range(self) -> bool | None:
+        """Is the chosen daily figure inside the prescribed band?
+
+        ``None`` when there is no band. A client whose factor was set before
+        GFP-132's bounds existed can legitimately sit outside it; that is
+        worth showing, not hiding.
+        """
+        if not self.has_range:
+            return None
+        return self.daily_low_grams <= self.daily_grams <= self.daily_high_grams
+
+
+def target_weight_kg(customer: Customer) -> tuple[float | None, str]:
+    """The weight the target is computed from, and which one it is.
+
+    Returns ``(kilograms, "desired"|"current")``, or ``(None, "none")``.
+
+    THE FALLBACK IS THE POINT. The nutritionist's formula is stated on DESIRED
+    weight, but a client whose goal weight has not been discussed yet is an
+    ordinary state rather than a broken record. Falling back to current weight
+    keeps the app useful for them -- and returning WHICH was used means the
+    caller can say so, instead of presenting a number computed from one thing
+    as though it came from the other.
+
+    For a client maintaining their weight the two coincide and the distinction
+    never surfaces. For a client cutting or gaining it is the whole difference.
+    """
+    if customer.desired_weight_kg is not None:
+        return customer.desired_weight_kg, "desired"
+    if customer.weight_kg is not None:
+        return customer.weight_kg, "current"
+    return None, "none"
+
 
 def _customer_vars(customer: Customer) -> dict[str, Any]:
-    """This customer's values for each name in :data:`PROTEIN_TARGET_VARS`."""
-    return {name: getattr(customer, name) for name in PROTEIN_TARGET_VARS}
+    """This customer's values for each name in :data:`PROTEIN_TARGET_VARS`.
+
+    ``desired_weight_lb`` is derived here rather than stored, so kilograms
+    stay the single canonical unit in the database.
+    """
+    kilograms, _which = target_weight_kg(customer)
+    return {
+        "weight_kg": customer.weight_kg,
+        "desired_weight_lb": None if kilograms is None else kg_to_lb(kilograms),
+        "protein_factor": customer.protein_factor,
+    }
 
 
 def _formula_context(conn: sqlite3.Connection, customer: Customer) -> dict[str, Any]:
@@ -108,6 +205,21 @@ def _formula_context(conn: sqlite3.Connection, customer: Customer) -> dict[str, 
     shadowed by the more general one.
     """
     return {**formulas._profile_context(conn), **_customer_vars(customer)}
+
+
+def _has_custom_formula(conn: sqlite3.Connection) -> bool:
+    """Has a nutritionist saved their own protein_target_daily formula?
+
+    Decides whether the prescribed 0.8-1.0 band is meaningful. It is a band on
+    a FACTOR, so it only describes the default formula; a custom rule (GFP-64
+    allows an age- or activity-based one) may have no band at all, and drawing
+    ends around it would be inventing a prescription nobody gave.
+
+    Asks the formulas table rather than trying to evaluate and catching -- an
+    evaluation failure could mean a broken expression rather than an absent
+    one, and those must not be conflated.
+    """
+    return any(row["name"] == FORMULA_NAME for row in formulas.list_formulas(conn))
 
 
 def _daily_grams(conn: sqlite3.Connection, customer: Customer) -> float:
@@ -137,11 +249,28 @@ def protein_target_for(
     pounds-or-kg-unspecified weight in because ``Customer`` doesn't expose
     one for math (see ``grocery_planner/customers.py``).
     """
-    if customer.weight_kg is None:
+    kilograms, basis = target_weight_kg(customer)
+    if kilograms is None:
         return None
     own = conn or db.connect()
     daily = _daily_grams(own, customer)
-    return ProteinTarget(daily_grams=daily, weekly_grams=daily * DAYS_PER_WEEK)
+
+    # The band, from the nutritionist's own ends applied to the same weight
+    # this client's figure was computed from. Only meaningful while the
+    # default formula is in play: a custom formula (GFP-64) may not be a
+    # simple factor at all, so inventing ends for it would be a fabrication.
+    low = high = None
+    if not _has_custom_formula(own):
+        pounds = kg_to_lb(kilograms)
+        low, high = pounds * MIN_PROTEIN_FACTOR, pounds * MAX_PROTEIN_FACTOR
+
+    return ProteinTarget(
+        daily_grams=daily,
+        weekly_grams=daily * DAYS_PER_WEEK,
+        daily_low_grams=low,
+        daily_high_grams=high,
+        weight_basis=basis,
+    )
 
 
 def protein_target(

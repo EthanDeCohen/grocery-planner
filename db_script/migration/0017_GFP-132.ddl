@@ -1,0 +1,84 @@
+-- GFP-132: the protein target was computed from the wrong weight, in the
+-- wrong units.
+--
+-- The nutritionist's actual formula is 0.8 to 1.0 grams of protein per POUND
+-- of DESIRED body weight. The app computed weight_kg * 1.6 -- per kilogram, of
+-- CURRENT weight. Measured, that is 9.3% below the bottom of her range and 27%
+-- below the top, for every client, always.
+--
+-- This migration does the two data parts of that fix. The formula itself lives
+-- in grocery_planner/targets.py.
+--
+-- ---------------------------------------------------------------------------
+-- 1. DESIRED WEIGHT, which the schema had no room for at all.
+--
+-- For a client maintaining, desired and current coincide and the distinction
+-- is invisible. For a client cutting or gaining it is the entire point, and the
+-- error ran in opposite directions: someone at 180 lb aiming for 150 was
+-- over-prescribed, someone at 150 aiming for 180 was under-prescribed badly
+-- (109 g/day against a correct 144-180).
+--
+-- Nullable on purpose. A client whose goal weight has not been discussed yet is
+-- a normal state, not a broken record, and targets.py falls back to current
+-- weight and says which it used -- the same "absent stays absent, never a
+-- guess" rule the rest of this codebase follows.
+--
+-- Stored in KILOGRAMS like weight_kg, so the database keeps ONE canonical unit.
+-- The pounds the formula wants are derived at read time, never stored twice.
+-- ---------------------------------------------------------------------------
+ALTER TABLE customers ADD COLUMN desired_weight_kg REAL;
+
+-- ---------------------------------------------------------------------------
+-- 2. THE UNITS OF protein_factor CHANGE MEANING, and this is the part that
+--    silently corrupts data if it is skipped.
+--
+-- Existing rows hold values meant as GRAMS PER KILOGRAM (default 1.6). The
+-- formula now reads this column as GRAMS PER POUND. The stored number does not
+-- change by itself -- its INTERPRETATION does -- so leaving these rows alone
+-- would cut every client's target to about 45% with nothing in the data to
+-- show it happened.
+--
+-- 1.6 g/kg is 0.7257 g/lb, which is BELOW the 0.8 floor that GFP-133's slider
+-- and text box now enforce. So a straight unit conversion would ALSO leave
+-- every existing client outside the range the UI is willing to display -- the
+-- database and the control disagreeing from the first launch after upgrade.
+--
+-- SO EVERY ROW IS CONVERTED, not just the ones holding the old default.
+--
+-- An earlier draft of this migration touched only protein_factor = 1.6, on the
+-- reasoning that a hand-set factor is a clinical judgement and rewriting it
+-- would be presumptuous. TESTING AGAINST A REAL PRE-MIGRATION DATABASE SHOWED
+-- THAT IS BACKWARDS. A client sitting at 1.8 did not choose "1.8 grams per
+-- pound" -- that value never meant pounds. Left alone it would be reinterpreted
+-- as 1.8 g/lb and put them on 325 g/day instead of 148. Preserving the number
+-- destroys the intent; converting the number preserves it.
+--
+-- And the conversion is exactly target-preserving, which is the neat part:
+--
+--     old:  weight_kg * f
+--     new:  (weight_kg / KG_PER_LB) * (f * KG_PER_LB)     <- identical
+--
+-- So multiplying every stored factor by KG_PER_LB leaves every client's daily
+-- target EXACTLY where it was. Verified on real rows: a client at 1.8 g/kg and
+-- 82 kg computes 147.6 g/day before and 147.6 g/day after.
+--
+-- CLAMPING is then the only thing that actually changes anybody's number, and
+-- it only bites where the converted value falls outside the band GFP-133
+-- enforces:
+--
+--     1.6 g/kg -> 0.726 g/lb -> clamped UP to 0.80   (the old default)
+--     1.8 g/kg -> 0.816 g/lb -> unchanged, in range
+--     1.4 g/kg -> 0.635 g/lb -> clamped UP to 0.80
+--
+-- Every clamp is UPWARD, because the old default was below the nutritionist's
+-- floor. Targets rise; none fall. On a tool that computes what somebody eats,
+-- that is the direction to err in, and it is also simply more correct -- 0.726
+-- was never a number she endorsed.
+--
+-- KG_PER_LB is written out as a literal here because a .ddl cannot import
+-- Python. It MUST stay identical to customers.KG_PER_LB; a test asserts that.
+-- ---------------------------------------------------------------------------
+UPDATE customers
+   SET protein_factor = MAX(0.8, MIN(1.0, protein_factor * 0.45359237)),
+       updated_at     = STRFTIME('%Y-%m-%dT%H:%M:%SZ', 'now')
+ WHERE protein_factor IS NOT NULL;

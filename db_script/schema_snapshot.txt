@@ -20,6 +20,7 @@ TABLE customers
   age: INTEGER
   created_at: TEXT NOT NULL DEFAULT datetime('now')
   deleted_at: TEXT
+  desired_weight_kg: REAL
   goal: TEXT
   height_cm: REAL
   id: INTEGER PK

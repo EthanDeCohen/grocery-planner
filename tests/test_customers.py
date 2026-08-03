@@ -104,7 +104,9 @@ def test_create_with_no_weight_leaves_it_none():
 
 def test_create_defaults_protein_factor():
     c = Customer.create("Jamie")
-    assert c.protein_factor == 1.6
+    # GFP-132: 0.8 g per POUND of desired weight, the conservative end of
+    # the nutritionist's 0.8-1.0 band. Was 1.6 g/kg = 0.73 g/lb.
+    assert c.protein_factor == 0.8
 
 
 def test_weight_display_echoes_original_unit():
