@@ -98,7 +98,7 @@ def test_loading_a_client_fills_every_column(page):
 
     assert page.show_client(ana.id) is True
     assert page.name_label.text() == "Ana Ruiz"
-    assert "99 g/day" in page.target_label.text()
+    assert "109 g/day" in page.target_label.text()
     assert page.biometrics.customer.id == ana.id
     assert page.bill_panel.customer_id == ana.id
     assert len(_entries(page.bill_panel.lines_list)) == 1
@@ -125,10 +125,10 @@ def test_a_biometric_save_recomputes_the_bill_immediately(page):
     page.show_client(ana.id)
     before = page.bill_panel.comparison.constrained.total_cost
 
-    page.biometrics.weight_spin.setValue(100.0)   # 160 g/day instead of 99
+    page.biometrics.weight_spin.setValue(100.0)   # 176 g/day instead of 99
     page.biometrics.on_save()
 
-    assert "160 g/day" in page.target_label.text()
+    assert "176 g/day" in page.target_label.text()
     assert page.bill_panel.comparison.constrained.total_cost > before
 
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from grocery_planner import bill, preferences, savings
-from grocery_planner.customers import Customer, CustomerRepository
+from grocery_planner.customers import KG_PER_LB, Customer, CustomerRepository
 
 GRAMS_PER_OZ = savings.GRAMS_PER_OZ
 
@@ -43,7 +43,20 @@ def _insert_priced_deal(conn, store, item_name, price, food_id, valid_to="2099-0
     )
 
 
-def _make_customer(conn, weight_kg, protein_factor=1.6, save=False):
+#: GFP-132 changed the target formula from grams-per-KILOGRAM of current
+#: weight to grams-per-POUND of desired weight. These tests are about the
+#: BILL, not the target, so the factor is converted by exactly the unit
+#: factor -- which leaves every client in this file on precisely the same
+#: daily target as before (50 kg still gives 80 g/day) and keeps the fixture
+#: deals sized correctly against it.
+#:
+#: Deliberately below GFP-133's 0.8 floor: that band is enforced by the UI,
+#: not the model, and pinning these tests to a real clinical value would
+#: change every expected gram figure for reasons unrelated to billing.
+_LEGACY_EQUIVALENT_FACTOR = 1.6 * KG_PER_LB          # 0.72575 g/lb
+
+
+def _make_customer(conn, weight_kg, protein_factor=_LEGACY_EQUIVALENT_FACTOR, save=False):
     customer = Customer.create(
         "Test Client", weight_kg=weight_kg, weight_unit="kg", protein_factor=protein_factor
     )
@@ -58,7 +71,8 @@ def test_known_arithmetic_end_to_end(conn):
     _insert_priced_deal(conn, "foodlion", "Chicken Breast 16 oz", 5.00, food_id)
     conn.commit()
 
-    # weight_kg=50 * protein_factor=1.6 -> 80 g/day target.
+    # 50 kg = 110.23 lb, x 0.72575 g/lb -> 80 g/day target (unchanged by
+    # GFP-132; see _LEGACY_EQUIVALENT_FACTOR).
     customer = _make_customer(conn, weight_kg=50.0)
     result = bill.daily_bill_for(customer, conn=conn)
 

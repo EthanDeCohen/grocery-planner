@@ -65,7 +65,24 @@ KG = "kg"
 LB = "lb"
 _VALID_UNITS = {KG, LB}
 
-DEFAULT_PROTEIN_FACTOR = 1.6
+#: Grams of protein per POUND of DESIRED body weight, per day (GFP-132).
+#:
+#: From the nutritionist: "0.8 or 1 g of protein per pound of desired body
+#: weight. So if you want to weigh 150 you will eat 120-150 g a day."
+#:
+#: WAS 1.6, meant as grams per KILOGRAM of CURRENT weight -- wrong unit and
+#: wrong weight. 1.6 g/kg is 0.73 g/lb, below the bottom of her range, so the
+#: app under-prescribed every client by 9-27%.
+#:
+#: The default is the CONSERVATIVE end of her range. A tool that computes what
+#: somebody eats should not pick the top of a professional's band on their
+#: behalf.
+DEFAULT_PROTEIN_FACTOR = 0.8
+
+#: The band the nutritionist prescribed. Hard limits, per GFP-133 -- the slider
+#: spans exactly this and the text box refuses anything outside it.
+MIN_PROTEIN_FACTOR = 0.8
+MAX_PROTEIN_FACTOR = 1.0
 
 # Exact international avoirdupois pound (the 1959 international
 # yard-and-pound agreement definition). Deliberately its own constant,
@@ -161,6 +178,10 @@ class Customer:
     sex: str | None = None
     activity_level: str | None = None
     goal: str | None = None
+    #: GFP-132. Nullable: a client whose goal weight has not been discussed is
+    #: a normal state, not a broken record. targets.py falls back to
+    #: ``weight_kg`` and says which it used.
+    desired_weight_kg: float | None = None
     protein_factor: float = DEFAULT_PROTEIN_FACTOR
     notes: str | None = None
     created_at: str | None = None
@@ -226,7 +247,7 @@ class Customer:
 
 _COLUMNS = (
     "id, name, weight_kg, weight_unit, height_cm, age, sex, activity_level, "
-    "goal, protein_factor, notes, created_at, updated_at, deleted_at"
+    "goal, desired_weight_kg, protein_factor, notes, created_at, updated_at, deleted_at"
 )
 
 
@@ -241,6 +262,7 @@ def _row_to_customer(row: sqlite3.Row) -> Customer:
         sex=row["sex"],
         activity_level=row["activity_level"],
         goal=row["goal"],
+        desired_weight_kg=row["desired_weight_kg"],
         protein_factor=row["protein_factor"],
         notes=row["notes"],
         created_at=row["created_at"],
@@ -319,12 +341,13 @@ class CustomerRepository:
             cur = own.execute(
                 "INSERT INTO customers("
                 "name, weight_kg, weight_unit, height_cm, age, sex, "
-                "activity_level, goal, protein_factor, notes, created_at, updated_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "activity_level, goal, desired_weight_kg, protein_factor, notes, created_at, updated_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     customer.name, customer.weight_kg, customer.weight_unit,
                     customer.height_cm, customer.age, customer.sex,
-                    customer.activity_level, customer.goal, customer.protein_factor,
+                    customer.activity_level, customer.goal, customer.desired_weight_kg,
+                    customer.protein_factor,
                     customer.notes, now, now,
                 ),
             )
@@ -333,12 +356,13 @@ class CustomerRepository:
 
         own.execute(
             "UPDATE customers SET name=?, weight_kg=?, weight_unit=?, height_cm=?, "
-            "age=?, sex=?, activity_level=?, goal=?, protein_factor=?, notes=?, "
+            "age=?, sex=?, activity_level=?, goal=?, desired_weight_kg=?, protein_factor=?, notes=?, "
             "updated_at=? WHERE id=?",
             (
                 customer.name, customer.weight_kg, customer.weight_unit,
                 customer.height_cm, customer.age, customer.sex,
-                customer.activity_level, customer.goal, customer.protein_factor,
+                customer.activity_level, customer.goal, customer.desired_weight_kg,
+                customer.protein_factor,
                 customer.notes, now, customer.id,
             ),
         )

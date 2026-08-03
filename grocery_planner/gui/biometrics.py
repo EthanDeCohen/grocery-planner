@@ -75,6 +75,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QSlider,
     QLineEdit,
     QPushButton,
     QSpinBox,
@@ -83,7 +84,17 @@ from PySide6.QtWidgets import (
 )
 
 from .. import db, targets
-from ..customers import DEFAULT_PROTEIN_FACTOR, KG, LB, Customer, CustomerRepository, from_kg, to_kg
+from ..customers import (
+    DEFAULT_PROTEIN_FACTOR,
+    KG,
+    LB,
+    MAX_PROTEIN_FACTOR,
+    MIN_PROTEIN_FACTOR,
+    Customer,
+    CustomerRepository,
+    from_kg,
+    to_kg,
+)
 
 # Diameter of the default avatar disc, in pixels. Small enough to sit beside
 # a single line of name text rather than dominating the column.
@@ -158,6 +169,14 @@ def _initials_pixmap(initials: str, diameter: int = _AVATAR_DIAMETER) -> QPixmap
     painter.drawText(pixmap.rect(), Qt.AlignCenter, initials)
     painter.end()
     return pixmap
+
+
+#: QSlider is integer-only, so the 0.8-1.0 band is scaled by this and divided
+#: back on read. 100 gives 0.01 steps -- 21 stops across the band.
+FACTOR_SCALE = 100
+
+#: One step of the spin box, matching one step of the slider.
+FACTOR_STEP = 1 / FACTOR_SCALE
 
 
 class BiometricsPanel(QWidget):
@@ -254,13 +273,57 @@ class BiometricsPanel(QWidget):
         self.goal_edit.setPlaceholderText("e.g. maintenance / cut / bulk")
         form.addRow("Goal:", self.goal_edit)
 
+        # GFP-133: a slider ACROSS the prescribed band, with a box bound to it
+        # both ways. A spin box gives no sense of where 0.85 sits between the
+        # nutritionist's ends, and stepping 0.8 -> 1.0 by arrows is 20 clicks.
+        #
+        # HARD LIMITS. The user was explicit: "hard stop at 1.0, it will be .8
+        # to 1." Both controls refuse anything outside; there is no path in the
+        # UI to a value the nutritionist did not prescribe.
         self.factor_spin = QDoubleSpinBox()
-        self.factor_spin.setRange(0.1, 5.0)
-        self.factor_spin.setSingleStep(0.1)
+        self.factor_spin.setRange(MIN_PROTEIN_FACTOR, MAX_PROTEIN_FACTOR)
+        self.factor_spin.setSingleStep(FACTOR_STEP)
         self.factor_spin.setDecimals(2)
+        # Directly, not via _set_factor: the slider does not exist yet.
         self.factor_spin.setValue(DEFAULT_PROTEIN_FACTOR)
-        self.factor_spin.setToolTip("Grams of protein per kilogram of body weight per day.")
-        form.addRow("Protein factor:", self.factor_spin)
+        self.factor_spin.setToolTip(
+            "Grams of protein per POUND of desired body weight, per day.\n"
+            f"{MIN_PROTEIN_FACTOR} to {MAX_PROTEIN_FACTOR} -- the prescribed range."
+        )
+
+        # QSlider is integer-only, so the band is scaled by FACTOR_SCALE and
+        # divided back on read. 0.01 steps give 21 stops, which is plenty for a
+        # clinical judgement and coarse enough to land on round numbers.
+        self.factor_slider = QSlider(Qt.Horizontal)
+        self.factor_slider.setRange(
+            round(MIN_PROTEIN_FACTOR * FACTOR_SCALE),
+            round(MAX_PROTEIN_FACTOR * FACTOR_SCALE),
+        )
+        self.factor_slider.setValue(round(DEFAULT_PROTEIN_FACTOR * FACTOR_SCALE))
+        self.factor_slider.setTickPosition(QSlider.TicksBelow)
+        self.factor_slider.setTickInterval(round(0.05 * FACTOR_SCALE))
+        self.factor_slider.setToolTip(self.factor_spin.toolTip())
+
+        factor_row = QWidget()
+        factor_layout = QHBoxLayout(factor_row)
+        factor_layout.setContentsMargins(0, 0, 0, 0)
+        factor_layout.addWidget(self.factor_slider, stretch=1)
+        factor_layout.addWidget(self.factor_spin)
+        form.addRow("Protein factor:", factor_row)
+
+        # The ends, in grams for THIS client -- the number a nutritionist is
+        # actually choosing is "131 g/day", not "0.87". Filled by
+        # _recompute_headline once a client is loaded.
+        self.factor_ends = QLabel("")
+        self.factor_ends.setStyleSheet("color: #666;")
+        form.addRow("", self.factor_ends)
+
+        # Two-way binding. Guarded, because slider -> box -> slider -> box is
+        # the classic infinite bounce in this widget pair, and it shows up as
+        # the value crawling or the cursor jumping while you type.
+        self._syncing_factor = False
+        self.factor_slider.valueChanged.connect(self._factor_slider_moved)
+        self.factor_spin.valueChanged.connect(self._factor_box_edited)
 
         self.notes_edit = QLineEdit()
         self.notes_edit.setPlaceholderText("Notes")
@@ -298,7 +361,8 @@ class BiometricsPanel(QWidget):
         so a load that fails clears rather than leaves what was there.
         """
         self.customer = None
-        for widget in (self.weight_spin, self.unit_box, self.factor_spin):
+        for widget in (self.weight_spin, self.unit_box, self.factor_spin,
+                       self.factor_slider):
             widget.blockSignals(True)
         self.name_edit.clear()
         self.weight_spin.setValue(0.0)
@@ -308,9 +372,10 @@ class BiometricsPanel(QWidget):
         self.sex_edit.clear()
         self.activity_edit.clear()
         self.goal_edit.clear()
-        self.factor_spin.setValue(DEFAULT_PROTEIN_FACTOR)
+        self._set_factor(DEFAULT_PROTEIN_FACTOR)
         self.notes_edit.clear()
-        for widget in (self.weight_spin, self.unit_box, self.factor_spin):
+        for widget in (self.weight_spin, self.unit_box, self.factor_spin,
+                       self.factor_slider):
             widget.blockSignals(False)
         self._active_unit = KG
         self._set_avatar("")
@@ -351,7 +416,7 @@ class BiometricsPanel(QWidget):
         self.sex_edit.setText(customer.sex or "")
         self.activity_edit.setText(customer.activity_level or "")
         self.goal_edit.setText(customer.goal or "")
-        self.factor_spin.setValue(customer.protein_factor)
+        self._set_factor(customer.protein_factor)
         self.notes_edit.setText(customer.notes or "")
 
         self._set_avatar(customer.name)
@@ -388,6 +453,37 @@ class BiometricsPanel(QWidget):
             deleted_at=self.customer.deleted_at if self.customer else None,
         )
 
+    def _factor_slider_moved(self, scaled: int) -> None:
+        """Slider -> box. Guarded against the bounce back."""
+        if self._syncing_factor:
+            return
+        self._syncing_factor = True
+        try:
+            self.factor_spin.setValue(scaled / FACTOR_SCALE)
+        finally:
+            self._syncing_factor = False
+        self._recompute_headline()
+
+    def _factor_box_edited(self, value: float) -> None:
+        """Box -> slider. Same guard, opposite direction."""
+        if self._syncing_factor:
+            return
+        self._syncing_factor = True
+        try:
+            self.factor_slider.setValue(round(value * FACTOR_SCALE))
+        finally:
+            self._syncing_factor = False
+        self._recompute_headline()
+
+    def _set_factor(self, value: float) -> None:
+        """Move both controls at once, without either triggering the other."""
+        self._syncing_factor = True
+        try:
+            self.factor_spin.setValue(value)
+            self.factor_slider.setValue(round(value * FACTOR_SCALE))
+        finally:
+            self._syncing_factor = False
+
     def _recompute_headline(self, *_args: object) -> None:
         """Redraw the headline from the current draft form state.
 
@@ -406,9 +502,33 @@ class BiometricsPanel(QWidget):
             self.headline_detail.setText(
                 "No weight on file, so there is no protein target to compute."
             )
+            self.factor_ends.setText("")
             return
         self.headline_value.setText(f"{target.daily_grams:.0f} {target.daily_unit}")
         self.headline_detail.setText(f"{target.weekly_grams:.0f} {target.weekly_unit}")
+
+        # GFP-133: label the slider's ends in GRAMS for this client. The number
+        # a nutritionist is choosing is "131 g/day", not "0.87" -- the factor is
+        # only the means, and a slider whose ends are bare decimals makes them
+        # do the arithmetic themselves.
+        #
+        # Also says WHICH weight the target came from (GFP-132). Falling back to
+        # current weight is fine; doing it silently is not, because for a client
+        # cutting or gaining the two give very different answers.
+        if target.has_range:
+            basis = {
+                "desired": "goal weight",
+                "current": "current weight (no goal weight set)",
+            }.get(target.weight_basis, "")
+            self.factor_ends.setText(
+                f"{MIN_PROTEIN_FACTOR} = {target.daily_low_grams:.0f} g/day"
+                f"   ·   {MAX_PROTEIN_FACTOR} = {target.daily_high_grams:.0f} g/day"
+                + (f"   ·   from {basis}" if basis else "")
+            )
+        else:
+            # A saved custom formula (GFP-64) may not be a factor at all, so
+            # there are no ends to label.
+            self.factor_ends.setText("Using your own saved formula.")
 
     def _on_unit_changed(self, _index: int) -> None:
         """kg<->lb converts the displayed number; it never reinterprets it.
