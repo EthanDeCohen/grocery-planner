@@ -9,7 +9,15 @@ import sys
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
-hiddenimports = collect_submodules("apscheduler")
+hiddenimports = collect_submodules("apscheduler") + [
+    # GFP-80: Qt WebEngine, for in-app Whole Foods session minting. Named
+    # explicitly because PyInstaller's analysis only reaches it through a
+    # deferred import inside the minting dialog -- which is deliberate, so the
+    # 195 MB Chromium is not loaded by every launch of the app.
+    "PySide6.QtWebEngineCore",
+    "PySide6.QtWebEngineWidgets",
+    "PySide6.QtWebChannel",
+]
 # db_script ships the .ddl/.dml schema scripts (GFP-59); see gplan.spec for
 # why this must be explicit rather than assumed to "just come along". Same
 # reasoning covers grocery_planner/data/*.json, GFP-24's vendored USDA snapshot.
@@ -30,11 +38,25 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # Qt modules this app never touches; dropping them saves ~100 MB.
+    # Qt modules this app never touches.
+    #
+    # QtWebEngine WAS excluded here, and that exclusion is what kept this
+    # binary at 50.6 MB. GFP-80 removes it deliberately: the user chose in-app
+    # Whole Foods session minting over a copy-paste walkthrough, with the
+    # measured cost in front of them -- 50.6 MB -> 180.1 MB, 3.56x, on every
+    # download and every update. Do not "optimise" it back out; that would
+    # remove the feature, not just the bytes.
+    #
+    # QtQuick and QtQml also come OUT of this list, which is not obvious.
+    # QtWebEngineWidgets is the widget API, so it looks like it should need
+    # neither -- but WebEngine is built on Quick underneath, and excluding
+    # them produces a binary that BUILDS and then fails when the minting
+    # window is opened. A packaging break that only appears at the moment a
+    # user tries to use the feature is the worst kind, so they stay in.
     excludes=[
         "tkinter", "pytest",
-        "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore",
-        "PySide6.QtMultimedia", "PySide6.QtQuick", "PySide6.QtQml", "PySide6.QtCharts",
+        "PySide6.Qt3DCore",
+        "PySide6.QtMultimedia", "PySide6.QtCharts",
     ],
     noarchive=False,
 )

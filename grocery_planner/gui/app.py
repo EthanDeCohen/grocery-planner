@@ -95,6 +95,13 @@ class MainWindow(QMainWindow):
         self.scrape_action.triggered.connect(self.open_scrape)
         data_menu.addAction(self.scrape_action)
 
+        self.connect_wf_action = QAction("&Connect Whole Foods…", self)
+        self.connect_wf_action.setStatusTip(
+            "Choose your Whole Foods store so the app can see its prices."
+        )
+        self.connect_wf_action.triggered.connect(self.open_wholefoods_mint)
+        data_menu.addAction(self.connect_wf_action)
+
         settings_menu = bar.addMenu("&Settings")
         self.formulas_action = QAction("&Formulas…", self)
         self.formulas_action.setStatusTip(
@@ -179,6 +186,35 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------------- #
     # First-run / new-day refresh (GFP-105)
     # ----------------------------------------------------------------- #
+    def open_wholefoods_mint(self):
+        """GFP-80: mint a Whole Foods session in an embedded browser.
+
+        Imported HERE rather than at module scope: Qt WebEngine is 195 MB of
+        Chromium, and the overwhelming majority of launches never open this
+        window. (The one import that cannot be deferred is in main(), because
+        Qt requires it before the QApplication exists.)
+        """
+        from .. import config
+        from . import wholefoods as mint_ui
+
+        if not mint_ui.webengine_available():
+            self.statusBar().showMessage(
+                "This build does not include the embedded browser needed to "
+                "connect Whole Foods.", 12000
+            )
+            return
+
+        postal_code = config.postal_code()
+        dialog = mint_ui.mint(postal_code, parent=self)
+        if dialog is None:
+            self.statusBar().showMessage("Whole Foods was not connected.", 8000)
+            return None
+        self.statusBar().showMessage(
+            f"Whole Foods connected for {postal_code}. "
+            "Run a scrape to pull its prices.", 12000
+        )
+        return dialog
+
     def mention_update(self, message: str, url: str) -> None:
         """Say a newer version exists, once, quietly, and never again.
 
@@ -335,6 +371,23 @@ def main() -> int:
     # console to write to.
     logs.setup(console=False)
     logs.get_logger(__name__).info("gui starting")
+
+    # GFP-80: Qt requires QtWebEngineCore to be imported BEFORE a
+    # QApplication exists. It cannot be deferred to the moment the user opens
+    # the minting window -- by then it is too late and the window fails to
+    # open, which is the worst possible time to discover it.
+    #
+    # The import itself is cheap; it does not start Chromium. That happens
+    # when a QWebEngineView is first constructed, which is still deferred to
+    # the dialog. A build without WebEngine (CLI-only, or size-trimmed) simply
+    # carries on without the feature rather than failing to start.
+    try:
+        from PySide6 import QtWebEngineCore  # noqa: F401
+    except ImportError:
+        logs.get_logger(__name__).info(
+            "Qt WebEngine is not in this build; Whole Foods cannot be "
+            "connected from the app."
+        )
 
     app = QApplication(sys.argv)
     window = MainWindow()
