@@ -163,6 +163,13 @@ try {
     # and --backfill on nothing must be a clean no-op, not a crash.
     Test-Case "records (empty)"          @("records")                                      0 "No records yet"
     Test-Case "records --backfill (none)" @("records", "--backfill")                       0 "Backfilled 0"
+    # GFP-40: same shape for trends -- an empty window is a normal early state,
+    # so it explains itself and exits 0. An unscoped price series is the one
+    # thing the command refuses outright, because the number would be junk.
+    Test-Case "trends (empty)"           @("trends")                                       0 "No protein prices"
+    Test-Case "trends by food (empty)"   @("trends", "--by", "food")                       0 "No protein prices"
+    Test-Case "trends price unscoped"    @("trends", "--metric", "price")                  2 "--food"
+    Test-Case "trends bad metric"        @("trends", "--metric", "bogus")                  2 "unknown metric"
     Test-Case "schedule remove"          @("schedule", "remove", "foodlion")               0 "Removed"
     Test-Case "schedule remove (gone)"   @("schedule", "remove", "foodlion")               1
     Test-Case "schedule run (none set)"  @("schedule", "run", "--once")                    1 "No schedules"

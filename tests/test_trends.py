@@ -84,7 +84,7 @@ def test_one_day_of_history_is_not_a_trend_and_says_so_differently(conn, priced)
     assert "Only 1 day" in trend.reason
     assert "No protein prices on record yet" not in trend.reason
     # ...but the price we DO know is still available to show.
-    assert trend.series[0].latest.cost_per_gram_protein == pytest.approx(
+    assert trend.series[0].latest.value == pytest.approx(
         5.00 / GRAMS_IN_16OZ, rel=1e-6
     )
 
@@ -149,7 +149,7 @@ def test_stores_are_separate_series_led_by_the_cheapest(conn, priced):
             _observe(conn, store, "Chicken Breast 16 oz", price, _days_ago(offset))
 
     trend = service.protein_price_trend(conn=conn)
-    assert [s.store for s in trend.series] == ["wholefoods", "foodlion"]
+    assert [s.key for s in trend.series] == ["wholefoods", "foodlion"]
     assert len(trend.plottable) == 2
 
 
@@ -162,9 +162,9 @@ def test_one_store_can_be_plottable_while_another_is_not(conn, priced):
 
     trend = service.protein_price_trend(conn=conn)
     assert trend.is_plottable
-    assert [s.store for s in trend.plottable] == ["foodlion"]
+    assert [s.key for s in trend.plottable] == ["foodlion"]
     # The one-point store still reports its latest price; it just isn't a line.
-    assert [s.store for s in trend.series if not s.is_plottable] == ["wholefoods"]
+    assert [s.key for s in trend.series if not s.is_plottable] == ["wholefoods"]
 
 
 def test_the_store_filter_narrows_to_one_series(conn, priced):
@@ -173,7 +173,7 @@ def test_the_store_filter_narrows_to_one_series(conn, priced):
         _observe(conn, store, "Chicken Breast 16 oz", 5.00, _days_ago(0))
 
     trend = service.protein_price_trend(store="foodlion", conn=conn)
-    assert [s.store for s in trend.series] == ["foodlion"]
+    assert [s.key for s in trend.series] == ["foodlion"]
 
 
 # --------------------------------------------------------------------------- #
@@ -186,11 +186,11 @@ def test_the_cached_resolver_matches_a_direct_per_row_computation(conn, priced):
     priced("foodlion", "Chicken Breast 16 oz")
     _observe(conn, "foodlion", "Chicken Breast 16 oz", 6.49, _days_ago(0))
 
-    direct = savings.cost_per_gram_protein(6.49, "Chicken Breast 16 oz", "foodlion", conn=conn)
-    point = service.protein_price_trend(conn=conn).series[0].latest
-    assert point.cost_per_gram_protein == pytest.approx(
-        direct.cost_per_gram_protein, rel=1e-9
+    direct = savings.cost_per_gram_protein(
+        6.49, "Chicken Breast 16 oz", "foodlion", conn=conn
     )
+    point = service.protein_price_trend(conn=conn).series[0].latest
+    assert point.value == pytest.approx(direct.cost_per_gram_protein, rel=1e-9)
 
 
 def test_the_window_default_matches_what_retention_promises_to_keep(conn):

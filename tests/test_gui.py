@@ -578,7 +578,7 @@ def test_trends_pane_plots_once_there_are_enough_days(window):
     assert window.trends.trend.is_plottable
     assert window.trends.chart.isVisibleTo(window.trends)
     assert "Lower is better" in window.trends.subtitle.text()
-    assert "foodlion" in [s.store for s in window.trends.trend.plottable]
+    assert "foodlion" in [s.key for s in window.trends.trend.plottable]
 
 
 def test_the_latest_prices_are_listed_even_when_the_chart_cannot_be_drawn(window):
