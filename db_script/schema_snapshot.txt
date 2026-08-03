@@ -82,6 +82,7 @@ TABLE foods
   created_at: TEXT NOT NULL DEFAULT datetime('now')
   id: INTEGER PK
   name: TEXT NOT NULL
+  protein_kind: TEXT
   slug: TEXT
   source: TEXT NOT NULL
   source_ref: TEXT

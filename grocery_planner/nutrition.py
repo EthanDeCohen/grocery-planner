@@ -39,6 +39,10 @@ class FoodItem:
     source: str
     source_ref: str | None
     protein_per_100g: float | None
+    #: Which animal protein this is (GFP-106): a kind, ``protein_kind.OTHER``,
+    #: ``protein_kind.UNKNOWN``, or ``None`` when nothing has classified it yet.
+    #: Deliberately NOT derived from ``category`` -- see protein_kind's docstring.
+    protein_kind: str | None = None
 
 
 def _row_to_food(row: sqlite3.Row) -> FoodItem:
@@ -49,6 +53,7 @@ def _row_to_food(row: sqlite3.Row) -> FoodItem:
         source=row["source"],
         source_ref=row["source_ref"],
         protein_per_100g=row["protein_per_100g"],
+        protein_kind=row["protein_kind"],
     )
 
 
@@ -56,7 +61,7 @@ def _row_to_food(row: sqlite3.Row) -> FoodItem:
 # one) so a food with no nutrient data yet still shows up, just with
 # protein_per_100g=None -- the schema doesn't force nutrients to exist.
 _FOOD_SELECT = (
-    "SELECT f.id, f.name, f.category, f.source, f.source_ref, "
+    "SELECT f.id, f.name, f.category, f.source, f.source_ref, f.protein_kind, "
     "n.amount_per_100g AS protein_per_100g "
     "FROM foods f "
     "LEFT JOIN food_nutrients n ON n.food_id = f.id AND n.nutrient = ?"
@@ -66,14 +71,41 @@ _FOOD_SELECT = (
 def list_foods(
     category: str | None = None,
     conn: sqlite3.Connection | None = None,
+    *,
+    kind: str | None = None,
+    meat_only: bool = False,
 ) -> list[FoodItem]:
-    """All foods, optionally filtered to one ``category``, ordered by name."""
+    """All foods, optionally filtered, ordered by name.
+
+    ``kind`` and ``meat_only`` (GFP-106) filter on ``protein_kind`` rather than
+    ``category``, which is the only way to ask "chicken" of the catalog rows a
+    deal actually matches to -- those say only 'Meat'. Both classify anything
+    unclassified first, so a food added by this morning's scrape is not silently
+    missing from the answer.
+    """
     own = conn or db.connect()
+    if kind or meat_only:
+        from . import protein_kind as pk
+
+        pk.ensure_classified(own)
+
     sql = _FOOD_SELECT
     params: list[str] = [PROTEIN]
+    clauses = []
     if category:
-        sql += " WHERE f.category = ?"
+        clauses.append("f.category = ?")
         params.append(category)
+    if kind:
+        clauses.append("f.protein_kind = ?")
+        params.append(kind)
+    if meat_only:
+        from . import protein_kind as pk
+
+        kinds = sorted(pk.MEAT_KINDS)
+        clauses.append(f"f.protein_kind IN ({','.join('?' * len(kinds))})")
+        params.extend(kinds)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY f.name"
     return [_row_to_food(r) for r in own.execute(sql, params)]
 
