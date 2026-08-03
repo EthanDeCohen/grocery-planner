@@ -176,6 +176,20 @@ class BillLine:
     # text rather than render a dead control (see scrapers/base.py).
     source_url: str | None = None
     image_url: str | None = None
+    # GFP-50: which deal row this line came from. Without it a bill line is a
+    # dead end -- you can read the recommendation but cannot get back to the
+    # record that produced it, which blocks tracing a wrong number and blocks
+    # a grocery list (GFP-112) from referencing the exact offer it priced.
+    # None for a line built from a row that carried no id (a hand-made dict in
+    # a test, or any future non-deal source).
+    deal_id: int | None = None
+    # GFP-98's denomination, carried to every renderer of this line. A
+    # soldBy=WEIGHT price buys ONE POUND while a UNIT price buys the package;
+    # shown identically they invite a wrong buying decision from correct data.
+    # NULL on every Flipp and CSV row -- those sources do not state it, and a
+    # guess would be worse than an absent value (savings.py rule 1).
+    sold_by: str | None = None
+    price_per_unit_uom: str | None = None
 
 
 @dataclass(frozen=True)
@@ -401,6 +415,9 @@ def _build_bill(
                 food_name=item.get("food_name"),
                 source_url=item.get("source_url"),
                 image_url=item.get("image_url"),
+                deal_id=item.get("deal_id"),
+                sold_by=item.get("sold_by"),
+                price_per_unit_uom=item.get("price_per_unit_uom"),
             )
         )
         remaining -= grams_protein

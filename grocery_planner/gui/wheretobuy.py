@@ -47,6 +47,30 @@ def _store_name(store_key: str) -> str:
     return store.display_name if store else store_key
 
 
+#: GFP-98's ``soldBy`` value meaning "this price buys one unit of WEIGHT".
+SOLD_BY_WEIGHT = "WEIGHT"
+
+
+def _denomination_note(line: bill.BillLine) -> str:
+    """" · sold by weight (per lb)" for a per-weight item, else nothing.
+
+    GFP-50 inherited GFP-98's rule that a per-weight price must be visibly
+    tagged. The bill PANEL needs no such tag — every figure it shows is an
+    amortised $/day derived from $/g protein, which is denomination-neutral by
+    construction, so the "$2.49 loin looks cheaper than a $4.99 packet" trap
+    cannot arise there. This row is different: it is the buying instruction, and
+    a shopper heading to the counter needs to know before they get there that
+    they are paying by the pound rather than for a package.
+
+    Silent when the source does not state a denomination (every Flipp and CSV
+    row), because "sold by weight" and "we were not told" are different facts.
+    """
+    if line.sold_by != SOLD_BY_WEIGHT:
+        return ""
+    unit = f" (per {line.price_per_unit_uom})" if line.price_per_unit_uom else ""
+    return f"  ·  sold by weight{unit}"
+
+
 class WhereToBuyPane(QWidget):
     """One row per bill line: the store, and a link to the ad when there is one."""
 
@@ -123,7 +147,7 @@ class WhereToBuyPane(QWidget):
         row_layout = QVBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 8)
 
-        name = QLabel(line.item_name)
+        name = QLabel(line.item_name + _denomination_note(line))
         name.setWordWrap(True)
         row_layout.addWidget(name)
 
