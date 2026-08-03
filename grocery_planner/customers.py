@@ -75,11 +75,13 @@ DEFAULT_PROTEIN_FACTOR = 1.6
 # calculation (GFP-29's protein target), where it does.
 KG_PER_LB = 0.45359237
 
-# GFP-66: decimal places kept by Customer.weight_display. Far finer than
+# GFP-66: decimal places kept by Customer.weight_display (and by
+# grocery_planner.service.clients.restate_weight, which rounds the same way
+# for the same reason). Far finer than
 # anyone types a body weight to (nobody enters "150.000001 lb"), so rounding
 # to this can only remove float round-trip noise (e.g. 150 lb -> kg -> lb
 # landing on 149.99999999999997), never a value a user actually entered.
-_WEIGHT_DISPLAY_DECIMALS = 6
+WEIGHT_DISPLAY_DECIMALS = 6
 
 
 def _normalize_unit(unit: str) -> str:
@@ -202,7 +204,7 @@ class Customer:
         ``None`` if either half is missing -- a weight with no known unit is
         not safe to guess at.
 
-        Rounded to :data:`_WEIGHT_DISPLAY_DECIMALS` places (GFP-66): the
+        Rounded to :data:`WEIGHT_DISPLAY_DECIMALS` places (GFP-66): the
         lb<->kg round trip through :func:`to_kg`/:func:`from_kg` is exact
         math but not exact *float* arithmetic -- e.g. 150 lb -> kg -> lb
         comes back as ``149.99999999999997``, not ``150``. That epsilon is
@@ -215,7 +217,7 @@ class Customer:
         """
         if self.weight_kg is None or self.weight_unit is None:
             return None
-        return round(from_kg(self.weight_kg, self.weight_unit), _WEIGHT_DISPLAY_DECIMALS)
+        return round(from_kg(self.weight_kg, self.weight_unit), WEIGHT_DISPLAY_DECIMALS)
 
     @property
     def is_deleted(self) -> bool:

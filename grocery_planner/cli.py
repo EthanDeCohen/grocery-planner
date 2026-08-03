@@ -960,19 +960,11 @@ def _client_or_exit(identifier: str, include_deleted: bool = False):
         raise typer.Exit(1)
 
 
-def _weight_cell(client) -> str:
-    """A client's weight in the unit they were entered in, or an honest dash.
-
-    Never converted to kg for display and never filled in with a 0 -- a
-    client with no weight has no weight (GFP-28).
-    """
-    if client.weight_display is None:
-        return "-"
-    return f"{client.weight_display:g} {client.weight_unit}"
-
-
-def _target_cell(target) -> str:
-    return f"{target.daily_grams:.0f} {target.daily_unit}" if target else "no target"
+# The weight and target cells come from the service layer rather than being
+# formatted here, so "150 lb" and "no weight on file" read identically in
+# `gplan client list` and in the GUI roster's delete confirmation.
+_weight_cell = client_service.weight_label
+_target_cell = client_service.target_label
 
 
 @client_app.command("list")
@@ -1154,9 +1146,11 @@ def client_delete(
     removal itself is recoverable with ``gplan client restore``.
     """
     record = _client_or_exit(client)
+    # The same sentence the GUI's confirmation shows -- service-owned, so the
+    # two front ends cannot describe the same deletion differently.
     typer.echo(
-        f"About to remove: {record.name} (id {record.id}), "
-        f"weight {_weight_cell(record)}, added {record.created_at or 'unknown'}."
+        "About to remove: "
+        + client_service.describe_client(record, client_service.client_target(record))
     )
     if not yes:
         # The default is No: a stray Enter must not delete an irreplaceable

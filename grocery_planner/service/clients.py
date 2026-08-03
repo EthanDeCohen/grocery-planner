@@ -45,7 +45,13 @@ from dataclasses import dataclass, replace
 from typing import Any, Final
 
 from .. import db, targets
-from ..customers import Customer, CustomerRepository, to_kg
+from ..customers import (
+    WEIGHT_DISPLAY_DECIMALS,
+    Customer,
+    CustomerRepository,
+    from_kg,
+    to_kg,
+)
 from ..targets import ProteinTarget
 
 
@@ -147,6 +153,68 @@ class ClientSummary:
 
 
 # --------------------------------------------------------------------------- #
+# Labels
+#
+# Presentation normally belongs to the front end, but these three are the
+# sentences a *delete confirmation* is made of, and the ticket's whole point is
+# that the CLI and the GUI must not disagree about client operations. A
+# confirmation that names the client in the CLI and shows a bare id in the GUI
+# is exactly that disagreement, so the wording lives here, once.
+# --------------------------------------------------------------------------- #
+NO_WEIGHT = "no weight on file"
+NO_TARGET = "no target"
+
+
+def weight_label(client: Customer) -> str:
+    """A client's weight in the unit they were entered in, or :data:`NO_WEIGHT`.
+
+    Never converted to kilograms for display and never filled in with a zero:
+    kilograms are the storage unit, not the unit the nutritionist thinks in,
+    and a client with no weight has no weight (GFP-28).
+    """
+    if client.weight_display is None:
+        return NO_WEIGHT
+    return f"{client.weight_display:g} {client.weight_unit}"
+
+
+def target_label(target: ProteinTarget | None) -> str:
+    """A daily protein target, or :data:`NO_TARGET` when there isn't one."""
+    if target is None:
+        return NO_TARGET
+    return f"{target.daily_grams:.0f} {target.daily_unit}"
+
+
+def restate_weight(value: float, from_unit: str, to_unit: str) -> float:
+    """The same body weight, written in a different unit.
+
+    For a front end whose unit selector changes while a number is on screen:
+    flipping 'kg' to 'lb' next to a 90 must show 198.4, because the person on
+    the scale did not change. The alternative -- leaving the 90 and letting it
+    be saved as 90 lb -- is the GFP-29 dosing error typed in by the UI itself.
+
+    Rounded like :attr:`Customer.weight_display` so a kg->lb->kg trip through
+    a spinbox shows 150 rather than 149.99999999999997.
+    """
+    try:
+        return round(from_kg(to_kg(value, from_unit), to_unit), WEIGHT_DISPLAY_DECIMALS)
+    except ValueError as exc:
+        raise ClientError(str(exc)) from exc
+
+
+def describe_client(client: Customer, target: ProteinTarget | None = None) -> str:
+    """Who this client is, for a confirmation prompt.
+
+    Deleting "record 4" is a misclick waiting to happen; deleting "Jane Doe
+    (id 4) - 150 lb, 98 g/day, added 2026-08-01" is a decision. Both front
+    ends put this exact string in front of the user before removing anything.
+    """
+    return (
+        f"{client.name} (id {client.id}) - {weight_label(client)}, "
+        f"{target_label(target)}, added {client.created_at or 'unknown'}"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Read
 # --------------------------------------------------------------------------- #
 def list_clients(
@@ -157,6 +225,20 @@ def list_clients(
     """Clients ordered by name, optionally filtered by name substring."""
     own = conn or db.connect()
     return CustomerRepository.list(search=search, include_deleted=include_deleted, conn=own)
+
+
+def client_target(
+    client: Customer, conn: sqlite3.Connection | None = None
+) -> ProteinTarget | None:
+    """One client's daily/weekly protein target, or ``None``.
+
+    A thin pass-through to :func:`grocery_planner.targets.protein_target_for`,
+    kept here so a front end never has to import :mod:`grocery_planner.targets`
+    itself to draw a client row. ``None`` when the client has no weight on
+    file -- "absent stays absent, never a guess".
+    """
+    own = conn or db.connect()
+    return targets.protein_target_for(client, conn=own)
 
 
 def list_client_summaries(
@@ -172,7 +254,7 @@ def list_client_summaries(
     """
     own = conn or db.connect()
     return [
-        ClientSummary(client=client, target=targets.protein_target_for(client, conn=own))
+        ClientSummary(client=client, target=client_target(client, conn=own))
         for client in list_clients(search=search, include_deleted=include_deleted, conn=own)
     ]
 
