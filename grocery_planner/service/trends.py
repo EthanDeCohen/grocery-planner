@@ -60,6 +60,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from enum import Enum
+from typing import Iterable
 
 from .. import db, matching, savings
 from ..stores import BY_KEY
@@ -360,6 +361,8 @@ def price_trend(
     food: str | None = None,
     postal_code: str | None = None,
     meat_only: bool = False,
+    categories: Iterable[str] | None = None,
+    series_label: str | None = None,
     today: date | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> PriceTrend:
@@ -424,10 +427,22 @@ def price_trend(
     # A food scope and a food dimension both need each row attributed to a food,
     # which the protein chain alone cannot always do -- see `_resolver`.
     # meat_only also needs food attribution, for the same reason a food scope does.
-    by_food = dimension is Dimension.FOOD or food is not None or meat_only
+    # GFP-129: restrict to the protein categories a client will actually eat.
+    # Same food attribution a food scope needs, for the same reason.
+    wanted_categories = {c.lower() for c in categories} if categories else None
+    by_food = (
+        dimension is Dimension.FOOD or food is not None or meat_only
+        or wanted_categories is not None
+    )
     resolve = _resolver(own, food_fallback=by_food)
     wanted_foods = set(_food_ids(own, food)) if food else None
     meat_foods = _meat_food_ids(own) if meat_only else None
+    category_of: dict[int, str] = {}
+    if wanted_categories is not None:
+        category_of = {
+            r["id"]: r["category"]
+            for r in own.execute("SELECT id, category FROM foods WHERE category IS NOT NULL")
+        }
 
     # (series key, day) -> the best point seen for it so far.
     best: dict[tuple[str, str], TrendPoint] = {}
@@ -440,6 +455,10 @@ def price_trend(
             continue
         if meat_foods is not None and resolved.food_id not in meat_foods:
             continue
+        if wanted_categories is not None:
+            category = category_of.get(resolved.food_id)
+            if category is None or category.lower() not in wanted_categories:
+                continue
 
         if metric is Metric.PROTEIN:
             if resolved.protein_grams is None:
@@ -453,6 +472,11 @@ def price_trend(
                 continue  # a food series needs a food; a label claim has none
             series_key: str | int = resolved.food_id
             food_ids_seen.add(resolved.food_id)
+        elif series_label is not None:
+            # GFP-129: ONE line rather than one per store. The client chart
+            # compares "cheapest available" against "cheapest this client will
+            # eat" -- two questions about the whole market, not about stores.
+            series_key = series_label
         else:
             series_key = row["store"]
 
@@ -482,6 +506,14 @@ def price_trend(
                 key=labelled[key][0],
                 label=labelled[key][1],
                 points=sorted(points, key=lambda p: p.day),
+            )
+            for key, points in grouped.items()
+        ]
+    elif series_label is not None:
+        # One collapsed line; its key IS its label (GFP-129).
+        series = [
+            TrendSeries(
+                key=key, label=key, points=sorted(points, key=lambda p: p.day)
             )
             for key, points in grouped.items()
         ]

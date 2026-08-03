@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 from .. import db, service, targets
 from ..customers import CustomerRepository
 from .billpanel import BillPanel
+from .clienttrend import ClientTrendPane
 from .biometrics import BiometricsPanel
 from .wheretobuy import WhereToBuyPane
 
@@ -125,7 +126,14 @@ class ClientDetailPage(QWidget):
         # keeps that behaviour available for a ticket that wants it back
         # without resurrecting it from history.
         self.where_to_buy.setVisible(False)
-        self.columns.setSizes(list(COLUMN_SIZES[:2]))
+
+        # GFP-129: this client's prices against everybody's. Takes the third
+        # column the where-to-buy pane vacated -- the page keeps two panes of
+        # content, and the chart is the thing that page previously could not
+        # answer at all, being entirely a snapshot.
+        self.trend = ClientTrendPane()
+        self.columns.addWidget(self.trend)
+        self.columns.setSizes(list(COLUMN_SIZES))
         layout.addWidget(self.columns, 1)
 
         # A biometric save changes the target, which changes the bill, which
@@ -135,6 +143,7 @@ class ClientDetailPage(QWidget):
         # the third column follows the bill's own signal rather than this page
         # having to guess when a checkbox changed something.
         self.bill_panel.bill_changed.connect(self._sync_where_to_buy)
+        self.bill_panel.bill_changed.connect(self.trend.reload)
 
     # ----------------------------------------------------------------- #
     def show_client(self, customer_id: int) -> bool:
@@ -148,6 +157,7 @@ class ClientDetailPage(QWidget):
             self.biometrics.clear()
             self.bill_panel.clear()
             self.where_to_buy.clear()
+            self.trend.clear()
             return False
 
         self.customer_id = customer_id
@@ -155,6 +165,7 @@ class ClientDetailPage(QWidget):
         self._render_target(customer, conn)
         self.biometrics.set_client(customer_id)
         self.bill_panel.set_client(customer_id)
+        self.trend.set_client(customer_id)
         self._sync_where_to_buy()
         return True
 
