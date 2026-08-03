@@ -219,6 +219,15 @@ try {
     Test-Case "config set (bad value)"   @("config", "set", "postal_code", "banana")       1 "5-digit"
     Test-Case "config set (bad key)"     @("config", "set", "zip", "10001")                1 "no setting called"
     Test-Case "config survived it"       @("config")                                       0 "10001"
+    # GFP-102. Deliberately only the read-only and dry-run forms: registering a
+    # real Scheduled Task is a machine-wide side effect, and a smoke test that
+    # a developer runs twenty times a day is the wrong place for one. CI
+    # registers it for real on a throwaway runner.
+    Test-Case "timer status"             @("timer", "status")                              0 "GroceryPlanner"
+    Test-Case "timer install --dry-run"  @("timer", "install", "--dry-run")                0 "DAILY"
+    Test-Case "timer remove --dry-run"   @("timer", "remove", "--dry-run")                 0 "Delete"
+    Test-Case "timer bad time"           @("timer", "install", "--at", "99:99")            1 "expected HH:MM"
+    Test-Case "uninstall-plan"           @("uninstall-plan")                               0 "directory"
 
     if ($IncludeScrape) {
         Test-Case "live scrape foodlion" @("scrape", "foodlion")                           0 "deals"

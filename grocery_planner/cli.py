@@ -842,6 +842,100 @@ def config_set(
         )
 
 
+timer_app = typer.Typer(
+    help="Refresh prices in the background, without the app open (GFP-102)."
+)
+app.add_typer(timer_app, name="timer")
+
+
+@timer_app.command("install")
+def timer_install(
+    at: str = typer.Option(
+        None, "--at", help="Local time to run, HH:MM. Default 06:00.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the command that would register it."
+    ),
+) -> None:
+    """Register the daily background refresh with the OS.
+
+    A Scheduled Task on Windows, a LaunchAgent on macOS. Both run as you, need
+    no administrator rights, and invoke `gplan schedule run --once`.
+
+    Idempotent: running it again replaces the timer rather than adding a
+    second one.
+    """
+    from . import background
+
+    try:
+        outcome = background.install(at or background.DEFAULT_TIME, dry_run=dry_run)
+    except background.TimerError as exc:
+        typer.secho(f"Could not register the background refresh:\n{exc}",
+                    fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    if dry_run:
+        typer.echo(outcome)
+        return
+    typer.secho(
+        f"Background refresh {outcome}.", fg=typer.colors.GREEN
+    )
+    typer.echo(f"  runs daily at {at or background.DEFAULT_TIME}")
+    typer.echo(f"  known to the OS as: {background.identifier()}")
+    if not app_config.get("background_refresh"):
+        # Registering a timer whose runs will all decline to do anything is
+        # exactly the sort of thing that wastes an afternoon.
+        typer.secho(
+            "  ! config `background_refresh` is false, so the timer will fire "
+            "and then do nothing. Turn it on with:\n"
+            "      gplan config set background_refresh true",
+            fg=typer.colors.YELLOW,
+        )
+
+
+@timer_app.command("remove")
+def timer_remove(
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the command that would remove it."
+    ),
+) -> None:
+    """Unregister the daily background refresh. Idempotent."""
+    from . import background
+
+    try:
+        outcome = background.remove(dry_run=dry_run)
+    except background.TimerError as exc:
+        typer.secho(f"Could not remove the background refresh:\n{exc}",
+                    fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    typer.echo(outcome if dry_run else f"Background refresh {outcome}.")
+
+
+@timer_app.command("status")
+def timer_status() -> None:
+    """Is the background refresh registered, and under what name.
+
+    Prints the OS identifier whether or not it is registered: GFP-102's manual
+    removal checklist is only usable if the thing to remove can be named, and
+    the moment someone needs that name is the moment the timer is misbehaving.
+    """
+    from . import background
+
+    state = background.status()
+    typer.echo(f"Identifier: {state.identifier}")
+    if not state.supported:
+        typer.secho(state.detail, fg=typer.colors.YELLOW)
+        raise typer.Exit(1)
+    typer.secho(
+        "Registered" if state.registered else "Not registered",
+        fg=typer.colors.GREEN if state.registered else typer.colors.YELLOW,
+    )
+    typer.echo(f"Setting:    background_refresh = {app_config.get('background_refresh')}")
+    typer.echo(f"Runs:       {background.scheduled_command()}")
+    if state.detail and not state.registered:
+        typer.echo(f"  {state.detail.splitlines()[0] if state.detail else ''}")
+
+
 @app.command("uninstall-plan")
 def uninstall_plan_cmd(
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
@@ -1006,20 +1100,23 @@ def schedule_run(
     Catches up anything overdue first — a machine that was asleep through its
     window refreshes now rather than waiting for the next one.
     """
+    from . import background
+
     conn = db.connect()
     if not scheduler.list_schedules(conn, enabled_only=True):
         typer.secho("No schedules configured. Try: gplan schedule set foodlion --every 12h",
                     fg=typer.colors.YELLOW)
         raise typer.Exit(1)
 
-    summary = scheduler.run_catch_up(conn, on_event=lambda m: typer.echo(f"  {m}"))
-    typer.secho(
-        f"Catch-up: {len(summary['ran'])} scraped, {len(summary['failed'])} failed, "
-        f"{summary['reaped']} interrupted job(s) reaped.",
-        fg=typer.colors.BLUE,
-    )
+    # GFP-102: the catch-up pass goes through background.refresh_once, which is
+    # also what the OS timer runs. One implementation, so the kill switch and
+    # the single-refresh lock cannot be honoured here and forgotten there.
+    code = background.refresh_once(on_event=lambda m: typer.echo(f"  {m}"))
     if once:
-        raise typer.Exit(1 if summary["failed"] else 0)
+        raise typer.Exit(code)
+    if code and not once:
+        typer.secho("Catch-up had failures; continuing to the scheduler.",
+                    fg=typer.colors.YELLOW)
 
     engine = scheduler.build_scheduler(conn, blocking=True)
     for job in engine.get_jobs():

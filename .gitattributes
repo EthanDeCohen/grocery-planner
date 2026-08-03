@@ -22,6 +22,14 @@
 # PowerShell hosts can mis-parse an LF-only script.
 *.ps1 text eol=crlf
 
+# Shell scripts are the mirror image, and the failure is worse (GFP-116).
+# `text=auto` already commits them as LF, so macOS has been fine -- but a
+# checkout that ever produced CRLF gives `bad interpreter: /bin/bash^M`, which
+# reads as a missing bash rather than as a line-ending problem and sends
+# whoever hits it a long way in the wrong direction. These ship inside the
+# release ZIP and are run by customers.
+*.sh text eol=lf
+
 # Binary-ish assets git should not touch.
 *.png binary
 *.jpg binary
