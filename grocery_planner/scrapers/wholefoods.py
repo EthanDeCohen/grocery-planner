@@ -262,6 +262,16 @@ MERCHANT = "Whole Foods Market"
 DEFAULT_POSTAL_CODE = "27401"
 DEAL_TYPE = "Storefront Price"
 
+# GFP-111: the vocabulary this module's `product_identifier` values belong to.
+# An ASIN is Amazon's identifier, which is what the Whole Foods storefront is
+# built on -- so the namespace is named for the vocabulary, not for the shop
+# (GFP-32), exactly as `kroger.product_id` is named for the API that issues it
+# rather than for Harris Teeter.
+#
+# Stored verbatim as TEXT: an ASIN is alphanumeric ('B09439SKW3') and has no
+# numeric reading at all.
+PRODUCT_IDENTIFIER_NS = "wholefoods.asin"
+
 # unitPrice.baseUnit values that mean "this price is per unit WEIGHT", i.e. the
 # shopper pays this multiplied by however much the cut weighs (GFP-98). Whole
 # Foods uses "pound" for butcher-counter items; "each" is a package price.
@@ -758,6 +768,7 @@ def product_to_row(
 
     item_name = _display_item_name(raw_name, size_text, weight_source)
     has_price = price is not None
+    identifier, identifier_ns = base.product_identifier(asin, PRODUCT_IDENTIFIER_NS)
 
     desc_parts: list[str] = []
     if has_price:
@@ -821,6 +832,14 @@ def product_to_row(
         ),
         "price_per_unit": unit_price_amount,
         "price_per_unit_uom": unit_price_base or None,
+        # GFP-111: the ASIN already in hand a few lines above, written at scrape
+        # time into a real column -- the same value `notes` records for
+        # provenance, but somewhere nothing downstream has to string-parse that
+        # blob to find it. `notes` is unchanged. NULL/NULL when the storefront
+        # omitted the ASIN: an unidentified listing cannot be ordered, and a
+        # stand-in would be a fabricated SKU.
+        "product_identifier": identifier,
+        "product_identifier_ns": identifier_ns,
     }
 
     food_fact = None

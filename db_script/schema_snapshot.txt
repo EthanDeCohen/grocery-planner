@@ -60,6 +60,8 @@ TABLE deals
   postal_code: TEXT
   price_per_unit: REAL
   price_per_unit_uom: TEXT
+  product_identifier: TEXT
+  product_identifier_ns: TEXT
   regular_price: REAL
   sale_price: REAL
   sold_by: TEXT
@@ -104,6 +106,8 @@ TABLE price_history
   postal_code: TEXT NOT NULL
   price_per_unit: REAL
   price_per_unit_uom: TEXT
+  product_identifier: TEXT
+  product_identifier_ns: TEXT
   regular_price: REAL
   sale_price: REAL
   sold_by: TEXT

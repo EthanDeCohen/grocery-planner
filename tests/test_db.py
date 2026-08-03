@@ -45,6 +45,22 @@ EXPECTED_CUSTOMER_COLUMNS = {
 
 SCRIPT_NAME_RE = re.compile(r"^\d{4}_GFP-\d+\.(ddl|dml)$")
 
+# The `deals` table a real database from before schema_version existed has:
+# the frozen GFP-9 baseline's, minus every column a later migration adds. The
+# adoption tests below all start from a stub like this.
+#
+# It carries `item_name`, `source` and `notes` rather than the bare minimum an
+# individual assertion needs, because a migration does not only ALTER new
+# columns onto `deals` -- since GFP-111 one READS the baseline's columns, to
+# recover each source's product identifier out of the free-text `notes` blob
+# and carry it across to price_history. A stub missing them is not an old
+# database; it is one that never existed, and a migration failing against it
+# says nothing about a real upgrade.
+OLD_DEALS_TABLE = (
+    "CREATE TABLE deals (id INTEGER PRIMARY KEY, store TEXT, item_name TEXT, "
+    "sale_price REAL, source TEXT, notes TEXT)"
+)
+
 
 # --------------------------------------------------------------------------- #
 # GFP-72 — derive the "rewind to mid-history" DROP list from the schema
@@ -165,7 +181,7 @@ def test_migration_adds_dollar_price_to_old_db(tmp_path):
 
     p = tmp_path / "old.sqlite3"
     raw = sqlite3.connect(p)
-    raw.execute("CREATE TABLE deals (id INTEGER PRIMARY KEY, store TEXT, sale_price REAL)")
+    raw.execute(OLD_DEALS_TABLE)
     raw.commit()
     raw.close()
 
@@ -232,7 +248,7 @@ def test_customers_migration_adds_table_to_old_db(tmp_path):
 
     p = tmp_path / "old.sqlite3"
     raw = sqlite3.connect(p)
-    raw.execute("CREATE TABLE deals (id INTEGER PRIMARY KEY, store TEXT, sale_price REAL)")
+    raw.execute(OLD_DEALS_TABLE)
     raw.commit()
     raw.close()
 
@@ -389,9 +405,7 @@ def test_migration_backfills_postal_code_on_old_db(tmp_path):
 
     p = tmp_path / "old.sqlite3"
     raw = sqlite3.connect(p)
-    raw.execute(
-        "CREATE TABLE deals (id INTEGER PRIMARY KEY, store TEXT, sale_price REAL, source TEXT)"
-    )
+    raw.execute(OLD_DEALS_TABLE)
     raw.execute(
         "INSERT INTO deals(store, sale_price, source) VALUES ('foodlion', 1.99, 'scrape')"
     )
@@ -446,7 +460,7 @@ def test_price_history_created_on_an_old_db_missing_it(tmp_path):
 
     p = tmp_path / "old.sqlite3"
     raw = sqlite3.connect(p)
-    raw.execute("CREATE TABLE deals (id INTEGER PRIMARY KEY, store TEXT)")
+    raw.execute(OLD_DEALS_TABLE)
     raw.commit()
     raw.close()
 
@@ -762,7 +776,7 @@ def test_a_database_genuinely_behind_is_migrated_not_baselined(tmp_path):
 
     p = tmp_path / "behind.sqlite3"
     raw = sqlite3.connect(p)
-    raw.execute("CREATE TABLE deals (id INTEGER PRIMARY KEY, store TEXT, sale_price REAL)")
+    raw.execute(OLD_DEALS_TABLE)
     raw.commit()
     raw.close()
 

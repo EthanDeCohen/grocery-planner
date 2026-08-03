@@ -210,10 +210,12 @@ _HISTORY_UPSERT = (
     "store, postal_code, item_name, sub_category, deal_type, regular_price, "
     "sale_price, dollar_price, discount_amount, discount_percent, source, "
     "sold_by, price_per_unit, price_per_unit_uom, "
+    "product_identifier, product_identifier_ns, "
     "captured_at, updated_at) "
     "VALUES (:store, :postal_code, :item_name, :sub_category, :deal_type, "
     ":regular_price, :sale_price, :dollar_price, :discount_amount, :discount_percent, "
     ":source, :sold_by, :price_per_unit, :price_per_unit_uom, "
+    ":product_identifier, :product_identifier_ns, "
     ":captured_at, :updated_at) "
     "ON CONFLICT(store, postal_code, item_name, deal_type, captured_at) DO UPDATE SET "
     "regular_price=excluded.regular_price, sale_price=excluded.sale_price, "
@@ -224,6 +226,15 @@ _HISTORY_UPSERT = (
     # compared against anything safely.
     "sold_by=excluded.sold_by, price_per_unit=excluded.price_per_unit, "
     "price_per_unit_uom=excluded.price_per_unit_uom, "
+    # GFP-111: the source's own product id travels into history too, and as a
+    # PAIR -- `deals` is replaced wholesale on every scrape, so an identifier
+    # kept only there survives one week, and history is precisely where "what
+    # did this exact product cost in March" has to be answerable from. The
+    # namespace is never dropped on the way in: a bare id whose vocabulary has
+    # been lost cannot be looked up or compared against anything safely, which
+    # is the same reasoning GFP-98 applied to sold_by above.
+    "product_identifier=excluded.product_identifier, "
+    "product_identifier_ns=excluded.product_identifier_ns, "
     "updated_at=excluded.updated_at"
 )
 

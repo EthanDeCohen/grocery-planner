@@ -530,6 +530,7 @@ def product_to_row(
     density = protein_per_100g(product)
     item_name = display_item_name(description, size_text)
     has_price = price is not None
+    identifier, identifier_ns = base.product_identifier(product_id, PRODUCT_IDENTIFIER_NS)
 
     parts = []
     if has_price:
@@ -590,10 +591,8 @@ def product_to_row(
         # has to string-parse that blob to find it. `notes` is unchanged.
         # NULL/NULL when the API omitted productId: a shelf listing with no id
         # cannot be ordered, and a substitute would be a fabricated SKU.
-        **dict(zip(
-            ("product_identifier", "product_identifier_ns"),
-            base.product_identifier(product_id, PRODUCT_IDENTIFIER_NS),
-        )),
+        "product_identifier": identifier,
+        "product_identifier_ns": identifier_ns,
     }
 
     fact = None

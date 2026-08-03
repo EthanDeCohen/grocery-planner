@@ -52,6 +52,16 @@ NUMERIC = {
     "flipp_flyer_id", "flipp_item_id", "flipp_coupon_id",
 }
 
+# Text columns where a missing or blank CSV cell must land as NULL rather than
+# as '' (GFP-111). _read_rows defaults every absent column to the empty string,
+# which is harmless for a free-text field but not for an identifier: '' is not
+# absent, it is a product identifier that identifies nothing, and it would
+# survive into the SKU column and the v2 online-order file looking like a real
+# one. The numeric columns above already get this for free (_to_float('') is
+# None); these two are TEXT, so they need saying. Absent stays absent
+# (savings.py rule 1).
+NULL_WHEN_BLANK = {"product_identifier", "product_identifier_ns"}
+
 
 @dataclass
 class ImportResult:
@@ -81,6 +91,8 @@ def _read_rows(path: Path, columns: list[str]) -> list[dict]:
             for c in columns:
                 if c in NUMERIC:
                     row[c] = _to_float(row[c])
+                elif c in NULL_WHEN_BLANK and not row[c]:
+                    row[c] = None
             rows.append(row)
     return rows
 

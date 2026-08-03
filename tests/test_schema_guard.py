@@ -16,7 +16,6 @@ Three guards, each mirroring a rule documented in db_script/README.md:
 """
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import re
 import sys
@@ -74,7 +73,18 @@ def test_init_baseline_checksum_is_pinned():
     longer matches the file on disk, someone edited the frozen baseline --
     fail loudly and point at the rule, rather than let it quietly reintroduce
     the GFP-59 double-description bug the freeze exists to prevent."""
-    actual = hashlib.sha256(INIT_BASELINE.read_bytes()).hexdigest()
+    # Hashed the way grocery_planner.db hashes every other script since GFP-98
+    # -- with line endings normalised out -- rather than byte-exact. This guard
+    # kept the byte-exact form GFP-98 removed everywhere else, so the pin was
+    # really a pin on "whichever line endings the author's working tree had".
+    # .gitattributes now checks *.ddl out as LF while the tree this hash was
+    # first taken in still holds CRLF, so a fresh clone failed this test having
+    # changed nothing: exactly the false "someone edited the frozen baseline"
+    # GFP-98 fixed in db.py. Normalising makes both trees agree, and a real
+    # edit to the baseline still changes the hash and still fails.
+    from grocery_planner import db
+
+    actual = db._checksum(INIT_BASELINE)
     expected = _expected_checksum()
     assert actual == expected, (
         f"{INIT_BASELINE} no longer matches its pinned checksum "
