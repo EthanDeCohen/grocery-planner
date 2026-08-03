@@ -359,3 +359,91 @@ def test_scrape_writes_nutrition_the_engine_can_read(conn):
     # from the retailer's own label for this exact product (as wholefoods does).
     from grocery_planner import matching
     assert matched["match_source"] == matching.MANUAL
+
+
+# --------------------------------------------------------------------------- #
+# GFP-99 -- product page and image links
+#
+# The URI below is a REAL one, copied verbatim from a live API response, and
+# https://www.harristeeter.com + its path was opened in a browser and confirmed
+# to resolve to the product page. That verification cannot be automated: the
+# storefront read-times-out for httpx, so any test that fetched it would either
+# hang or fail for a reason unrelated to this code.
+# --------------------------------------------------------------------------- #
+REAL_URI = (
+    "/p/harris-teeter-boneless-chicken-breast-value-pack/0020895500000"
+    "?cid=dis.api.tpi_products-api_20240521_b:all_c:p_t:decohenpartners-bbcg"
+)
+
+WITH_LINKS = {
+    "productId": "0020895500000",
+    "description": "Harris Teeter Boneless Chicken Breast Value Pack",
+    "productPageURI": REAL_URI,
+    "images": [
+        {"perspective": "back",
+         "sizes": [{"size": "large",
+                    "url": "https://www.kroger.com/product/images/large/back/0020895500000"}]},
+        {"perspective": "front",
+         "sizes": [{"size": "xlarge",
+                    "url": "https://www.kroger.com/product/images/xlarge/front/0020895500000"}]},
+    ],
+    "items": [{"price": {"regular": 1.99}, "size": "1 lb", "soldBy": "WEIGHT"}],
+}
+
+
+def test_the_product_url_is_built_from_the_api_uri_not_guessed():
+    url = kroger.product_page_url(WITH_LINKS)
+    assert url == (
+        "https://www.harristeeter.com"
+        "/p/harris-teeter-boneless-chicken-breast-value-pack/0020895500000"
+    )
+
+
+def test_the_campaign_tag_is_stripped():
+    """It identifies OUR developer account; it does not belong in a client's link."""
+    assert "cid=" not in kroger.product_page_url(WITH_LINKS)
+    assert "decohenpartners" not in kroger.product_page_url(WITH_LINKS)
+
+
+def test_a_missing_uri_yields_no_link_rather_than_a_bare_host():
+    """A link to the homepage is not a link to the product (GFP-38)."""
+    assert kroger.product_page_url({"productId": "1"}) is None
+    assert kroger.product_page_url({"productPageURI": ""}) is None
+    assert kroger.product_page_url({"productPageURI": "   "}) is None
+
+
+def test_an_absolute_uri_is_refused_rather_than_double_prefixed():
+    """If the API ever returns a full URL, prefixing a host makes nonsense."""
+    absolute = {"productPageURI": "https://www.harristeeter.com/p/x/1"}
+    assert kroger.product_page_url(absolute) is None
+
+
+def test_the_front_image_is_preferred_over_the_back():
+    assert kroger.product_image_url(WITH_LINKS) == (
+        "https://www.kroger.com/product/images/xlarge/front/0020895500000"
+    )
+
+
+def test_any_perspective_beats_no_image():
+    only_back = {"images": [{"perspective": "back",
+                             "sizes": [{"url": "https://example.invalid/back.jpg"}]}]}
+    assert kroger.product_image_url(only_back) == "https://example.invalid/back.jpg"
+
+
+def test_no_images_is_none_not_an_empty_string():
+    assert kroger.product_image_url({}) is None
+    assert kroger.product_image_url({"images": []}) is None
+    assert kroger.product_image_url({"images": [{"perspective": "front", "sizes": []}]}) is None
+
+
+def test_a_scraped_row_carries_both_links():
+    row, _ = kroger.product_to_row(WITH_LINKS, "Meat", "27401", NOW)
+    assert row["source_url"].startswith("https://www.harristeeter.com/p/")
+    assert row["image_url"].startswith("https://www.kroger.com/product/images/")
+
+
+def test_a_row_from_a_payload_without_links_still_scrapes():
+    """The GFP-38 contract: no link degrades to plain text, never a dead control."""
+    row, _ = kroger.product_to_row(NO_PRICE, "Meat", "27401", NOW)
+    assert row["source_url"] is None
+    assert row["image_url"] is None
