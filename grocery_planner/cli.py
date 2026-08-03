@@ -26,6 +26,7 @@ from . import (
     formulas,
     importers,
     jobs,
+    nutrition,
     scheduler,
     service,
     usda,
@@ -817,6 +818,62 @@ def nutrition_sync() -> None:
             f"in the vendored snapshot and remain estimates: "
             f"{', '.join(result.unmatched_curated)}.",
             fg=typer.colors.YELLOW,
+        )
+
+
+@nutrition_app.command("classify")
+def nutrition_classify(
+    reclassify: bool = typer.Option(
+        False, "--reclassify",
+        help="Redo every food, not just unclassified ones. Use after editing the rules.",
+    ),
+    show: str = typer.Option(
+        None, "--show", "-s", help="List the foods classified as this kind."
+    ),
+) -> None:
+    """Work out which animal each protein food is (GFP-106).
+
+    Fills ``foods.protein_kind`` — chicken, beef, pork, turkey, lamb, fish,
+    shellfish — plus 'other' for anything that is not meat and 'unknown' where
+    the kind genuinely cannot be told. An unknown is never a guess: a
+    mislabelled cut is worse than an unlabelled one, because the label is what
+    gets acted on.
+
+    Cheap to re-run: only rows never classified are looked at.
+    """
+    from . import protein_kind as pk
+
+    conn = db.connect()
+    written = pk.classify_all(conn, reclassify=reclassify)
+    if written:
+        typer.secho(
+            f"Classified {sum(written.values())} food(s).", fg=typer.colors.GREEN
+        )
+    else:
+        typer.echo("Nothing new to classify.")
+
+    stats = pk.coverage(conn)
+    typer.echo(
+        f"{stats['total']} foods: {stats['meat']} meat, {stats['other']} not meat, "
+        f"{stats['unknown']} kind unknown, {stats['unclassified']} unclassified."
+    )
+    _print_table(
+        ["kind", "foods"],
+        [(kind, str(n)) for kind, n in sorted(
+            stats["by_kind"].items(), key=lambda kv: (-kv[1], kv[0])
+        )],
+    )
+
+    if show:
+        foods = nutrition.list_foods(kind=show, conn=conn)
+        if not foods:
+            typer.echo(f"No foods classified as {show!r}.")
+            raise typer.Exit()
+        _print_table(
+            ["food", "category", "protein/100g"],
+            [(f.name[:52], f.category or "-",
+              f"{f.protein_per_100g:.1f}" if f.protein_per_100g is not None else "-")
+             for f in foods[:40]],
         )
 
 
