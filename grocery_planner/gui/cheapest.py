@@ -21,6 +21,8 @@ as a bare "$1.49" invites a wrong buying decision from entirely correct data.
 """
 from __future__ import annotations
 
+import html
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
@@ -40,6 +42,11 @@ def _per_gram(value: float) -> str:
     return f"${value:.4f}"
 
 
+#: GFP-38's rule, carried here: these links reach a product or ad page and this
+#: app drives no checkout, so the label may never read "Buy now".
+LINK_TEXT = "View product"
+
+
 def describe(item: service.CheapestProtein) -> str:
     """One store's line, as rich text. Presentation only; no arithmetic here."""
     kind = f" <span>({item.kind})</span>" if item.kind else ""
@@ -49,9 +56,19 @@ def describe(item: service.CheapestProtein) -> str:
         price = f"{_money(item.price)} per {item.price_per_unit_uom}"
     else:
         price = _money(item.price)
+    # GFP-118. A missing URL degrades to plain text rather than a dead control
+    # -- the same rule gui/wheretobuy.py follows, and the reason a link here is
+    # worth having at all: every scraped row now carries one, but the legacy
+    # csv-import rows never will.
+    name = item.item_name
+    if item.source_url:
+        name = (
+            f'{item.item_name} — <a href="{html.escape(item.source_url, quote=True)}">'
+            f"{LINK_TEXT}</a>"
+        )
     return (
         f"<b>{item.label}</b> — {_per_gram(item.cost_per_gram_protein)}/g protein"
-        f"{kind}<br><span>{price} · {item.item_name}</span>"
+        f"{kind}<br><span>{price} · {name}</span>"
     )
 
 
@@ -77,6 +94,12 @@ class CheapestMeatStrip(QWidget):
         self.body = QLabel("")
         self.body.setWordWrap(True)
         self.body.setTextFormat(Qt.RichText)
+        # Without this the anchors render as blue text that does nothing when
+        # clicked, which is worse than plain text (GFP-38).
+        self.body.setOpenExternalLinks(True)
+        self.body.setToolTip(
+            "Opens the store's product page — this is a listing, not a checkout."
+        )
         layout.addWidget(self.body)
 
         self.items: list[service.CheapestProtein] = []

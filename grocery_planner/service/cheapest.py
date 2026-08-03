@@ -52,6 +52,12 @@ class CheapestProtein:
     sold_by: str | None = None
     price_per_unit: float | None = None
     price_per_unit_uom: str | None = None
+    # GFP-118: this panel answers "where is protein cheapest right now", so it
+    # is the first thing a nutritionist reads -- and it was the one place that
+    # could not be clicked through, while the grocery list could. The deal row
+    # this came from already carries both, so carrying them here costs nothing.
+    source_url: str | None = None
+    product_identifier: str | None = None
 
 
 def _store_label(store_key: str) -> str:
@@ -107,6 +113,7 @@ def cheapest_protein_by_store(
     # the unfiltered call.
     rows = own.execute(
         "SELECT d.store, d.item_name, d.sold_by, d.price_per_unit, d.price_per_unit_uom, "
+        "d.source_url, d.product_identifier, "
         "COALESCE(d.dollar_price, d.sale_price, d.regular_price) AS price, "
         "f.protein_kind AS kind "
         "FROM deals d "
@@ -145,6 +152,8 @@ def cheapest_protein_by_store(
                 sold_by=row["sold_by"],
                 price_per_unit=row["price_per_unit"],
                 price_per_unit_uom=row["price_per_unit_uom"],
+                source_url=row["source_url"],
+                product_identifier=row["product_identifier"],
             )
 
     return sorted(best.values(), key=lambda item: item.cost_per_gram_protein)
