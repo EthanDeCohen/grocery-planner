@@ -1,0 +1,110 @@
+"""The "cheapest meat protein" strip along the bottom of the window (GFP-107).
+
+Requested directly: alongside the trends chart, a **fixed** row per store saying
+what the cheapest animal protein on offer is right now, with the kind in
+parentheses.
+
+**Why this is not the chart.** The chart answers "is protein getting cheaper over
+time" and needs at least two days of history to draw anything. This answers "what
+should this client buy today, and where" and needs none — one scrape is enough.
+That makes it the only panel with something useful on the day the app is
+installed, which matters because a fresh install otherwise shows an empty chart
+and little else (GFP-104/GFP-105).
+
+Fixed height by construction: one row per store, and a store count is what it
+scales with. The numbers come from ``service.cheapest_protein_by_store``, so this
+module only draws them — the CLI can print the identical thing.
+
+**Denomination is shown, never assumed** (GFP-98). A ``soldBy=WEIGHT`` item's
+price buys ONE POUND while a UNIT item's price buys the package; rendering both
+as a bare "$1.49" invites a wrong buying decision from entirely correct data.
+"""
+from __future__ import annotations
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
+
+from .. import service
+
+#: Height is bounded by the store count, but a runaway registry should not be
+#: able to eat the window. Beyond this the strip scrolls rather than growing.
+MAX_VISIBLE_ROWS = 6
+
+
+def _money(value: float) -> str:
+    return f"${value:.2f}"
+
+
+def _per_gram(value: float) -> str:
+    """The precision the numbers actually differ by — cents would show ties."""
+    return f"${value:.4f}"
+
+
+def describe(item: service.CheapestProtein) -> str:
+    """One store's line, as rich text. Presentation only; no arithmetic here."""
+    kind = f" <span>({item.kind})</span>" if item.kind else ""
+    # GFP-98: say what the price buys. Without this a $1.49/lb cut looks cheaper
+    # than a $4.99 packet when the shopper may well pay more for the cut.
+    if item.sold_by == "WEIGHT" and item.price_per_unit_uom:
+        price = f"{_money(item.price)} per {item.price_per_unit_uom}"
+    else:
+        price = _money(item.price)
+    return (
+        f"<b>{item.label}</b> — {_per_gram(item.cost_per_gram_protein)}/g protein"
+        f"{kind}<br><span>{price} · {item.item_name}</span>"
+    )
+
+
+class CheapestMeatStrip(QWidget):
+    """Fixed bottom strip: the best animal-protein buy at each store, today."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.HLine)
+        divider.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(divider)
+
+        self.title = QLabel("Cheapest meat protein on offer")
+        font = self.title.font()
+        font.setBold(True)
+        self.title.setFont(font)
+        layout.addWidget(self.title)
+
+        self.body = QLabel("")
+        self.body.setWordWrap(True)
+        self.body.setTextFormat(Qt.RichText)
+        layout.addWidget(self.body)
+
+        self.items: list[service.CheapestProtein] = []
+        self.reload()
+
+    # ----------------------------------------------------------------- #
+    def reload(self) -> None:
+        self.items = service.cheapest_protein_by_store()
+
+        if self.items:
+            self.title.setVisible(True)
+            self.body.setText(
+                "<br>".join(describe(item) for item in self.items[:MAX_VISIBLE_ROWS])
+            )
+            return
+
+        # Two different silences, told apart rather than merged -- the same rule
+        # the trends pane follows. "Nothing scraped yet" is a thing to act on;
+        # "this week's ad has no resolvable meat" is not the user's fault and no
+        # amount of scraping fixes it today.
+        self.title.setVisible(False)
+        if service.has_price_history():
+            self.body.setText(
+                "No animal protein with a usable size in this week's offers, so "
+                "there is nothing to rank yet."
+            )
+        else:
+            self.body.setText(
+                "No price data yet — use Data ▸ Run scrape… to see the cheapest "
+                "meat protein at each store."
+            )

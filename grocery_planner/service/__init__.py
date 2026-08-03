@@ -9,6 +9,8 @@ nutrition and ingest:
 
 - :mod:`.deals` — deal query, ranking, filtering and export (GFP-16/GFP-17/GFP-8).
 - :mod:`.ingest` — pulling fresh deals from a store scraper into SQLite.
+- :mod:`.cheapest` — what to buy RIGHT NOW: the cheapest animal protein on
+  offer at each store, from `deals` rather than history (GFP-107).
 - :mod:`.trends` — price and $/g protein over time, by store or by food, from
   ``price_history`` (GFP-36, generalised to both metrics and both dimensions
   by GFP-40 so the chart and ``gplan trends`` share one definition).
@@ -25,6 +27,7 @@ directly, which was the inconsistency this ticket flagged.
 """
 from __future__ import annotations
 
+from .cheapest import CheapestProtein, cheapest_protein_by_store
 from .deals import (
     DEAL_TYPE_GROUPS,
     EXPORT_COLUMNS,
@@ -66,6 +69,7 @@ from .trends import (
 )
 
 __all__ = [
+    "CheapestProtein",
     "DEAL_TYPE_GROUPS",
     "DEFAULT_WINDOW_DAYS",
     "EXPORT_COLUMNS",
@@ -86,6 +90,7 @@ __all__ = [
     "all_scrapers",
     "available_scrapers",
     "best_deals",
+    "cheapest_protein_by_store",
     "count_deals",
     "deal_categories",
     "export_deals",

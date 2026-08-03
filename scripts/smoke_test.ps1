@@ -175,6 +175,10 @@ try {
     Test-Case "nutrition classify"       @("nutrition", "classify")                        0 "foods:"
     Test-Case "nutrition classify again" @("nutrition", "classify")                        0 "Nothing new to classify"
     Test-Case "nutrition classify show"  @("nutrition", "classify", "--show", "chicken")   0 "chicken"
+    # GFP-107: the imported sample deals carry no parseable size, so nothing is
+    # rankable -- which must be a plain sentence and exit 0, not an empty table.
+    Test-Case "cheapest (nothing rankable)" @("cheapest")                                  0 "Nothing to rank yet"
+    Test-Case "cheapest --all-protein"   @("cheapest", "--all-protein")                    0
     Test-Case "schedule remove"          @("schedule", "remove", "foodlion")               0 "Removed"
     Test-Case "schedule remove (gone)"   @("schedule", "remove", "foodlion")               1
     Test-Case "schedule run (none set)"  @("schedule", "run", "--once")                    1 "No schedules"

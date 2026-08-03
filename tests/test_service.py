@@ -10,6 +10,9 @@ from grocery_planner import service
 # that silently drops an export should fail here, not in a call site.
 # --------------------------------------------------------------------------- #
 PUBLIC_API = [
+    # GFP-107: "what should they buy today", from deals not history.
+    "CheapestProtein",
+    "cheapest_protein_by_store",
     "DEAL_TYPE_GROUPS",
     # GFP-36: the price-trends pane needs the numbers behind its chart from the
     # same front-end-agnostic layer as everything else, so service.trends is

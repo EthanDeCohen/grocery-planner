@@ -15,6 +15,7 @@ by side without several people editing one file:
 
 - :mod:`.roster`   — client roster, left of the main view (GFP-36)
 - :mod:`.trends`   — price-trends chart, right of it (GFP-36)
+- :mod:`.cheapest` — the cheapest-meat strip along the bottom (GFP-107)
 - :mod:`.client`   — client detail page (GFP-37 fills the body)
 - :mod:`.scrape`   — Data ▸ Run scrape…
 - :mod:`.formulas` — Settings ▸ Formulas…
@@ -36,9 +37,12 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QSplitter,
     QStackedWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from .. import service
+from .cheapest import CheapestMeatStrip
 from .client import ClientDetailPage
 from .formulas import FormulaDialog
 from .roster import RosterPane
@@ -100,13 +104,19 @@ class MainWindow(QMainWindow):
         self.schedule_action.triggered.connect(self.open_schedule)
         settings_menu.addAction(self.schedule_action)
 
-    def _build_central(self) -> QStackedWidget:
-        """Roster + trends, with the client detail page stacked behind them.
+    def _build_central(self) -> QWidget:
+        """Roster + trends, the client page stacked behind them, and the strip.
 
         A stack rather than a new window per client: the nutritionist moves
         between the roster and one client constantly during an intake call, and
         a second window to hunt for would be in the way. ``Alt+Left`` and the
         page's own back button both come back here.
+
+        GFP-107's cheapest-meat strip sits BELOW the stack rather than inside
+        either page, so it stays on screen while moving between the roster and a
+        client. It answers "where is protein cheapest today", which is as
+        relevant mid-consultation as it is on the roster — and putting it inside
+        one page would make it vanish exactly when a client is on screen.
         """
         self.roster = RosterPane()
         self.roster.client_selected.connect(self.show_client)
@@ -123,7 +133,15 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.stack.addWidget(self.split)
         self.stack.addWidget(self.client_page)
-        return self.stack
+
+        self.cheapest = CheapestMeatStrip()
+
+        central = QWidget()
+        column = QVBoxLayout(central)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.addWidget(self.stack, 1)     # the stack takes the slack...
+        column.addWidget(self.cheapest)     # ...so the strip keeps its own height
+        return central
 
     # ----------------------------------------------------------------- #
     # Navigation (GFP-36)
@@ -171,6 +189,7 @@ class MainWindow(QMainWindow):
     def _on_scrape_completed(self, summary: str) -> None:
         self.statusBar().showMessage(summary, 10000)
         self.trends.reload()             # a fresh day of prices moves the chart
+        self.cheapest.reload()           # ...and changes what is cheapest today
         schedule = self._dialogs.get("schedule")
         if schedule is not None:
             schedule.reload_schedules()  # the run is on the job record either way
