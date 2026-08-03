@@ -97,7 +97,7 @@ from typing import Any, Iterable
 import httpx
 
 from .. import credentials, db, matching
-from . import base
+from . import base, retry
 
 # The CLI/registry name. Distinct from STORE_KEY because this is a SECOND
 # source for a store that already has one: `harristeeter` is the Flipp weekly
@@ -335,6 +335,11 @@ class KrogerClient:
     def __init__(self, credentials: Credentials, timeout: float = 45.0):
         self._credentials = credentials
         self._http = httpx.Client(timeout=timeout)
+        # GFP-108: set by a caller that wants to SHOW a retry happening -- the
+        # GFP-103 scrape row, so it says "retrying" instead of sitting on
+        # "Scraping..." with no explanation. None means retry silently.
+        self._on_retry = None
+
         self._token: str | None = None
 
     def __enter__(self) -> "KrogerClient":
@@ -349,11 +354,18 @@ class KrogerClient:
     def token(self) -> str:
         if self._token:
             return self._token
-        resp = self._http.post(
-            TOKEN_URL,
-            auth=(self._credentials.client_id, self._credentials.client_secret),
-            data={"grant_type": "client_credentials", "scope": TOKEN_SCOPE},
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        # GFP-108: the token exchange is retried too. A 503 here failed the
+        # whole scrape before a single product had been asked for -- and a
+        # 401 still is NOT retried, because bad credentials stay bad.
+        resp = retry.request(
+            lambda: self._http.post(
+                TOKEN_URL,
+                auth=(self._credentials.client_id, self._credentials.client_secret),
+                data={"grant_type": "client_credentials", "scope": TOKEN_SCOPE},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            ),
+            what="Kroger token",
+            on_retry=self._on_retry,
         )
         if resp.status_code != 200:
             raise AuthFailedError(
@@ -365,10 +377,18 @@ class KrogerClient:
         return self._token
 
     def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
-        resp = self._http.get(
-            f"{API_BASE}{path}",
-            params=params,
-            headers={"Authorization": f"Bearer {self.token()}", "Accept": "application/json"},
+        # GFP-108. This is THE call the ticket was raised about: a full
+        # Harris Teeter run is ~20 of these, and one 503 at request 18 used to
+        # discard the 17 that had already worked.
+        resp = retry.request(
+            lambda: self._http.get(
+                f"{API_BASE}{path}",
+                params=params,
+                headers={"Authorization": f"Bearer {self.token()}",
+                         "Accept": "application/json"},
+            ),
+            what=f"Kroger {path}",
+            on_retry=self._on_retry,
         )
         if resp.status_code == 429:
             raise KrogerError(
