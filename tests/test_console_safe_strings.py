@@ -30,7 +30,12 @@ PACKAGE = pathlib.Path(__file__).resolve().parent.parent / "grocery_planner"
 CONSOLE_REACHABLE = ["cli.py", "bill.py", "savings.py", "records.py", "scheduler.py",
                      "jobs.py", "customers.py", "targets.py", "nutrition.py",
                      "preferences.py", "importers.py", "usda.py", "matching.py",
-                     "formulas.py", "credentials.py", "protein_kind.py", "db.py"]
+                     "formulas.py", "credentials.py", "protein_kind.py", "db.py",
+                     # Both print: config.py's SettingError text and problem
+                     # list are echoed verbatim by `gplan config`, and logs.py's
+                     # by `gplan logs`. Clean today; listed so they stay that
+                     # way, since neither module looks like output code.
+                     "config.py", "logs.py", "paths.py", "install_paths.py"]
 
 #: The console encoding to hold the line at. cp1252 is the default on a
 #: US/Western-European Windows install, which is the shipping target.
