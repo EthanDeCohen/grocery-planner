@@ -28,7 +28,9 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QSizePolicy,
+    QTabBar,
     QVBoxLayout,
     QWidget,
 )
@@ -70,6 +72,28 @@ WIDEST_RANGE = max(days for days, _ in RANGE_CHOICES)
 #: QComboBox.currentData() returns None for a missing role, and the two would
 #: then be indistinguishable.
 ALL_STORES = ""
+
+# GFP-109: two tabs rather than a default plus a hidden toggle. "Animal protein"
+# is meat and seafood only; "Overall" is every protein source, exactly as before.
+# Both stay first-class, and which question is on screen is legible at a glance --
+# a chart silently ranking a subset would be the same class of quiet lie this
+# pane already refuses elsewhere.
+#
+# ANIMAL PROTEIN LEADS AND IS THE DEFAULT, by product decision: meat is what the
+# tool is for, and the overall view's honest-but-useless answer (a pancake mix
+# won on $/g protein) is exactly what a nutritionist should NOT be shown first.
+# Overall stays one click away rather than being removed -- the data was never
+# the problem, the ranking was.
+TAB_ANIMAL, TAB_OVERALL = 0, 1
+TAB_LABELS = ("Animal protein", "Overall protein")
+#: Which tab a freshly-opened window lands on.
+DEFAULT_TAB = TAB_ANIMAL
+
+#: GFP-110: entries per page in the "Latest known" list. Two is the shape the
+#: user saw and asked to keep, and a fixed page keeps the pane a constant height
+#: however many stores exist -- the list would otherwise push the chart out as
+#: stores and per-client ZIPs (GFP-53) multiply.
+LATEST_PAGE_SIZE = 2
 
 _MARGIN_LEFT = 62
 _MARGIN_TOP, _MARGIN_BOTTOM = 14, 26
@@ -261,6 +285,18 @@ class TrendsPane(QWidget):
         self.title.setFont(font)
         layout.addWidget(self.title)
 
+        # GFP-109. A QTabBar, not a QTabWidget: both tabs draw the SAME chart,
+        # legend and list from one query with a single argument changed, so a
+        # QTabWidget's second page would either duplicate every widget or hold
+        # an empty placeholder. A bar is the honest widget for "one view, two
+        # questions".
+        self.tabs = QTabBar()
+        for label in TAB_LABELS:
+            self.tabs.addTab(label)
+        self.tabs.setCurrentIndex(DEFAULT_TAB)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        layout.addWidget(self.tabs)
+
         # A WIDGET wrapping the row, not a bare layout: GFP-104 has to hide the
         # selectors wholesale on an empty database, and a QLayout cannot be
         # hidden — only the widget holding it can.
@@ -280,13 +316,37 @@ class TrendsPane(QWidget):
         self.legend_layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.legend)
 
+        # GFP-110: the list pages two at a time, with the arrows beside it
+        # rather than below, so a one-page list looks identical to how it did
+        # before the arrows existed.
+        self.latest_row = QWidget()
+        latest_layout = QHBoxLayout(self.latest_row)
+        latest_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.prev_btn = QPushButton("◀")
+        self.next_btn = QPushButton("▶")
+        for button, tip in (
+            (self.prev_btn, "Previous stores"), (self.next_btn, "Next stores"),
+        ):
+            button.setFixedWidth(28)
+            button.setToolTip(tip)
+            button.setAutoDefault(False)      # must not steal Enter from the roster
+
         self.latest = QLabel("")
         self.latest.setWordWrap(True)
         self.latest.setTextFormat(Qt.RichText)
-        layout.addWidget(self.latest)
+
+        latest_layout.addWidget(self.prev_btn)
+        latest_layout.addWidget(self.latest, 1)
+        latest_layout.addWidget(self.next_btn)
+        layout.addWidget(self.latest_row)
+
+        self.prev_btn.clicked.connect(lambda: self._step_latest(-1))
+        self.next_btn.clicked.connect(lambda: self._step_latest(1))
 
         self._any_history = False   # replaced by the first _refresh_store_choices
         self._has_data = False      # replaced by the first reload()
+        self._latest_page = 0
         self.reload()
 
     # ----------------------------------------------------------------- #
@@ -369,7 +429,8 @@ class TrendsPane(QWidget):
         exactly what the user needs.
         """
         self.trend = service.PriceTrend(days=self.selected_days)
-        for widget in (self.title, self.selectors, self.chart, self.legend, self.latest):
+        for widget in (self.title, self.tabs, self.selectors,
+                       self.chart, self.legend, self.latest_row):
             widget.setVisible(False)
         self.subtitle.setVisible(True)
         self.subtitle.setText(
@@ -388,10 +449,12 @@ class TrendsPane(QWidget):
             self._show_nothing_yet()
             return
 
-        for widget in (self.title, self.selectors):
+        for widget in (self.title, self.tabs, self.selectors):
             widget.setVisible(True)
         trend = service.protein_price_trend(
-            days=self.selected_days, store=self.selected_store
+            days=self.selected_days,
+            store=self.selected_store,
+            meat_only=self.meat_only,
         )
         self.trend = trend
         self.chart.set_trend(trend)
@@ -399,25 +462,87 @@ class TrendsPane(QWidget):
         self._build_legend(trend)
 
         if trend.is_plottable:
+            # Naming the subset on screen, not just in the tab: a chart that
+            # ranks meat while its caption says "protein" is the quiet lie
+            # GFP-109 was filed about.
+            what = "animal protein" if self.meat_only else "protein"
             self.subtitle.setText(
-                f"Best $/g protein each day, last {trend.days} days. "
+                f"Best $/g {what} each day, last {trend.days} days. "
                 "Lower is better."
             )
         else:
             self.subtitle.setText(self._explain_empty(trend))
 
-        # Shown either way: it is the relief for the two light-mode series
-        # colours that sit under 3:1, and the only content at all when there
-        # is not yet enough history to plot.
-        rows = [
+        self._render_latest(trend)
+
+    # ----------------------------------------------------------------- #
+    # GFP-109 — the tabs
+    # ----------------------------------------------------------------- #
+    @property
+    def meat_only(self) -> bool:
+        """Is the Animal-protein tab showing? Drives the service's meat filter."""
+        return self.tabs.currentIndex() == TAB_ANIMAL
+
+    def _on_tab_changed(self, _index: int) -> None:
+        # The tabs show different series, so a page into the old list means
+        # nothing in the new one (GFP-110).
+        self._latest_page = 0
+        self.reload()
+
+    # ----------------------------------------------------------------- #
+    # GFP-110 — the latest-known list, two at a time
+    # ----------------------------------------------------------------- #
+    def latest_entries(self, trend: service.PriceTrend) -> list[str]:
+        """One rendered line per series that has a latest price."""
+        return [
             f"<b>{s.label}</b> — {_money_per_gram(s.latest.value)}/g "
             f"<span>({s.latest.item_name})</span>"
             for s in trend.series if s.latest
         ]
-        self.latest.setText(
-            ("Latest known:<br>" + "<br>".join(rows)) if rows else ""
-        )
-        self.latest.setVisible(bool(rows))
+
+    def page_count(self, total: int) -> int:
+        return max(1, -(-total // LATEST_PAGE_SIZE))   # ceiling division
+
+    def _step_latest(self, direction: int) -> None:
+        entries = self.latest_entries(self.trend)
+        pages = self.page_count(len(entries))
+        self._latest_page = max(0, min(self._latest_page + direction, pages - 1))
+        self._render_latest(self.trend)
+
+    def _render_latest(self, trend: service.PriceTrend) -> None:
+        """Shown whether or not the chart draws.
+
+        It is the relief for the two light-mode series colours that sit under
+        3:1, and the only content at all when there is not yet enough history
+        to plot — so it survives every empty case except a wholly empty
+        database (GFP-104).
+        """
+        entries = self.latest_entries(trend)
+        pages = self.page_count(len(entries))
+        # Clamped rather than reset: a reload that drops a store should not
+        # throw the user back to page 1, but a page that no longer exists must
+        # not render blank either.
+        self._latest_page = max(0, min(self._latest_page, pages - 1))
+
+        start = self._latest_page * LATEST_PAGE_SIZE
+        shown = entries[start:start + LATEST_PAGE_SIZE]
+
+        heading = "Latest known:"
+        if pages > 1:
+            heading += f" <span>({self._latest_page + 1}/{pages})</span>"
+        self.latest.setText(("<br>".join([heading, *shown])) if shown else "")
+
+        # Hidden, not merely disabled, when everything fits: a control that can
+        # never do anything is what GFP-104 just removed from this pane. At the
+        # ends they are DISABLED rather than hidden, so the arrows do not jump
+        # around under the cursor mid-use.
+        paged = pages > 1
+        for button in (self.prev_btn, self.next_btn):
+            button.setVisible(paged)
+        self.prev_btn.setEnabled(paged and self._latest_page > 0)
+        self.next_btn.setEnabled(paged and self._latest_page < pages - 1)
+        self.latest_row.setVisible(bool(shown))
+        self.latest.setVisible(bool(shown))
 
     def _explain_empty(self, trend: service.PriceTrend) -> str:
         """Why the chart is blank — the selectors made this ambiguous.
@@ -427,14 +552,37 @@ class TrendsPane(QWidget):
         data exists, the user just excluded it. Telling someone to scrape when
         they only need to widen a dropdown sends them off to fix nothing.
         """
-        narrowed = self.selected_store is not None or self.selected_days < WIDEST_RANGE
+        narrowed = (
+            self.selected_store is not None
+            or self.selected_days < WIDEST_RANGE
+            or self.meat_only
+        )
         if trend.observed_days == 0 and self._any_history and narrowed:
             store = self.store_select.currentText() if self.selected_store else "any store"
+            # WHICH narrowing emptied this? Blaming the tab whenever it happens
+            # to be on sends someone to the Overall tab that is just as empty,
+            # and asserting "there is other protein" without looking would be
+            # this pane telling the user something it never checked. So ask:
+            # would dropping ONLY the meat filter, over this same window and
+            # store, find anything? One extra query, and only ever on the empty
+            # path.
+            if self.meat_only and self._has_other_protein():
+                return (
+                    f"No animal protein for {store} in the last {trend.days} days. "
+                    "There is other protein on record — see the Overall protein tab."
+                )
             return (
                 f"No protein prices for {store} in the last {trend.days} days. "
                 "There is history further back — widen the range, or pick All stores."
             )
         return trend.reason
+
+    def _has_other_protein(self) -> bool:
+        """Is there non-meat protein in exactly this window and store?"""
+        wider = service.protein_price_trend(
+            days=self.selected_days, store=self.selected_store, meat_only=False
+        )
+        return wider.observed_days > 0
 
     def _build_legend(self, trend: service.PriceTrend) -> None:
         while self.legend_layout.count():
