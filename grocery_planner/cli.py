@@ -8,6 +8,7 @@ Local-first commands over the SQLite store:
     gplan records           all-time record low/high per item (GFP-75)
     gplan trends            price / $/g protein over time (GFP-40)
     gplan config            show global settings and where each came from
+    gplan logs              where the logs are, and the tail of the current one
     gplan db-path           print the database location
     gplan client ...        add/edit/remove clients (GFP-33)
     gplan formula ...       manage user-defined formulas
@@ -27,6 +28,7 @@ from . import (
     db,
     config as app_config,
     formulas,
+    logs,
     importers,
     jobs,
     nutrition,
@@ -38,6 +40,11 @@ from . import records as rec
 from .scrapers import SCRAPERS
 from .service import clients as client_service
 from .stores import BY_KEY
+
+# GFP-86: configure logging once, as the process starts. Idempotent, never
+# raises, and degrades to console-only if the log directory cannot be created --
+# diagnostics must not be a reason the app fails to run.
+logs.setup()
 
 app = typer.Typer(add_completion=False, help="Local-first grocery price/deal planner.")
 formula_app = typer.Typer(help="Manage user-defined formulas.")
@@ -137,7 +144,14 @@ def scrape(
     zip_code = postal_code or scraper.DEFAULT_POSTAL_CODE
     typer.echo(f"Scraping {scraper.MERCHANT} weekly ad for {zip_code} ...")
     try:
-        result = service.run_scrape(store, postal_code=postal_code, force=force)
+        # GFP-86/GFP-105: the TRACKED path, not service.run_scrape directly.
+        # Two things followed from the CLI bypassing it: nothing was logged, and
+        # -- worse -- no scraping_jobs row was written, so `gplan scrape` was
+        # invisible to jobs.last_success. The app would then decide a refresh
+        # was still due and scrape the same store AGAIN on next launch, which
+        # is precisely the double-scrape GFP-105 exists to prevent. A scrape is
+        # a scrape whoever started it.
+        result = jobs.run_tracked_scrape(store, postal_code=postal_code, force=force)
     except service.ScrapeGuardError as exc:
         # GFP-71: without --force, a guard tripping here used to be a dead
         # end -- nothing user-facing could pass force=True to run_scrape(),
@@ -664,6 +678,40 @@ def client_groceries(
         f"Wrote {len(glist.items)} item(s) for {glist.days} days to {written}",
         fg=typer.colors.GREEN,
     )
+
+
+@app.command("logs")
+def logs_cmd(
+    tail: int = typer.Option(20, "--tail", "-n", help="Show the last N lines (0 = none)."),
+    path_only: bool = typer.Option(False, "--path", help="Print the log file path only."),
+) -> None:
+    """Where the logs are, and the tail of the current one (GFP-86).
+
+    Logs prune themselves -- nobody administers this machine -- so this is also
+    the honest place to see how much history actually exists.
+    """
+    target = logs.log_path()
+    if path_only:
+        typer.echo(str(target))
+        return
+
+    typer.echo(f"Log file: {target}")
+    typer.echo(f"Retention: {logs.retention_days()} days "
+               f"(config `log_retention_days`), rotating at "
+               f"{logs.MAX_BYTES // 1024 // 1024} MB x {logs.BACKUP_COUNT} files")
+    if not target.exists():
+        typer.echo("No log file yet - it is created the first time something logs.")
+        return
+
+    rotated = sorted(p for p in target.parent.glob(f"{target.name}*") if p != target)
+    total = target.stat().st_size + sum(p.stat().st_size for p in rotated)
+    typer.echo(f"{len(rotated) + 1} file(s), {total / 1024:.0f} KB total")
+
+    if tail:
+        lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+        typer.echo("")
+        for line in lines[-tail:]:
+            typer.echo(f"  {line}")
 
 
 @app.command("config")

@@ -21,7 +21,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from . import db, service
+from . import db, logs, service
 
 RUNNING = "running"
 SUCCEEDED = "succeeded"
@@ -146,15 +146,27 @@ def run_tracked_scrape(
     to prevent.
     """
     own = conn or db.connect()
+    log = logs.get_logger(__name__)
     job_id = start_job(own, store_key)
+    # GFP-86: this is the unattended path -- the scheduler (GFP-7) and the
+    # coming OS timer (GFP-102) both arrive here with nobody watching. The
+    # scraping_jobs row records THAT a run failed; the log records enough to
+    # work out why afterwards.
+    log.info("scrape started: store=%s postal_code=%s force=%s job=%s",
+             store_key, postal_code or "(configured)", force, job_id)
     try:
         checkpoint(own, job_id, "fetching flyer")
         result = service.run_scrape(
             store_key, postal_code=postal_code, conn=own, force=force
         )
     except Exception as exc:
+        # exception() rather than error(): a traceback is the whole point of a
+        # log nobody was present to watch.
+        log.exception("scrape FAILED: store=%s job=%s", store_key, job_id)
         fail_job(own, job_id, f"{type(exc).__name__}: {exc}")
         raise
     stats = result.get("stats", {})
+    log.info("scrape ok: store=%s job=%s stored=%s", store_key, job_id,
+             stats.get("total", "?"))
     finish_job(own, job_id, f"stored {stats.get('total', '?')} deals")
     return {**result, "job_id": job_id}
