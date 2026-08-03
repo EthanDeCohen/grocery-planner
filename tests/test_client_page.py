@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from grocery_planner import bill, db, preferences  # noqa: E402
 from grocery_planner.customers import Customer, CustomerRepository  # noqa: E402
+from grocery_planner.gui import clienttrend  # noqa: E402
 from grocery_planner.gui.client import ClientDetailPage  # noqa: E402
 from grocery_planner.gui.wheretobuy import LINK_TEXT  # noqa: E402
 
@@ -65,6 +66,35 @@ def _deal(store, item_name, price, food_id, source_url=None):
     conn.commit()
 
 
+def _history(store, item_name, price, days_ago_list=(2, 1, 0)):
+    """Seed price_history, which the trend chart reads (GFP-39/GFP-129).
+
+    The deals table is REPLACED by every scrape; price_history is appended to.
+    A test that only inserts deals therefore has a chart with nothing to draw,
+    which is correct behaviour and not what these tests are about.
+    """
+    from datetime import date, timedelta
+
+    conn = db.connect()
+    today = date(2026, 8, 3)
+    for offset in days_ago_list:
+        conn.execute(
+            "INSERT INTO price_history(store, item_name, dollar_price, captured_at, "
+            "postal_code) VALUES (?, ?, ?, ?, ?)",
+            (store, item_name, price,
+             (today - timedelta(days=offset)).isoformat(), "27401"),
+        )
+    conn.commit()
+
+
+def _meat(food_id, kind="chicken"):
+    """Mark a food as animal protein -- the chart is meat_only, matching the
+    main window's default tab (GFP-110)."""
+    conn = db.connect()
+    conn.execute("UPDATE foods SET protein_kind=? WHERE id=?", (kind, food_id))
+    conn.commit()
+
+
 def _entries(list_widget):
     return [
         list_widget.item(i).text()
@@ -106,17 +136,22 @@ def _line_rows(panel):
     return out
 
 
-def test_the_page_has_two_columns(page):
-    """GFP-123 condensed three into two.
+def test_the_page_has_biometrics_bill_and_trend(page):
+    """Still three columns, but not the same three.
 
-    Where-to-buy was a separate panel listing the SAME items as the bill in
-    different words, and the user read the pair as two unrelated boxes -- which
-    is what two bordered rectangles of equal weight say. The store and the ad
-    link now live on each item's own row inside the bill.
+    GFP-123 removed where-to-buy -- it was a separate panel listing the SAME
+    items as the bill in different words, and the pair read as two unrelated
+    boxes. The store and the ad link now live on each item's own row inside
+    the bill.
+
+    GFP-129 took the space with something the page previously could not answer
+    at all: this client's prices over time, against everybody's.
     """
-    assert page.columns.count() == 2
+    assert page.columns.count() == 3
     assert page.columns.widget(0) is page.biometrics
     assert page.columns.widget(1) is page.bill_panel
+    assert page.columns.widget(2) is page.trend
+    assert not page.where_to_buy.isVisibleTo(page)
 
 
 def test_loading_a_client_fills_every_column(page):
@@ -431,3 +466,69 @@ def test_the_excluded_panel_is_hidden_when_nothing_was_excluded(page):
     page.show_client(ana.id)
     if not page.bill_panel.excluded_label.text():
         assert page.bill_panel.excluded_label.isHidden() or True
+
+
+# --------------------------------------------------------------------------- #
+# GFP-129: the client's own series, beside the optimiser's
+# --------------------------------------------------------------------------- #
+def test_the_chart_draws_the_baseline_for_a_client_with_no_preferences(page):
+    """Two identical lines look like a rendering fault, so draw one and say
+    why there is only one."""
+    food_id = _food("Test Chicken", "chicken", 25.0)
+    _meat(food_id)
+    _deal("harristeeter", "Chicken Breast 16 oz", 5.00, food_id)
+    _history("harristeeter", "Chicken Breast 16 oz", 5.00)
+    ana = _client()
+    page.show_client(ana.id)
+
+    labels = [s.label for s in page.trend.chart._trend.series]
+    assert labels == [clienttrend.BASELINE_LABEL]
+    assert "no protein preferences" in page.trend.subtitle.text().lower()
+
+
+def test_ticking_a_preference_adds_a_second_series(page):
+    """The client line joins the optimiser line; it never replaces it."""
+    food_id = _food("Test Chicken", "chicken", 25.0)
+    _meat(food_id)
+    _deal("harristeeter", "Chicken Breast 16 oz", 5.00, food_id)
+    _history("harristeeter", "Chicken Breast 16 oz", 5.00)
+    ana = _client()
+    page.show_client(ana.id)
+    page.bill_panel._boxes["chicken"].setChecked(True)
+
+    labels = [s.label for s in page.trend.chart._trend.series]
+    assert clienttrend.BASELINE_LABEL in labels, "the optimiser line was replaced"
+    assert len(labels) == 2
+
+
+def test_the_optimiser_series_is_unchanged_by_the_clients_preferences(page):
+    """The constraint stated three times: this ticket ADDS a series."""
+    food_id = _food("Test Chicken", "chicken", 25.0)
+    _meat(food_id)
+    _deal("harristeeter", "Chicken Breast 16 oz", 5.00, food_id)
+    _history("harristeeter", "Chicken Breast 16 oz", 5.00)
+    ana = _client()
+    page.show_client(ana.id)
+    before = [
+        (p.day, p.value)
+        for s in page.trend.chart._trend.series
+        if s.label == clienttrend.BASELINE_LABEL
+        for p in s.points
+    ]
+
+    page.bill_panel._boxes["chicken"].setChecked(True)
+    after = [
+        (p.day, p.value)
+        for s in page.trend.chart._trend.series
+        if s.label == clienttrend.BASELINE_LABEL
+        for p in s.points
+    ]
+    assert after == before
+
+
+def test_no_client_clears_the_chart(page):
+    ana = _client()
+    page.show_client(ana.id)
+    page.trend.clear()
+    assert page.trend.chart._trend.series == []
+    assert "No client selected" in page.trend.subtitle.text()
