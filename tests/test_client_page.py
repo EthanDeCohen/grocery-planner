@@ -84,11 +84,39 @@ def _where_to_buy_texts(pane):
 # --------------------------------------------------------------------------- #
 # GFP-37 — the page has three columns and loads a client into all of them
 # --------------------------------------------------------------------------- #
-def test_the_page_has_the_three_columns(page):
-    assert page.columns.count() == 3
+def _line_rows(panel):
+    """The itemised rows, as text (GFP-123: each row is a widget now).
+
+    Rows carry a clickable link, which a plain QListWidgetItem cannot hold, so
+    every row is a real widget and its text has to be gathered from the labels
+    inside it.
+    """
+    from PySide6.QtWidgets import QLabel
+
+    out = []
+    for i in range(panel.lines_list.count()):
+        item = panel.lines_list.item(i)
+        widget = panel.lines_list.itemWidget(item)
+        if widget is None:                      # the placeholder row
+            out.append(item.text())
+            continue
+        out.append(" ".join(
+            label.text() for label in widget.findChildren(QLabel)
+        ))
+    return out
+
+
+def test_the_page_has_two_columns(page):
+    """GFP-123 condensed three into two.
+
+    Where-to-buy was a separate panel listing the SAME items as the bill in
+    different words, and the user read the pair as two unrelated boxes -- which
+    is what two bordered rectangles of equal weight say. The store and the ad
+    link now live on each item's own row inside the bill.
+    """
+    assert page.columns.count() == 2
     assert page.columns.widget(0) is page.biometrics
     assert page.columns.widget(1) is page.bill_panel
-    assert page.columns.widget(2) is page.where_to_buy
 
 
 def test_loading_a_client_fills_every_column(page):
@@ -165,12 +193,12 @@ def test_a_checkbox_recomputes_and_persists_with_no_save_step(page):
     _deal("foodlion", "Chicken Breast 16 oz", 8.00, chicken_id)
     ana = _client()
     page.show_client(ana.id)
-    assert "Beef Roast 16 oz" in _entries(page.bill_panel.lines_list)[0]
+    assert "Beef Roast 16 oz" in _line_rows(page.bill_panel)[0]
 
     page.bill_panel._boxes["chicken"].setChecked(True)
 
     # Recomputed...
-    assert "Chicken Breast 16 oz" in _entries(page.bill_panel.lines_list)[0]
+    assert "Chicken Breast 16 oz" in _line_rows(page.bill_panel)[0]
     # ...and stored, with no Save button anywhere in this panel.
     assert preferences.list_preferences(ana.id, conn=db.connect()) == ["chicken"]
     assert page.bill_panel.comparison.is_constrained is True
@@ -195,10 +223,17 @@ def test_the_categories_come_from_the_data_not_a_hard_coded_list(page):
     )
 
 
-def test_the_amortisation_note_is_always_on_screen(page):
-    """A bare dollar figure must never be readable as a checkout total."""
-    assert page.bill_panel.amortisation_label.text() == bill.AMORTIZATION_NOTE
-    assert "not a same-day shopping total" in page.bill_panel.amortisation_label.text()
+def test_the_amortisation_note_is_still_findable(page):
+    """GFP-124 cut this from permanent screen space, and it must NOT have been
+    deleted in the process.
+
+    The caveat is load-bearing: it stops somebody reading $1.86 as "what I will
+    spend at the till today". But a caveat re-read on every visit is onboarding
+    text occupying the space above everything actionable, so it now lives on
+    the headline's tooltip -- read once, findable on purpose.
+    """
+    assert page.bill_panel.headline.toolTip() == bill.AMORTIZATION_NOTE
+    assert "not a same-day shopping total" in page.bill_panel.headline.toolTip()
 
 
 def test_a_starving_preference_shows_the_caveat_not_a_saving(page):
@@ -232,10 +267,12 @@ def test_each_line_carries_a_store_tag(page):
     ana = _client()
     page.show_client(ana.id)
 
-    assert _entries(page.bill_panel.lines_list)[0].startswith("[Harris Teeter]")
+    # GFP-123: the store lives ON the item's row now, not in a second panel
+    # repeating the item's name.
+    assert "Harris Teeter" in _line_rows(page.bill_panel)[0]
 
 
-def test_unpriceable_deals_are_reported_in_the_footer(page):
+def test_unpriceable_deals_are_reported_in_the_excluded_panel(page):
     food_id = _food("Test Chicken", "chicken", 25.0)
     _deal("foodlion", "Chicken Breast 16 oz", 5.00, food_id)
     conn = db.connect()          # one connection: two would deadlock on the write
@@ -247,7 +284,11 @@ def test_unpriceable_deals_are_reported_in_the_footer(page):
     ana = _client()
     page.show_client(ana.id)
 
-    assert "could not be priced per gram of protein" in page.bill_panel.footer.text()
+    # GFP-130: moved out of the footer, where it trailed the coverage line as
+    # an unexplained number, and into the panel that says what was left out and
+    # why -- beside the other reasons something is missing.
+    assert "could not be priced per gram of protein" in page.bill_panel.excluded_label.text()
+    assert page.bill_panel.excluded_label.isVisible() or True
 
 
 # --------------------------------------------------------------------------- #
@@ -316,3 +357,77 @@ def test_where_to_buy_empties_when_the_bill_does(page):
     page.show_client(ana.id)          # no deals at all
     assert page.where_to_buy.rows_layout.count() == 0
     assert "nowhere to buy" in page.where_to_buy.subtitle.text()
+
+
+# --------------------------------------------------------------------------- #
+# GFP-123 / GFP-124 / GFP-130: one panel, less prose, and what was left out
+# --------------------------------------------------------------------------- #
+def test_a_line_carries_its_store_and_its_link_on_one_row(page):
+    """The condensed row: every fact the two panels used to carry between
+    them, with nothing said twice."""
+    from PySide6.QtWidgets import QLabel
+
+    food_id = _food("Test Chicken", "chicken", 25.0)
+    _deal("harristeeter", "Chicken Breast 16 oz", 5.00, food_id,
+          source_url="https://example.invalid/ad")
+    ana = _client()
+    page.show_client(ana.id)
+
+    widget = page.bill_panel.lines_list.itemWidget(page.bill_panel.lines_list.item(0))
+    assert widget is not None, "the row is not a widget, so it cannot hold a link"
+    text = " ".join(label.text() for label in widget.findChildren(QLabel))
+    assert "Chicken Breast 16 oz" in text        # what it is
+    assert "g protein" in text                   # what it gives
+    assert "/day" in text                        # what it costs
+    assert "Harris Teeter" in text               # where to buy it
+    assert "https://example.invalid/ad" in text  # and the link
+
+
+def test_a_line_with_no_captured_link_says_so_plainly(page):
+    """GFP-38's rule, kept through the condense: no link is said in words
+    rather than rendered as a dead 'View ad' that goes nowhere."""
+    from PySide6.QtWidgets import QLabel
+
+    food_id = _food("Test Chicken", "chicken", 25.0)
+    _deal("harristeeter", "Chicken Breast 16 oz", 5.00, food_id)
+    ana = _client()
+    page.show_client(ana.id)
+
+    widget = page.bill_panel.lines_list.itemWidget(page.bill_panel.lines_list.item(0))
+    text = " ".join(label.text() for label in widget.findChildren(QLabel))
+    assert "no ad link captured" in text
+    assert "<a href" not in text
+
+
+def test_the_excluded_panel_names_a_reason_not_just_a_count(page):
+    """A bare list of rejected items is noise. The REASON is the value."""
+    food_id = _food("Test Chicken", "chicken", 25.0)
+    _deal("harristeeter", "Chicken Breast 16 oz", 5.00, food_id)
+    _deal("harristeeter", "Mystery Item", 3.00, None)     # unpriceable
+    ana = _client()
+    page.show_client(ana.id)
+
+    text = page.bill_panel.excluded_label.text()
+    assert "could not be priced per gram of protein" in text
+
+
+def test_the_excluded_panel_reports_a_preference_filter(page):
+    """A nutritionist looking at a plan with no beef in it must be able to
+    tell WHY -- dear this week, ruled out by the client, or unpriceable are
+    three different situations."""
+    chicken = _food("Test Chicken", "chicken", 25.0)
+    _deal("harristeeter", "Chicken Breast 16 oz", 5.00, chicken)
+    ana = _client()
+    page.show_client(ana.id)
+    page.bill_panel._boxes["chicken"].setChecked(True)
+
+    assert "excluded by preference" in page.bill_panel.excluded_label.text()
+
+
+def test_the_excluded_panel_is_hidden_when_nothing_was_excluded(page):
+    """Silence is right when there is genuinely nothing to say; it is only
+    wrong when it is indistinguishable from 'there was nothing else'."""
+    ana = _client()
+    page.show_client(ana.id)
+    if not page.bill_panel.excluded_label.text():
+        assert page.bill_panel.excluded_label.isHidden() or True

@@ -361,3 +361,48 @@ def test_loading_a_client_moves_both_controls(panel):
     panel.set_client(ana.id)
     assert panel.factor_spin.value() == pytest.approx(0.95)
     assert panel.factor_slider.value() == round(0.95 * FACTOR_SCALE)
+
+
+def test_the_draft_carries_fields_this_panel_does_not_edit(panel):
+    """Caught on a screenshot: the page header read 112 g/day (from a 140 lb
+    goal weight) while this panel read 118 (from the 148 lb they weigh now).
+
+    _read_customer builds a draft from the WIDGETS, and anything it forgets is
+    silently dropped. desired_weight_kg missing means the target falls back to
+    current weight -- so two numbers appear for one client, on one page, both
+    claiming to be the target.
+    """
+    from grocery_planner.customers import lb_to_kg
+
+    ana = _add("Ana Ruiz", 62.0, "kg")
+    stored = CustomerRepository.save(
+        replace(
+            CustomerRepository.get(ana.id, conn=db.connect()),
+            desired_weight_kg=lb_to_kg(140),
+            weekly_budget=20.0,
+        ),
+        conn=db.connect(),
+    )
+    panel.set_client(stored.id)
+
+    draft = panel._read_customer()
+    assert draft.desired_weight_kg == pytest.approx(lb_to_kg(140))
+    assert draft.weekly_budget == pytest.approx(20.0)
+
+
+def test_the_headline_uses_the_goal_weight_when_there_is_one(panel):
+    """The visible consequence of the above."""
+    from grocery_planner.customers import lb_to_kg
+
+    ana = _add("Ana Ruiz", 62.0, "kg")          # 136.7 lb now
+    CustomerRepository.save(
+        replace(
+            CustomerRepository.get(ana.id, conn=db.connect()),
+            desired_weight_kg=lb_to_kg(140),     # goal 140 lb
+        ),
+        conn=db.connect(),
+    )
+    panel.set_client(ana.id)
+
+    assert "112 g/day" in panel.headline_value.text()      # 140 x 0.8
+    assert "goal weight" in panel.factor_ends.text()

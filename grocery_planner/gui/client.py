@@ -114,8 +114,18 @@ class ClientDetailPage(QWidget):
         self.columns = QSplitter()
         self.columns.addWidget(self.biometrics)
         self.columns.addWidget(self.bill_panel)
-        self.columns.addWidget(self.where_to_buy)
-        self.columns.setSizes(list(COLUMN_SIZES))
+        # GFP-123: where-to-buy is no longer a column. It was a second panel
+        # listing the SAME items as the bill in different words, and two
+        # bordered boxes of equal weight read as two unrelated things. The
+        # store and the ad link now sit on each item's own row inside the bill.
+        #
+        # The pane itself is kept and still fed, because it is the only place
+        # GFP-38's per-line denomination notes ("sold by weight (per lb)")
+        # live; it is simply not in the layout. Hiding rather than deleting
+        # keeps that behaviour available for a ticket that wants it back
+        # without resurrecting it from history.
+        self.where_to_buy.setVisible(False)
+        self.columns.setSizes(list(COLUMN_SIZES[:2]))
         layout.addWidget(self.columns, 1)
 
         # A biometric save changes the target, which changes the bill, which

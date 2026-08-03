@@ -447,6 +447,17 @@ class BiometricsPanel(QWidget):
             sex=self.sex_edit.text().strip() or None,
             activity_level=self.activity_edit.text().strip() or None,
             goal=self.goal_edit.text().strip() or None,
+            # GFP-132/GFP-127: this panel does not edit either of these, but it
+            # must CARRY them or the draft silently loses them -- and a draft
+            # without desired_weight_kg falls back to CURRENT weight, so the
+            # headline here would disagree with the page header above it.
+            #
+            # Caught on screen: the header read 112 g/day (from a 140 lb goal)
+            # while this panel read 118 (from the 148 lb they weigh now). Two
+            # numbers for one client, on one page, both claiming to be the
+            # target.
+            desired_weight_kg=self.customer.desired_weight_kg if self.customer else None,
+            weekly_budget=self.customer.weekly_budget if self.customer else None,
             protein_factor=self.factor_spin.value(),
             notes=self.notes_edit.text().strip() or None,
             created_at=self.customer.created_at if self.customer else None,
