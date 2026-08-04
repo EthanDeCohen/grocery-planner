@@ -182,6 +182,45 @@ foreach ($doc in @("INSTALL.md", "UNINSTALL.md", "uninstall.ps1")) {
 }
 
 # --------------------------------------------------------------------------- #
+# 3b. The bundled Kroger credential (GFP-146).
+#
+# v1 ships with the API key so that a customer does not have to register an
+# application at developer.kroger.com. It goes into the USER-DATA dir, not next
+# to the binary and never as a constant inside it, and that placement is the
+# whole point of the ticket: a key in a binary is recoverable either way, but a
+# key in a file can be ROTATED with a file swap, while a key in a binary needs
+# a rebuild, a re-release, and every user to notice and act. Kroger's 10,000
+# calls/day ceiling is per credential, so one extracted key is one revocation
+# for everybody -- the recovery path is the thing worth protecting.
+#
+# GFP-147 replaces this with a hosted key. Until then the risk is bounded and
+# taken knowingly.
+#
+# NEVER OVERWRITES. An operator or developer with their own credential already
+# in place keeps it. Silently replacing someone's working key with the shared
+# one would move them onto a quota pool they did not ask to share, and they
+# would have no way to tell that it had happened.
+# --------------------------------------------------------------------------- #
+$credentialName = "kroger-env.config"
+$bundledCredential = Join-Path $sourceDir $credentialName
+if (Test-Path $bundledCredential) {
+    $dataDir = Join-Path $env:LOCALAPPDATA "grocery-planner\grocery-planner"
+    $credentialTarget = Join-Path $dataDir $credentialName
+    if (Test-Path $credentialTarget) {
+        Write-Skip "Kroger credential already present -- keeping yours"
+    } else {
+        Invoke-Action "install Kroger credential" {
+            New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+            Copy-Item -LiteralPath $bundledCredential -Destination $credentialTarget -Force
+        }.GetNewClosure()
+    }
+} else {
+    # A CLI-only or credential-free build is legitimate; the app already tells
+    # the user how to configure one via `gplan credentials`.
+    Write-Skip "no Kroger credential bundled -- run 'gplan credentials' to see what is needed"
+}
+
+# --------------------------------------------------------------------------- #
 # 4. Prove the thing that was installed actually runs.
 #
 # A copy that succeeded is not an install that worked: a binary built against

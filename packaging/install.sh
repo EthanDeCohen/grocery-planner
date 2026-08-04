@@ -157,6 +157,45 @@ for doc in INSTALL.md UNINSTALL.md uninstall.sh; do
 done
 [ "$DRY_RUN" -eq 0 ] && [ -f "$SUPPORT_DIR/uninstall.sh" ] && chmod +x "$SUPPORT_DIR/uninstall.sh"
 
+# --------------------------------------------------------------------------- #
+# 3b. The bundled Kroger credential (GFP-146).
+#
+# v1 ships with the API key so a customer does not have to register their own
+# application at developer.kroger.com. It goes into the app's USER-DATA dir --
+# never next to the binary and never as a constant inside it. That placement is
+# the point: a key in a binary is recoverable either way, but a key in a file
+# can be ROTATED with a file swap, while a key in a binary needs a rebuild, a
+# re-release, and every user to notice and act. Kroger's 10,000 calls/day
+# ceiling is per credential, so one extracted key is one revocation for
+# everybody. GFP-147 replaces this with a hosted key.
+#
+# NOTE THE PATH. This is platformdirs' macOS user-data dir, which is NOT
+# $SUPPORT_DIR -- the binaries install under ~/.local/share, but the app reads
+# its data from ~/Library/Application Support. Putting the credential beside
+# the binary would leave the app looking somewhere else and reporting no
+# credentials at all.
+# --------------------------------------------------------------------------- #
+CREDENTIAL_NAME="kroger-env.config"
+DATA_DIR="$HOME/Library/Application Support/grocery-planner"
+if [ ! -f "$SOURCE_DIR/$CREDENTIAL_NAME" ]; then
+    # A credential-free build is legitimate; the app already explains what is
+    # needed via `gplan credentials`.
+    skip "no Kroger credential bundled -- run 'gplan credentials' to see what is needed"
+elif [ -n "$PREFIX" ]; then
+    # A custom prefix means a test install, and the data dir is outside it. A
+    # test install that dropped a shared credential into the real profile would
+    # not be a test install.
+    skip "Kroger credential skipped (--prefix given; it would land outside the prefix)"
+elif [ -f "$DATA_DIR/$CREDENTIAL_NAME" ]; then
+    # NEVER OVERWRITE. Replacing an operator's own key with the shared one
+    # would move them onto a quota pool they did not ask to share, silently.
+    skip "Kroger credential already present -- keeping yours"
+else
+    run "create $DATA_DIR" mkdir -p "$DATA_DIR"
+    run "install Kroger credential" \
+        cp -f "$SOURCE_DIR/$CREDENTIAL_NAME" "$DATA_DIR/$CREDENTIAL_NAME"
+fi
+
 if [ -d "$APP_SRC" ]; then
     run "create $APPS_DIR" mkdir -p "$APPS_DIR"
     # rm first: cp -R onto an existing bundle MERGES rather than replaces, so
