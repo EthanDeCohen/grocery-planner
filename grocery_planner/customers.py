@@ -84,6 +84,44 @@ DEFAULT_PROTEIN_FACTOR = 0.8
 MIN_PROTEIN_FACTOR = 0.8
 MAX_PROTEIN_FACTOR = 1.0
 
+# --------------------------------------------------------------------------- #
+# Controlled vocabularies (GFP-138)
+#
+# These were free text, and the reason is recorded in gui/biometrics.py: the
+# schema has no CHECK constraint on sex, activity_level or goal
+# (0008_GFP-28.ddl makes them plain TEXT), so the panel declined to invent a
+# list the database did not enforce. That docstring anticipated this ticket --
+# "a narrower enum can be layered on later without a data migration if a ticket
+# asks for one" -- and the user has now asked.
+#
+# Defined HERE rather than in the GUI so the CLI, the GUI and any validation
+# share one list. Still not a CHECK constraint: the column stays TEXT, so an
+# existing row holding something else is displayed rather than rejected. That
+# is deliberate -- see BLANK below.
+# --------------------------------------------------------------------------- #
+
+#: Offered when nothing is on file, and a legitimate answer. A required field
+#: with two options can be wrong for a real person, and nothing in this app
+#: reads `sex` for any calculation -- no formula references it. Forcing a
+#: choice would collect a datum the software does not use and cannot always
+#: get right.
+BLANK = ""
+
+SEXES: tuple[str, ...] = (BLANK, "female", "male")
+
+#: The conventional five-point scale. Which one the nutritionist actually uses
+#: is hers to say; this is the common one and is easy to change in one place.
+ACTIVITY_LEVELS: tuple[str, ...] = (
+    BLANK, "sedentary", "light", "moderate", "active", "very active",
+)
+
+#: cut / maintain / gain is the common trio. "lean mass" and "recomp" appear
+#: in real notes, so both are offered rather than forcing them into one of the
+#: three.
+GOALS: tuple[str, ...] = (
+    BLANK, "cut", "maintain", "gain", "lean mass", "recomp",
+)
+
 # Exact international avoirdupois pound (the 1959 international
 # yard-and-pound agreement definition). Deliberately its own constant,
 # separate from grocery_planner/savings.py's oz-based lb/kg factor (1 kg =

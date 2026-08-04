@@ -136,22 +136,36 @@ def _line_rows(panel):
     return out
 
 
-def test_the_page_has_biometrics_bill_and_trend(page):
-    """Still three columns, but not the same three.
+def test_the_page_has_four_panes_in_order(page):
+    """The layout as it stands after GFP-123, GFP-129, GFP-136 and GFP-137.
 
-    GFP-123 removed where-to-buy -- it was a separate panel listing the SAME
-    items as the bill in different words, and the pair read as two unrelated
-    boxes. The store and the ad link now live on each item's own row inside
-    the bill.
-
-    GFP-129 took the space with something the page previously could not answer
-    at all: this client's prices over time, against everybody's.
+    Where-to-buy is gone as a pane (GFP-123 -- it listed the same items as the
+    bill in different words). "How to pick" moved out of the bill into its own
+    panel (GFP-136/137), and the biometrics form went into a drawer so the
+    chart stops being the pane that loses when the window is not maximised.
     """
-    assert page.columns.count() == 3
-    assert page.columns.widget(0) is page.biometrics
-    assert page.columns.widget(1) is page.bill_panel
-    assert page.columns.widget(2) is page.trend
+    assert page.columns.count() == 4
+    assert page.columns.widget(0) is page.biometrics_drawer
+    assert page.columns.widget(1) is page.selection_panel
+    assert page.columns.widget(2) is page.bill_panel
+    assert page.columns.widget(3) is page.trend
     assert not page.where_to_buy.isVisibleTo(page)
+
+
+def test_the_biometrics_drawer_opens_and_closes(page):
+    """GFP-137: the details form is what a nutritionist can put away, because
+    it is edited occasionally and read rarely."""
+    assert page.biometrics_toggle.isChecked()
+    page.biometrics_toggle.setChecked(False)
+    assert not page.biometrics.isVisibleTo(page.biometrics_drawer)
+    page.biometrics_toggle.setChecked(True)
+    assert page.biometrics.isVisibleTo(page.biometrics_drawer)
+
+
+def test_no_pane_can_be_collapsed_to_nothing(page):
+    """Every pane may shrink; none may vanish. A splitter that lets a user
+    drag the chart to zero width recreates the bug this fixed."""
+    assert page.columns.childrenCollapsible() is False
 
 
 def test_loading_a_client_fills_every_column(page):
@@ -230,7 +244,7 @@ def test_a_checkbox_recomputes_and_persists_with_no_save_step(page):
     page.show_client(ana.id)
     assert "Beef Roast 16 oz" in _line_rows(page.bill_panel)[0]
 
-    page.bill_panel._boxes["chicken"].setChecked(True)
+    page.selection_panel._boxes["chicken"].setChecked(True)
 
     # Recomputed...
     assert "Chicken Breast 16 oz" in _line_rows(page.bill_panel)[0]
@@ -246,8 +260,8 @@ def test_stored_preferences_are_reflected_when_a_client_loads(page):
     preferences.set_preferences(ana.id, ["chicken"], conn=db.connect())
 
     page.show_client(ana.id)
-    assert page.bill_panel._boxes["chicken"].isChecked()
-    assert not page.bill_panel._boxes["beef"].isChecked()
+    assert page.selection_panel._boxes["chicken"].isChecked()
+    assert not page.selection_panel._boxes["beef"].isChecked()
 
 
 def test_the_categories_come_from_the_data_not_a_hard_coded_list(page):
@@ -280,7 +294,7 @@ def test_a_starving_preference_shows_the_caveat_not_a_saving(page):
     ana = _client()
     page.show_client(ana.id)
 
-    page.bill_panel._boxes["tofu"].setChecked(True)
+    page.selection_panel._boxes["tofu"].setChecked(True)
 
     assert page.bill_panel.comparison.is_comparable is False
     assert page.bill_panel.caveat_label.isVisibleTo(page.bill_panel)
@@ -369,7 +383,7 @@ def test_where_to_buy_follows_a_preference_change(page):
     page.show_client(ana.id)
     assert "Food Lion" in " ".join(_where_to_buy_texts(page.where_to_buy))
 
-    page.bill_panel._boxes["chicken"].setChecked(True)
+    page.selection_panel._boxes["chicken"].setChecked(True)
     assert "Harris Teeter" in " ".join(_where_to_buy_texts(page.where_to_buy))
 
 
@@ -454,7 +468,7 @@ def test_the_excluded_panel_reports_a_preference_filter(page):
     _deal("harristeeter", "Chicken Breast 16 oz", 5.00, chicken)
     ana = _client()
     page.show_client(ana.id)
-    page.bill_panel._boxes["chicken"].setChecked(True)
+    page.selection_panel._boxes["chicken"].setChecked(True)
 
     assert "excluded by preference" in page.bill_panel.excluded_label.text()
 
@@ -494,7 +508,7 @@ def test_ticking_a_preference_adds_a_second_series(page):
     _history("harristeeter", "Chicken Breast 16 oz", 5.00)
     ana = _client()
     page.show_client(ana.id)
-    page.bill_panel._boxes["chicken"].setChecked(True)
+    page.selection_panel._boxes["chicken"].setChecked(True)
 
     labels = [s.label for s in page.trend.chart._trend.series]
     assert clienttrend.BASELINE_LABEL in labels, "the optimiser line was replaced"
@@ -516,7 +530,7 @@ def test_the_optimiser_series_is_unchanged_by_the_clients_preferences(page):
         for p in s.points
     ]
 
-    page.bill_panel._boxes["chicken"].setChecked(True)
+    page.selection_panel._boxes["chicken"].setChecked(True)
     after = [
         (p.day, p.value)
         for s in page.trend.chart._trend.series

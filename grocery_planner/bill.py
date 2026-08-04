@@ -119,7 +119,8 @@ scrapes on a background thread.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from enum import Enum
 from typing import Iterable
 
 from . import db, nutrition, preferences, savings, service, targets
@@ -235,6 +236,10 @@ class Bill:
     excluded_deals: int = 0
     considered_deals: int = 0
     categories: list[str] = field(default_factory=list)  # [] == unconstrained; see module docstring
+    #: GFP-136: the constraints and objective this bill was built under, so a
+    #: caller can say WHY the plan looks the way it does rather than leaving a
+    #: user to wonder why the cheapest item is not in it.
+    selection: "Selection" = field(default_factory=lambda: Selection())
 
     @property
     def is_complete(self) -> bool:
@@ -345,11 +350,234 @@ def _category_lookup(
     return cache[food_id]
 
 
+# --------------------------------------------------------------------------- #
+# Selection (GFP-136): HOW to choose, as distinct from WHAT is eligible
+# --------------------------------------------------------------------------- #
+class Objective(str, Enum):
+    """What the allocation optimises for. Exactly one applies."""
+
+    #: Today's behaviour, and the default: the cheapest way to hit the target.
+    LOWEST_COST = "lowest_cost"
+    #: Get as close to the target as a budget allows, and REPORT the
+    #: shortfall. Never silently reduces the target -- GFP-131's invariant.
+    MOST_PROTEIN_WITHIN_BUDGET = "most_protein_within_budget"
+
+
+@dataclass(frozen=True)
+class Selection:
+    """How to choose, as distinct from what is eligible.
+
+    THE DISTINCTION THAT MADE THIS COHERENT. "Include all" and "lowest price"
+    were first described as rival modes, but they are not the same kind of
+    thing: lowest price is an OBJECTIVE (what to optimise) and include-all is
+    a CONSTRAINT (what the answer must contain). They compose, and "include
+    all, at the lowest price" is almost certainly what was meant by the
+    former.
+
+    So constraints are independent flags and the objective is one choice.
+    """
+
+    #: Best effort to include EVERY ticked category, rather than filling the
+    #: whole target from whichever is cheapest.
+    #:
+    #: The complaint that produced this: with beef and chicken both ticked,
+    #: chicken was cheaper, so chicken filled the entire target and beef never
+    #: appeared. Correct for "minimise cost", wrong for what ticking two boxes
+    #: means -- "I want both", not "consider both and pick one".
+    cover_all_categories: bool = False
+
+    #: Buy everything from ONE store. The optimiser will otherwise send
+    #: somebody to three shops to save two dollars, which is a bad trade for a
+    #: real person and the commonest practical constraint a client has.
+    single_store: bool = False
+
+    objective: Objective = Objective.LOWEST_COST
+
+    #: Daily cap for MOST_PROTEIN_WITHIN_BUDGET. Ignored by the lowest-cost
+    #: objective, which is what makes the pair honest: UNDER BUDGET THE TWO
+    #: OBJECTIVES PRODUCE AN IDENTICAL PLAN, and the UI should say so rather
+    #: than offer a control that usually changes nothing.
+    daily_budget: float | None = None
+
+
+def _line_for(item: dict, grams_protein: float) -> BillLine:
+    """One bill line for ``grams_protein`` taken from ``item``."""
+    package_protein = item["protein_grams"]
+    size_grams = item.get("size_grams")
+    # Grams of FOOD for this line's grams of PROTEIN, via the package's own
+    # ratio -- None when that ratio is not known at all (label-claim path, no
+    # package weight), never guessed.
+    grams_food = (
+        (grams_protein / package_protein) * size_grams
+        if size_grams is not None
+        else None
+    )
+    return BillLine(
+        item_name=item["item_name"],
+        store=item["store"],
+        grams_protein=grams_protein,
+        grams_food=grams_food,
+        cost=grams_protein * item["cost_per_gram_protein"],
+        cost_per_gram_protein=item["cost_per_gram_protein"],
+        protein_source=item["protein_source"],
+        match_confidence=item["match_confidence"],
+        food_id=item.get("food_id"),
+        food_name=item.get("food_name"),
+        source_url=item.get("source_url"),
+        image_url=item.get("image_url"),
+        deal_id=item.get("deal_id"),
+        sold_by=item.get("sold_by"),
+        price_per_unit_uom=item.get("price_per_unit_uom"),
+        shelf_price=item.get("price"),
+        package_grams=size_grams,
+        product_identifier=item.get("product_identifier"),
+        product_identifier_ns=item.get("product_identifier_ns"),
+    )
+
+
+def _allocate(
+    candidates: list[dict],
+    target: float,
+    taken: set,
+    budget: float | None = None,
+) -> tuple[list[BillLine], float, float]:
+    """Fill ``target`` grams from ``candidates``, cheapest first.
+
+    Returns ``(lines, grams_covered, cost)``. ``taken`` carries deal markers
+    across calls so a deal used by one pass is not used again by the next --
+    which is what lets cover-all-categories run several passes over
+    overlapping pools without buying the same package twice.
+
+    ``budget`` stops when the money runs out rather than when the target is
+    met. It never trims the TARGET; the caller reports the shortfall.
+    """
+    lines: list[BillLine] = []
+    covered = 0.0
+    spent = 0.0
+
+    for index, item in enumerate(candidates):
+        if covered >= target:
+            break
+        key = item.get("deal_id")
+        marker = key if key is not None else (item["store"], item["item_name"])
+        if marker in taken:
+            continue
+
+        # At most one package's worth of protein from a single deal -- a real
+        # number carried on the row, never an invented threshold.
+        grams = min(target - covered, item["protein_grams"])
+        if grams <= 0.0:
+            continue
+
+        cost = grams * item["cost_per_gram_protein"]
+        if budget is not None and spent + cost > budget:
+            affordable = budget - spent
+            if affordable <= 0 or item["cost_per_gram_protein"] <= 0:
+                break
+            grams = affordable / item["cost_per_gram_protein"]
+            if grams <= 0.0:
+                break
+            cost = affordable
+
+        taken.add(marker)
+        lines.append(_line_for(item, grams))
+        covered += grams
+        spent += cost
+
+    return lines, covered, spent
+
+
+def _select(
+    candidates: list[dict],
+    target_grams: float,
+    applied_categories: list[str],
+    selection: Selection,
+    conn: sqlite3.Connection,
+) -> list[BillLine]:
+    """Apply the constraints and the objective to a ranked candidate pool."""
+    if selection.single_store:
+        return _single_store(
+            candidates, target_grams, applied_categories, selection, conn
+        )
+
+    budget = (
+        selection.daily_budget
+        if selection.objective is Objective.MOST_PROTEIN_WITHIN_BUDGET
+        else None
+    )
+
+    taken: set = set()
+    lines: list[BillLine] = []
+    covered = 0.0
+    spent = 0.0
+
+    if selection.cover_all_categories and len(applied_categories) > 1:
+        # Reserve an equal share of the target for each ticked category and
+        # fill each from its OWN cheapest. Equal shares rather than anything
+        # cleverer because what was asked for is "best effort to include all",
+        # not a particular balance -- and a share nobody can fill simply rolls
+        # into the greedy pass below.
+        share = target_grams / len(applied_categories)
+        for category in applied_categories:
+            allowed = nutrition.food_ids_in([category], conn=conn)
+            pool = [c for c in candidates if c.get("food_id") in allowed]
+            remaining_budget = None if budget is None else budget - spent
+            got, grams, cost = _allocate(pool, share, taken, remaining_budget)
+            lines.extend(got)
+            covered += grams
+            spent += cost
+
+    # Fill whatever is left greedily from everything eligible. This IS the
+    # whole allocation in lowest-cost mode, and the top-up in cover-all mode
+    # for categories that could not fill their share.
+    remaining_budget = None if budget is None else budget - spent
+    got, _grams, _cost = _allocate(
+        candidates, target_grams - covered, taken, remaining_budget
+    )
+    lines.extend(got)
+    return lines
+
+
+def _single_store(
+    candidates: list[dict],
+    target_grams: float,
+    applied_categories: list[str],
+    selection: Selection,
+    conn: sqlite3.Connection,
+) -> list[BillLine]:
+    """The best plan buyable from ONE store.
+
+    Solved by running the whole selection once per store and keeping the best
+    result. That is exact for one store and cheap -- there are three stores,
+    not three hundred. Generalising to "at most N stores" is a genuinely
+    harder combinatorial problem and is not what was asked for.
+
+    BEST MEANS: covers the most protein, and among equals costs least.
+    Coverage leads because a cheaper plan that misses the target is not a
+    better answer to "what should this client eat".
+    """
+    single = replace(selection, single_store=False)
+    stores = sorted({c["store"] for c in candidates})
+
+    best: list[BillLine] = []
+    best_key: tuple[float, float] | None = None
+    for store in stores:
+        pool = [c for c in candidates if c["store"] == store]
+        lines = _select(pool, target_grams, applied_categories, single, conn)
+        covered = sum(line.grams_protein for line in lines)
+        cost = sum(line.cost for line in lines)
+        key = (-covered, cost)          # most protein, then least money
+        if best_key is None or key < best_key:
+            best, best_key = lines, key
+    return best
+
+
 def _build_bill(
     customer_id: int | None,
     target_grams: float,
     categories: Iterable[str] | None,
     conn: sqlite3.Connection,
+    selection: "Selection | None" = None,
 ) -> Bill:
     """Shared engine behind :func:`daily_bill`/:func:`daily_bill_for`, once a
     valid (non-``None``) daily target is already in hand.
@@ -357,6 +585,7 @@ def _build_bill(
     See the module docstring for the amortisation, allocation and
     zero-preferences-means-unconstrained rules this implements.
     """
+    selection = selection or Selection()
     if categories is None:
         # customer_id is None only for an unsaved Customer with no rows to
         # look up -- there is nothing to be unconstrained FROM in that case,
@@ -398,55 +627,7 @@ def _build_bill(
     else:
         candidates = ranked
 
-    lines: list[BillLine] = []
-    remaining = target_grams
-    for item in candidates:
-        if remaining <= 0.0:
-            break
-        # The per-line cap: at most one package's (or, on the label-claim
-        # path, one serving's) worth of protein from a single deal -- a real
-        # number carried on the row itself, never an invented threshold. See
-        # the module docstring's allocation-rule section.
-        package_protein = item["protein_grams"]
-        grams_protein = min(remaining, package_protein)
-        if grams_protein <= 0.0:
-            continue
-
-        size_grams = item.get("size_grams")
-        # Grams of FOOD needed for this line's grams of PROTEIN, via the
-        # package's own protein-per-gram ratio -- None when that ratio isn't
-        # known at all (label-claim path, no package weight; see BillLine's
-        # docstring), never guessed.
-        grams_food = (
-            (grams_protein / package_protein) * size_grams
-            if size_grams is not None
-            else None
-        )
-
-        lines.append(
-            BillLine(
-                item_name=item["item_name"],
-                store=item["store"],
-                grams_protein=grams_protein,
-                grams_food=grams_food,
-                cost=grams_protein * item["cost_per_gram_protein"],
-                cost_per_gram_protein=item["cost_per_gram_protein"],
-                protein_source=item["protein_source"],
-                match_confidence=item["match_confidence"],
-                food_id=item.get("food_id"),
-                food_name=item.get("food_name"),
-                source_url=item.get("source_url"),
-                image_url=item.get("image_url"),
-                deal_id=item.get("deal_id"),
-                sold_by=item.get("sold_by"),
-                price_per_unit_uom=item.get("price_per_unit_uom"),
-                shelf_price=item.get("price"),
-                package_grams=size_grams,
-                product_identifier=item.get("product_identifier"),
-                product_identifier_ns=item.get("product_identifier_ns"),
-            )
-        )
-        remaining -= grams_protein
+    lines = _select(candidates, target_grams, applied_categories, selection, conn)
 
     return Bill(
         target_grams=target_grams,
@@ -456,6 +637,7 @@ def _build_bill(
         excluded_deals=excluded_deals,
         considered_deals=len(candidates),
         categories=applied_categories,
+        selection=selection,
     )
 
 
@@ -463,6 +645,7 @@ def daily_bill_for(
     customer: Customer,
     categories: Iterable[str] | None = None,
     conn: sqlite3.Connection | None = None,
+    selection: Selection | None = None,
 ) -> Bill | None:
     """Daily protein bill for an already-loaded :class:`Customer`.
 
@@ -479,13 +662,14 @@ def daily_bill_for(
     target = targets.protein_target_for(customer, conn=own)
     if target is None:
         return None
-    return _build_bill(customer.id, target.daily_grams, categories, own)
+    return _build_bill(customer.id, target.daily_grams, categories, own, selection)
 
 
 def compare_bills_for(
     customer: Customer,
     categories: Iterable[str] | None = None,
     conn: sqlite3.Connection | None = None,
+    selection: Selection | None = None,
 ) -> BillComparison | None:
     """Unconstrained baseline beside the preference-constrained plan (GFP-49).
 
@@ -503,9 +687,15 @@ def compare_bills_for(
     target = targets.protein_target_for(customer, conn=own)
     if target is None:
         return None
+    # GFP-136: the BASELINE stays unconstrained in every sense -- no
+    # categories AND no selection constraints. It is the "what could this
+    # cost at best" figure, and applying the user's constraints to it would
+    # make the comparison meaningless.
     return BillComparison(
         baseline=_build_bill(customer.id, target.daily_grams, [], own),
-        constrained=_build_bill(customer.id, target.daily_grams, categories, own),
+        constrained=_build_bill(
+            customer.id, target.daily_grams, categories, own, selection
+        ),
     )
 
 
@@ -513,19 +703,23 @@ def compare_bills(
     customer_id: int,
     categories: Iterable[str] | None = None,
     conn: sqlite3.Connection | None = None,
+    selection: Selection | None = None,
 ) -> BillComparison | None:
     """:func:`compare_bills_for` for a customer looked up by id."""
     own = conn or db.connect()
     customer = CustomerRepository.get(customer_id, conn=own)
     if customer is None:
         return None
-    return compare_bills_for(customer, categories=categories, conn=own)
+    return compare_bills_for(
+        customer, categories=categories, conn=own, selection=selection
+    )
 
 
 def daily_bill(
     customer_id: int,
     categories: Iterable[str] | None = None,
     conn: sqlite3.Connection | None = None,
+    selection: Selection | None = None,
 ) -> Bill | None:
     """Daily protein bill for a customer looked up by id.
 
@@ -539,4 +733,4 @@ def daily_bill(
     customer = CustomerRepository.get(customer_id, conn=own)
     if customer is None:
         return None
-    return daily_bill_for(customer, categories=categories, conn=own)
+    return daily_bill_for(customer, categories=categories, conn=own, selection=selection)

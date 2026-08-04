@@ -85,7 +85,10 @@ from PySide6.QtWidgets import (
 
 from .. import db, targets
 from ..customers import (
+    ACTIVITY_LEVELS,
     DEFAULT_PROTEIN_FACTOR,
+    GOALS,
+    SEXES,
     KG,
     LB,
     MAX_PROTEIN_FACTOR,
@@ -179,6 +182,21 @@ FACTOR_SCALE = 100
 FACTOR_STEP = 1 / FACTOR_SCALE
 
 
+def _select_or_add(box: QComboBox, value: str | None) -> None:
+    """Show ``value`` in ``box``, adding it to the list if it is not offered.
+
+    The schema never constrained these columns, so real rows hold values
+    outside any list this app now offers. Adding rather than snapping is the
+    only option that does not quietly change somebody's data.
+    """
+    text = (value or "").strip()
+    index = box.findText(text)
+    if index < 0:
+        box.addItem(text)
+        index = box.findText(text)
+    box.setCurrentIndex(index)
+
+
 class BiometricsPanel(QWidget):
     """Editable biometrics for one client, plus the derived protein headline.
 
@@ -261,17 +279,44 @@ class BiometricsPanel(QWidget):
         self.age_spin.setSpecialValueText("not on file")
         form.addRow("Age:", self.age_spin)
 
-        self.sex_edit = QLineEdit()
-        self.sex_edit.setPlaceholderText("e.g. female / male / other")
-        form.addRow("Sex:", self.sex_edit)
+        # GFP-138: dropdowns, not free text. The lists live in customers.py so
+        # the CLI and the GUI cannot drift apart.
+        #
+        # EDITABLE on purpose. The schema has no CHECK constraint (0008_GFP-28
+        # makes these plain TEXT), so a client already on file may hold
+        # something outside the list -- a real one holds "lean mass". A closed
+        # dropdown would silently rewrite that on the next save, which is worse
+        # than offering a list and allowing an exception.
+        self.sex_box = QComboBox()
+        self.sex_box.addItems(SEXES)
+        form.addRow("Sex:", self.sex_box)
 
-        self.activity_edit = QLineEdit()
-        self.activity_edit.setPlaceholderText("e.g. sedentary / moderate / active")
-        form.addRow("Activity level:", self.activity_edit)
+        self.activity_box = QComboBox()
+        self.activity_box.addItems(ACTIVITY_LEVELS)
+        form.addRow("Activity level:", self.activity_box)
 
-        self.goal_edit = QLineEdit()
-        self.goal_edit.setPlaceholderText("e.g. maintenance / cut / bulk")
-        form.addRow("Goal:", self.goal_edit)
+        self.goal_box = QComboBox()
+        self.goal_box.setEditable(True)
+        self.goal_box.addItems(GOALS)
+        form.addRow("Goal:", self.goal_box)
+
+        # GFP-127: the budget had a database column, a CLI flag and a whole
+        # service module -- and no way to set it in the app, which is why the
+        # user never saw it. Reported against the plan, never an input to it.
+        self.budget_spin = QDoubleSpinBox()
+        self.budget_spin.setRange(0.0, 100000.0)
+        self.budget_spin.setDecimals(2)
+        self.budget_spin.setPrefix("$ ")
+        self.budget_spin.setSingleStep(5.0)
+        # 0 reads as "no budget set" rather than "a budget of zero" -- null is
+        # not zero (GFP-127), and a client whose money has never been discussed
+        # is unmeasured, not permanently over.
+        self.budget_spin.setSpecialValueText("not set")
+        self.budget_spin.setToolTip(
+            "Weekly grocery budget. The plan is measured against it; it never "
+            "changes what the optimiser picks."
+        )
+        form.addRow("Weekly budget:", self.budget_spin)
 
         # GFP-133: a slider ACROSS the prescribed band, with a box bound to it
         # both ways. A spin box gives no sense of where 0.85 sits between the
@@ -369,9 +414,10 @@ class BiometricsPanel(QWidget):
         self.unit_box.setCurrentIndex(self.unit_box.findData(KG))
         self.height_spin.setValue(0.0)
         self.age_spin.setValue(0)
-        self.sex_edit.clear()
-        self.activity_edit.clear()
-        self.goal_edit.clear()
+        self.sex_box.setCurrentIndex(0)
+        self.activity_box.setCurrentIndex(0)
+        self.goal_box.setCurrentIndex(0)
+        self.budget_spin.setValue(0.0)
         self._set_factor(DEFAULT_PROTEIN_FACTOR)
         self.notes_edit.clear()
         for widget in (self.weight_spin, self.unit_box, self.factor_spin,
@@ -413,9 +459,14 @@ class BiometricsPanel(QWidget):
 
         self.height_spin.setValue(customer.height_cm or 0.0)
         self.age_spin.setValue(customer.age or 0)
-        self.sex_edit.setText(customer.sex or "")
-        self.activity_edit.setText(customer.activity_level or "")
-        self.goal_edit.setText(customer.goal or "")
+        # GFP-138: select the stored value, or ADD it if it is not in the
+        # list. A client on file holding "lean mass" must keep it -- silently
+        # snapping them to the nearest offered option would rewrite a
+        # nutritionist's note without asking.
+        _select_or_add(self.sex_box, customer.sex)
+        _select_or_add(self.activity_box, customer.activity_level)
+        _select_or_add(self.goal_box, customer.goal)
+        self.budget_spin.setValue(customer.weekly_budget or 0.0)
         self._set_factor(customer.protein_factor)
         self.notes_edit.setText(customer.notes or "")
 
@@ -444,9 +495,9 @@ class BiometricsPanel(QWidget):
             weight_unit=unit,
             height_cm=self.height_spin.value() or None,
             age=self.age_spin.value() or None,
-            sex=self.sex_edit.text().strip() or None,
-            activity_level=self.activity_edit.text().strip() or None,
-            goal=self.goal_edit.text().strip() or None,
+            sex=self.sex_box.currentText().strip() or None,
+            activity_level=self.activity_box.currentText().strip() or None,
+            goal=self.goal_box.currentText().strip() or None,
             # GFP-132/GFP-127: this panel does not edit either of these, but it
             # must CARRY them or the draft silently loses them -- and a draft
             # without desired_weight_kg falls back to CURRENT weight, so the
@@ -457,7 +508,7 @@ class BiometricsPanel(QWidget):
             # numbers for one client, on one page, both claiming to be the
             # target.
             desired_weight_kg=self.customer.desired_weight_kg if self.customer else None,
-            weekly_budget=self.customer.weekly_budget if self.customer else None,
+            weekly_budget=self.budget_spin.value() or None,
             protein_factor=self.factor_spin.value(),
             notes=self.notes_edit.text().strip() or None,
             created_at=self.customer.created_at if self.customer else None,
