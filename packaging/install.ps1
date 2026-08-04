@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Install Grocery Planner for the current user on Windows (GFP-91).
+    Install Protein Ledger for the current user on Windows (GFP-91).
 
 .DESCRIPTION
     There was no install story before this beyond a Python dev setup, which is
@@ -35,7 +35,7 @@
     appended, the shortcut is overwritten, the registry values are set.
 
 .PARAMETER Prefix
-    Install somewhere other than %LOCALAPPDATA%\Programs\GroceryPlanner.
+    Install somewhere other than %LOCALAPPDATA%\Programs\ProteinLedger.
     Mainly for testing an install without touching a real one.
 
 .PARAMETER NoTimer
@@ -80,11 +80,11 @@ Set-StrictMode -Version Latest
 # grocery_planner/install_paths.py, and tests/test_installer_scripts.py fails
 # if the two ever disagree.
 # --------------------------------------------------------------------------- #
-$AppName          = "Grocery Planner"
-$InstallDirName   = "GroceryPlanner"
-$StartMenuFolder  = "Grocery Planner"
-$RegistryKey      = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GroceryPlanner"
-$TaskPath         = "\GroceryPlanner\"
+$AppName          = "Protein Ledger"
+$InstallDirName   = "ProteinLedger"
+$StartMenuFolder  = "Protein Ledger"
+$RegistryKey      = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ProteinLedger"
+$TaskPath         = "\ProteinLedger\"
 $TaskName         = "Refresh"
 $ManifestName     = "install-manifest.json"
 $Publisher        = "grocery-planner"
@@ -148,7 +148,7 @@ foreach ($file in $payload) {
 $running = @(Get-Process -Name "gplan", "gplan-gui" -ErrorAction SilentlyContinue)
 if ($running.Count -gt 0 -and -not $DryRun) {
     Write-Host ""
-    Write-Host "Grocery Planner is currently running. Close it and run this again." -ForegroundColor Red
+    Write-Host "Protein Ledger is currently running. Close it and run this again." -ForegroundColor Red
     $running | ForEach-Object { Write-Host "  running: $($_.ProcessName) (pid $($_.Id))" -ForegroundColor Yellow }
     exit 1
 }
@@ -290,7 +290,7 @@ if ($NoIntegrate) {
             $link = $shell.CreateShortcut($shortcut)
             $link.TargetPath = $installedGui
             $link.WorkingDirectory = $installRoot
-            $link.Description = "Grocery Planner - cost per gram of protein"
+            $link.Description = "Protein Ledger - cost per gram of protein"
             $link.Save()
         }.GetNewClosure()
         $integrations["start_menu"] = $menuDir
@@ -394,7 +394,7 @@ Write-Host ""
 Write-Host "Next steps" -ForegroundColor Cyan
 Write-Host "  1. Set your ZIP code so prices are local to you:" -ForegroundColor Gray
 Write-Host "       gplan config set postal_code 27401" -ForegroundColor White
-Write-Host "  2. Open Grocery Planner from the Start Menu -- it fetches today's" -ForegroundColor Gray
+Write-Host "  2. Open Protein Ledger from the Start Menu -- it fetches today's" -ForegroundColor Gray
 Write-Host "     prices on first run." -ForegroundColor Gray
 Write-Host "     Or from a terminal:  gplan scrape harristeeter" -ForegroundColor White
 Write-Host ""

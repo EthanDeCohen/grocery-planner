@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Remove Grocery Planner and all of its data from this user account (GFP-92).
+    Remove Protein Ledger and all of its data from this user account (GFP-92).
 
 .DESCRIPTION
     THE FAILURE THIS SCRIPT IS DESIGNED AROUND is not leaving a file behind. It
@@ -61,11 +61,11 @@ Set-StrictMode -Version Latest
 
 # Pinned by GFP-102 -- mirrored in grocery_planner/install_paths.py, and
 # tests/test_uninstaller_scripts.py fails if they disagree.
-$AppName         = "Grocery Planner"
-$InstallDirName  = "GroceryPlanner"
-$StartMenuFolder = "Grocery Planner"
-$RegistryKey     = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GroceryPlanner"
-$TaskPath        = "\GroceryPlanner\"
+$AppName         = "Protein Ledger"
+$InstallDirName  = "ProteinLedger"
+$StartMenuFolder = "Protein Ledger"
+$RegistryKey     = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ProteinLedger"
+$TaskPath        = "\ProteinLedger\"
 $TaskName        = "Refresh"
 $ManifestName    = "install-manifest.json"
 
@@ -215,7 +215,7 @@ Remove-Thing "Scheduled task $TaskPath$TaskName" "$TaskPath$TaskName" `
     { [bool](Get-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName -ErrorAction SilentlyContinue) } `
     { Unregister-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName -Confirm:$false }
 
-# schtasks cannot delete a folder, and an empty GroceryPlanner folder left in
+# schtasks cannot delete a folder, and an empty ProteinLedger folder left in
 # Task Scheduler reads as a failed uninstall. The Schedule.Service COM object
 # can, so use it -- and treat its absence as fine, because the folder only
 # exists once GFP-102 has run.

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ===========================================================================
-# Install Grocery Planner for the current user on macOS (GFP-91).
+# Install Protein Ledger for the current user on macOS (GFP-91).
 # ===========================================================================
 # The macOS counterpart of install.ps1, and it makes the same three decisions
 # for the same reasons: per-user so no administrator password is needed, no
@@ -8,9 +8,9 @@
 # (GFP-92) reads rather than guessing at.
 #
 # WHERE THINGS GO, and why it is three directories rather than one:
-#   ~/.local/share/grocery-planner/   the CLI binary, this manifest, uninstall
+#   ~/.local/share/protein-ledger/   the CLI binary, this manifest, uninstall
 #   ~/.local/bin/gplan                a symlink, so `gplan` is on PATH
-#   ~/Applications/Grocery Planner.app  the bundle, where macOS can launch it
+#   ~/Applications/Protein Ledger.app  the bundle, where macOS can launch it
 # A .app must be in an Applications folder to be launchable and a CLI must be
 # on PATH, so a single directory was never available. The manifest records the
 # real path of every file, which is what keeps the uninstaller honest.
@@ -38,9 +38,9 @@ set -euo pipefail
 # grocery_planner/install_paths.py; tests/test_installer_scripts.py fails if
 # they ever disagree.
 # --------------------------------------------------------------------------- #
-APP_DISPLAY_NAME="Grocery Planner"
-APP_BUNDLE_NAME="Grocery Planner.app"
-SUPPORT_DIRNAME=".local/share/grocery-planner"
+APP_DISPLAY_NAME="Protein Ledger"
+APP_BUNDLE_NAME="Protein Ledger.app"
+SUPPORT_DIRNAME=".local/share/protein-ledger"
 CLI_DIRNAME=".local/bin"
 APPLICATIONS_DIRNAME="Applications"
 MANIFEST_FILENAME="install-manifest.json"
@@ -289,7 +289,7 @@ else
         *":$BIN_DIR:"*) skip "$BIN_DIR is already on your PATH" ;;
         *)
             PROFILE="$HOME/.zprofile"
-            MARKER="# added by Grocery Planner installer"
+            MARKER="# added by Protein Ledger installer"
             if [ -f "$PROFILE" ] && grep -qF "$MARKER" "$PROFILE"; then
                 skip "$PROFILE already has the PATH line"
                 INTEGRATIONS_PROFILE="$PROFILE"
@@ -325,7 +325,7 @@ elif [ "$DRY_RUN" -eq 1 ]; then
 else
     if "$SUPPORT_DIR/gplan" timer install >/dev/null 2>&1; then
         green "background refresh registered (daily)"
-        INTEGRATIONS_TIMER="com.grocery-planner.refresh"
+        INTEGRATIONS_TIMER="com.proteinledger.refresh"
     else
         warn "could not register the background refresh -- the app still works"
         gray "retry any time with:  gplan timer install"

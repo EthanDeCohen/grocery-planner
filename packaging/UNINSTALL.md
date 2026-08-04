@@ -1,4 +1,4 @@
-# Uninstalling Grocery Planner
+# Uninstalling Protein Ledger
 
 > **Read this first.** Your client records are hand-entered and exist nowhere
 > else. Uninstalling deletes them permanently. If there is any chance you want
@@ -15,17 +15,17 @@
 
 ## Windows
 
-Either use **Settings → Apps → Grocery Planner → Uninstall**, or run the script
+Either use **Settings → Apps → Protein Ledger → Uninstall**, or run the script
 directly:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Programs\GroceryPlanner\uninstall.ps1"
+powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Programs\ProteinLedger\uninstall.ps1"
 ```
 
 ## macOS
 
 ```bash
-~/.local/share/grocery-planner/uninstall.sh
+~/.local/share/protein-ledger/uninstall.sh
 ```
 
 Both ask you to type `REMOVE` before anything is deleted, and both print every
@@ -66,10 +66,10 @@ exists.
 **1. The scheduled task — do this first**
 
 ```powershell
-Unregister-ScheduledTask -TaskPath "\GroceryPlanner\" -TaskName "Refresh" -Confirm:$false
+Unregister-ScheduledTask -TaskPath "\ProteinLedger\" -TaskName "Refresh" -Confirm:$false
 ```
 
-Then delete the now-empty **GroceryPlanner** folder in the Task Scheduler
+Then delete the now-empty **ProteinLedger** folder in the Task Scheduler
 window. `schtasks` cannot remove folders, and an empty folder left behind reads
 as a failed uninstall.
 
@@ -92,10 +92,10 @@ predict: SQLite's `-wal` and `-shm` files, and any backups you made by hand.
 
 | What | Where |
 | --- | --- |
-| Program files | `%LOCALAPPDATA%\Programs\GroceryPlanner` |
-| Start Menu | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Grocery Planner` |
-| Add/Remove Programs | `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\GroceryPlanner` |
-| PATH | Remove the `...\Programs\GroceryPlanner` entry from your **user** PATH |
+| Program files | `%LOCALAPPDATA%\Programs\ProteinLedger` |
+| Start Menu | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Protein Ledger` |
+| Add/Remove Programs | `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\ProteinLedger` |
+| PATH | Remove the `...\Programs\ProteinLedger` entry from your **user** PATH |
 
 ## macOS, by hand
 
@@ -103,8 +103,8 @@ predict: SQLite's `-wal` and `-shm` files, and any backups you made by hand.
 Deleting a loaded agent leaves it running until you log out.
 
 ```bash
-launchctl bootout gui/$(id -u)/com.grocery-planner.refresh
-rm -f ~/Library/LaunchAgents/com.grocery-planner.refresh.plist
+launchctl bootout gui/$(id -u)/com.proteinledger.refresh
+rm -f ~/Library/LaunchAgents/com.proteinledger.refresh.plist
 launchctl list | grep grocery      # must print nothing
 ```
 
@@ -118,19 +118,19 @@ rm -rf ~/Library/Application\ Support/grocery-planner
 
 | What | Where |
 | --- | --- |
-| The app | `~/Applications/Grocery Planner.app` |
+| The app | `~/Applications/Protein Ledger.app` |
 | The `gplan` command | `~/.local/bin/gplan` |
-| Program files | `~/.local/share/grocery-planner` |
-| Saved window state | `~/Library/Saved Application State/com.grocery-planner.gui.savedState` |
+| Program files | `~/.local/share/protein-ledger` |
+| Saved window state | `~/Library/Saved Application State/com.proteinledger.gui.savedState` |
 
 ```bash
 rm -rf ~/Applications/Grocery\ Planner.app
 rm -f  ~/.local/bin/gplan
-rm -rf ~/.local/share/grocery-planner
-rm -rf ~/Library/Saved\ Application\ State/com.grocery-planner.gui.savedState
+rm -rf ~/.local/share/protein-ledger
+rm -rf ~/Library/Saved\ Application\ State/com.proteinledger.gui.savedState
 ```
 
-If your `~/.zprofile` has a line marked `# added by Grocery Planner installer`,
+If your `~/.zprofile` has a line marked `# added by Protein Ledger installer`,
 delete it — unless something else on your machine needs `~/.local/bin`.
 
 **Not applicable, so nobody wastes time looking:** there is no preferences

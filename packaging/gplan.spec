@@ -6,6 +6,16 @@
 # One file, no installer, no Python required on the target machine. The database
 # still lives in the platformdirs user-data dir (grocery_planner/paths.py), NOT
 # beside the executable, so replacing the binary never touches your data.
+import os
+import pathlib
+
+# GFP-158. PyInstaller runs a spec with exec() and does not define __file__,
+# so the icon path is resolved from SPECPATH -- the one variable PyInstaller
+# guarantees, holding the directory of this spec. A relative "icons/icon.ico"
+# would resolve against the CWD, which differs between a local build (repo
+# root) and the release workflow (packaging/).
+SPEC_DIR = pathlib.Path(SPECPATH)
+
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 # APScheduler resolves triggers/executors by name at runtime, so static analysis
@@ -21,7 +31,11 @@ hiddenimports = collect_submodules("apscheduler")
 # grocery_planner/data/*.json (GFP-24's vendored USDA snapshot), which
 # grocery_planner/usda.py reads at runtime instead of calling the network.
 datas = (
-    collect_data_files("tzdata")
+    # GFP-158: the window icon, read at run time by gui.app.app_icon().
+    # The .ico/.icns above are consumed by PyInstaller itself; this PNG
+    # is what the running process loads, so it has to be a data file.
+    [(str(SPEC_DIR / "icons" / "icon-256.png"), "icons")]
+    + collect_data_files("tzdata")
     + collect_data_files("db_script")
     + collect_data_files("grocery_planner", includes=["data/*.json"])
 )
@@ -49,6 +63,7 @@ exe = EXE(
     a.datas,
     [],
     name="gplan",
+    icon=str(SPEC_DIR / "icons" / "icon.ico"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

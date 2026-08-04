@@ -1,4 +1,4 @@
-# Installing Grocery Planner
+# Installing Protein Ledger
 
 You need the ZIP for your operating system, unzipped somewhere you can find it
 — your Downloads folder is fine. Everything below runs as **you**, not as an
@@ -26,9 +26,9 @@ meant to be read.
 
 | What | Where |
 | --- | --- |
-| Program files | `%LOCALAPPDATA%\Programs\GroceryPlanner` |
-| Start Menu shortcut | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Grocery Planner` |
-| Add/Remove Programs entry | `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\GroceryPlanner` |
+| Program files | `%LOCALAPPDATA%\Programs\ProteinLedger` |
+| Start Menu shortcut | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Protein Ledger` |
+| Add/Remove Programs entry | `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\ProteinLedger` |
 | Your data (database, settings, logs) | `%LOCALAPPDATA%\grocery-planner\grocery-planner` |
 
 Your data is deliberately **not** in the program folder, so reinstalling or
@@ -49,9 +49,9 @@ upgrading never touches your clients.
 
 | What | Where |
 | --- | --- |
-| The app | `~/Applications/Grocery Planner.app` |
+| The app | `~/Applications/Protein Ledger.app` |
 | The `gplan` command | `~/.local/bin/gplan` |
-| Program files | `~/.local/share/grocery-planner` |
+| Program files | `~/.local/share/protein-ledger` |
 | Your data (database, settings, logs) | `~/Library/Application Support/grocery-planner` |
 
 ### macOS will refuse to open the app the first time

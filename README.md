@@ -1,4 +1,6 @@
-# Grocery Planner
+# Protein Ledger
+
+<img src="docs/images/icon.png" alt="" width="96" align="right">
 
 **Work out what a client should eat to hit their protein target for the least
 money — and how that changes when their preferences or budget change.**
@@ -149,8 +151,8 @@ No symbol means a fixed price for a fixed package.
 
 ## Getting rid of it
 
-**Mac:** `~/.local/share/grocery-planner/uninstall.sh`
-**Windows:** *Add or Remove Programs* → **Grocery Planner**, or run
+**Mac:** `~/.local/share/protein-ledger/uninstall.sh`
+**Windows:** *Add or Remove Programs* → **Protein Ledger**, or run
 `uninstall.ps1` from the install folder.
 
 Add `--keep-data` (Mac) or `-KeepData` (Windows) to remove the program but keep
