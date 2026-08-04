@@ -31,6 +31,11 @@ DEAL_COLUMNS = [
     # price is per pound, and the UI must tag it as such or a $2.49/lb loin
     # reads as cheaper than a $4.99 packet.
     "sold_by", "price_per_unit", "price_per_unit_uom",
+    # GFP-152: which KIND of by-weight item, since sold_by cannot say. Only
+    # the Kroger API carries the evidence (its `categories` array), so this is
+    # NULL for Flipp and csv rows -- "not applicable", distinct from the
+    # 'unknown' value, which means "by weight and we could not tell you".
+    "weight_basis",
     # GFP-111: the source's OWN product identifier, plus which vocabulary it
     # belongs to -- always as a pair, since a bare '0020895500000' does not say
     # whether it is a Kroger productId, an ASIN or a Flipp item id, and those

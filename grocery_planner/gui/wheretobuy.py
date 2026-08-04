@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import bill
+from .. import bill, weight_basis
 from ..stores import BY_KEY
 
 #: The only acceptable link text. Named so a future edit has to argue with it.
@@ -71,6 +71,18 @@ def _denomination_note(line: bill.BillLine) -> str:
     return f"  ·  sold by weight{unit}"
 
 
+def _marker(line: bill.BillLine) -> str:
+    """The GFP-152 by-weight marker for this line, or "".
+
+    Placed on the ITEM NAME rather than beside the price: a shopper reading
+    "Boar's Head Deluxe Ham*" is being told something about the product they
+    are about to ask for, which is what they act on at the counter.
+    """
+    return weight_basis.marker(
+        weight_basis.basis_for(line.sold_by, line.weight_basis)
+    )
+
+
 class WhereToBuyPane(QWidget):
     """One row per bill line: the store, and a link to the ad when there is one."""
 
@@ -99,6 +111,15 @@ class WhereToBuyPane(QWidget):
         self.scroll.setWidget(self.rows_container)
         layout.addWidget(self.scroll, 1)
 
+        # GFP-152. BELOW the list rather than above it: it explains marks the
+        # reader has already met, and a legend for symbols nobody has seen yet
+        # is something to scroll past.
+        self.legend = QLabel("")
+        self.legend.setWordWrap(True)
+        self.legend.setStyleSheet("color: #666; font-size: 11px;")
+        self.legend.setVisible(False)
+        layout.addWidget(self.legend)
+
         self.clear()
 
     # ----------------------------------------------------------------- #
@@ -123,6 +144,7 @@ class WhereToBuyPane(QWidget):
         self._reset_rows()
         self.subtitle.setText("No client selected.")
         self.linked_count = 0
+        self.legend.setVisible(False)
 
     def set_lines(self, lines: list[bill.BillLine]) -> None:
         """Render one row per contributing line of the bill."""
@@ -130,6 +152,7 @@ class WhereToBuyPane(QWidget):
         if not lines:
             self.subtitle.setText("Nothing in the bill yet, so nowhere to buy.")
             self.linked_count = 0
+            self.legend.setVisible(False)
             return
 
         self.linked_count = sum(1 for line in lines if line.source_url)
@@ -142,12 +165,32 @@ class WhereToBuyPane(QWidget):
         for line in lines:
             self.rows_layout.addWidget(self._row(line))
 
+        self._set_legend(lines)
+
+    def _set_legend(self, lines: list[bill.BillLine]) -> None:
+        """Explain only the markers actually on screen (GFP-152).
+
+        A legend describing three markers when one is showing is noise, and
+        noise is how a caveat stops being read.
+        """
+        present = [
+            weight_basis.basis_for(line.sold_by, line.weight_basis)
+            for line in lines
+        ]
+        entries = weight_basis.footnotes_for(present)
+        self.legend.setText(
+            "\n".join(f"{mark}  {note}" for mark, note in entries)
+        )
+        self.legend.setVisible(bool(entries))
+
     def _row(self, line: bill.BillLine) -> QWidget:
         row = QWidget()
         row_layout = QVBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 8)
 
-        name = QLabel(line.item_name + _denomination_note(line))
+        name = QLabel(
+            line.item_name + _marker(line) + _denomination_note(line)
+        )
         name.setWordWrap(True)
         row_layout.addWidget(name)
 

@@ -191,6 +191,13 @@ class BillLine:
     # NULL on every Flipp and CSV row -- those sources do not state it, and a
     # guess would be worse than an absent value (savings.py rule 1).
     sold_by: str | None = None
+    #: GFP-152: 'deli', 'prepackaged', 'unknown', or None when no marker
+    #: applies. None means the question does not arise (fixed-price package,
+    #: or a source that never stated a denomination); 'unknown' means it does
+    #: arise and could not be answered. The display layer must keep those
+    #: apart -- collapsing them puts a caveat on items that need none and
+    #: hides it on items that do.
+    weight_basis: str | None = None
     price_per_unit_uom: str | None = None
     # GFP-112: what a SHOPPING list needs and an amortised bill does not.
     #
@@ -400,6 +407,35 @@ class Selection:
     #: than offer a control that usually changes nothing.
     daily_budget: float | None = None
 
+    #: Vary the week instead of recommending the same item seven days running
+    #: (GFP-142). A CONSTRAINT, not an objective: "lowest cost" still decides
+    #: what to reach for, and this constrains what counts as an acceptable
+    #: week -- exactly as cover-all and single-store constrain a day. Keeping
+    #: one model (objective + composable constraints) is why this is a flag
+    #: here rather than a parallel mechanism.
+    #:
+    #: Default False, preserving today's optimiser output: turning it on by
+    #: default would silently change every existing client's plan on upgrade.
+    vary_week: bool = False
+
+
+#: How many days back "do not repeat" looks when :attr:`Selection.vary_week`
+#: is on.
+#:
+#: Not the whole week on purpose. Forbidding an item for all seven days would
+#: demand seven genuinely distinct proteins, which the catalog frequently
+#: cannot supply -- and the fallback below would then fire most days, making
+#: the setting look broken. Three days is enough that nobody eats the same
+#: thing twice running, while leaving a rotation the data can actually
+#: sustain.
+VARIETY_LOOKBACK_DAYS = 3
+
+#: Half a cent. Comparing covered grams against a target needs a tolerance or
+#: floating-point noise reads as a shortfall; budget.py uses the same figure.
+CENT = 0.005
+
+DAYS_IN_WEEK = 7
+
 
 def _line_for(item: dict, grams_protein: float) -> BillLine:
     """One bill line for ``grams_protein`` taken from ``item``."""
@@ -428,6 +464,7 @@ def _line_for(item: dict, grams_protein: float) -> BillLine:
         image_url=item.get("image_url"),
         deal_id=item.get("deal_id"),
         sold_by=item.get("sold_by"),
+        weight_basis=item.get("weight_basis"),
         price_per_unit_uom=item.get("price_per_unit_uom"),
         shelf_price=item.get("price"),
         package_grams=size_grams,
@@ -848,3 +885,130 @@ def rank_history_by_day(
         )
         for day, deals in by_day.items()
     }
+
+
+@dataclass(frozen=True)
+class WeekPlan:
+    """Seven days as SEVEN ALLOCATIONS, not one multiplied by seven (GFP-142).
+
+    Until this existed the weekly view was literally ``daily * 7``, so if
+    drumsticks were cheapest today they were cheapest all week and the plan was
+    drumsticks seven days running. There was no object to vary -- which is why
+    GFP-142 recorded that the week had to become first-class before variety
+    could be expressed at all.
+    """
+
+    days: list[Bill]
+    selection: Selection
+
+    @property
+    def total_cost(self) -> float:
+        return sum(day.total_cost for day in self.days)
+
+    @property
+    def covered_grams(self) -> float:
+        return sum(day.covered_grams for day in self.days)
+
+    @property
+    def target_grams(self) -> float:
+        return sum(day.target_grams for day in self.days)
+
+    @property
+    def is_complete(self) -> bool:
+        """Every day hit its target. THE INVARIANT, asked of the week."""
+        return all(day.is_complete for day in self.days)
+
+    @property
+    def distinct_items(self) -> int:
+        return len({line.item_name for day in self.days for line in day.lines})
+
+    @property
+    def repeated_days(self) -> int:
+        """Days whose item set is identical to the day before.
+
+        What "Mix It Up" is judged on, and the number the panel can show
+        instead of asserting that variety happened.
+        """
+        sets = [frozenset(line.item_name for line in day.lines) for day in self.days]
+        return sum(1 for a, b in zip(sets, sets[1:]) if a and a == b)
+
+
+def week_plan(
+    customer_id: int,
+    categories: Iterable[str] | None = None,
+    selection: Selection | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> WeekPlan | None:
+    """Seven daily plans, varied or not per ``selection``. ``None`` with no target."""
+    own = conn or db.connect()
+    customer = CustomerRepository.get(customer_id, conn=own)
+    if customer is None:
+        return None
+    target = targets.protein_target_for(customer, conn=own)
+    if target is None or not target.daily_grams:
+        return None
+    return _week_from(target.daily_grams, customer_id, categories, selection, own)
+
+
+def _week_from(
+    daily_target: float,
+    customer_id: int | None,
+    categories: Iterable[str] | None,
+    selection: Selection | None,
+    conn: sqlite3.Connection,
+) -> WeekPlan:
+    """Build the week one day at a time.
+
+    **The invariant, and where it is enforced.** Variety is a preference about
+    presentation; the protein target is not negotiable. So each day is first
+    solved with recently-used items withheld, and if that cannot cover the
+    target the day is re-solved with the full pool. Variety gives way. The
+    nutrition never does (GFP-131/GFP-136).
+    """
+    selection = selection or Selection()
+
+    if customer_id is not None and categories is None:
+        applied = list(preferences.list_preferences(customer_id, conn=conn))
+    else:
+        applied = sorted({c for c in (categories or ())})
+
+    all_deals = service.fetch_deals(hide_expired=True, conn=conn)
+    ranked = savings.rank_by_cost_per_gram_protein(
+        all_deals, conn=conn, limit=0, min_confidence=None
+    )
+    excluded = len(all_deals) - len(ranked)
+    eligible = _eligible(ranked, applied, conn)
+
+    days: list[Bill] = []
+    recent: list[set[str]] = []            # item names used, most recent last
+
+    for _day in range(DAYS_IN_WEEK):
+        pool = eligible
+        if selection.vary_week:
+            avoid = {
+                name
+                for names in recent[-VARIETY_LOOKBACK_DAYS:]
+                for name in names
+            }
+            varied = [c for c in eligible if c.get("item_name") not in avoid]
+            lines = _select(varied, daily_target, applied, selection, conn)
+            if sum(l.grams_protein for l in lines) + CENT < daily_target:
+                # Withholding those items cannot feed the client today. Fall
+                # back to the full pool rather than deliver less protein.
+                lines = _select(pool, daily_target, applied, selection, conn)
+        else:
+            lines = _select(pool, daily_target, applied, selection, conn)
+
+        days.append(Bill(
+            target_grams=daily_target,
+            lines=lines,
+            total_cost=sum(l.cost for l in lines),
+            covered_grams=sum(l.grams_protein for l in lines),
+            excluded_deals=excluded,
+            considered_deals=len(eligible),
+            categories=applied,
+            selection=selection,
+        ))
+        recent.append({l.item_name for l in lines})
+
+    return WeekPlan(days=days, selection=selection)
