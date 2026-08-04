@@ -248,10 +248,14 @@ class ClientDetailPage(QWidget):
         target = customer if customer is not None else None
         weekly = getattr(target, "weekly_budget", None)
         daily = None if not weekly else weekly / DAYS_PER_WEEK
+        selection = self.selection_panel.selection(daily_budget=daily)
         self.bill_panel.set_selection(
-            self.selection_panel.checked_categories(),
-            self.selection_panel.selection(daily_budget=daily),
+            self.selection_panel.checked_categories(), selection,
         )
+        # GFP-144: the SAME Selection object goes to the chart. Handing the
+        # bill one set of constraints and the chart another is exactly how the
+        # two came to contradict each other on screen.
+        self.trend.set_selection(selection)
 
     def _on_selection_changed(self) -> None:
         conn = db.connect()
@@ -259,8 +263,7 @@ class ClientDetailPage(QWidget):
             CustomerRepository.get(self.customer_id, conn=conn)
             if self.customer_id is not None else None
         )
-        self._push_selection(customer)
-        self.trend.reload()
+        self._push_selection(customer)      # this reloads the chart too
 
     def _sync_where_to_buy(self) -> None:
         """Hand the bill's current lines to the where-to-buy column."""

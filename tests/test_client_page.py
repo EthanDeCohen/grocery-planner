@@ -497,7 +497,11 @@ def test_the_chart_draws_the_baseline_for_a_client_with_no_preferences(page):
 
     labels = [s.label for s in page.trend.chart._trend.series]
     assert labels == [clienttrend.BASELINE_LABEL]
-    assert "no protein preferences" in page.trend.subtitle.text().lower()
+    # GFP-144 widened the wording from "no protein preferences" to cover
+    # constraints as well: with the selection now feeding the chart, a client
+    # with no preferences but a constraint ticked DOES get a second line, so
+    # the old sentence would have been wrong in a case it used to cover.
+    assert "no preferences or constraints" in page.trend.subtitle.text().lower()
 
 
 def test_ticking_a_preference_adds_a_second_series(page):

@@ -126,10 +126,31 @@ def _spread(positions: list[float], gap: float, top: float, bottom: float) -> li
     return [placed[i] for i in range(len(positions))]
 
 
+#: Series that are not stores, and the palette slot each one takes (GFP-144).
+#:
+#: The client chart's two lines exist to be COMPARED, so they must not be the
+#: same colour -- and every non-store key used to fall through to the single
+#: muted "other", which drew both of them identically. Registering them here
+#: keeps the assignment deterministic and keeps it out of the drawing code,
+#: which should not know what a series means.
+NON_STORE_SLOTS: dict[str, int] = {
+    "Cheapest available": 0,
+    "Their plan": 1,
+}
+
+
 def _slot(store_key: str) -> int:
-    """This store's fixed palette slot: its position in the store registry."""
+    """This series' fixed palette slot.
+
+    A store's slot is its position in the store registry, so a store keeps its
+    colour no matter which other stores are on the chart.
+    """
     keys = [s.key for s in STORES]
-    return keys.index(store_key) if store_key in keys else len(keys)
+    if store_key in keys:
+        return keys.index(store_key)
+    if store_key in NON_STORE_SLOTS:
+        return NON_STORE_SLOTS[store_key]
+    return len(keys)
 
 
 def _money_per_gram(value: float) -> str:
