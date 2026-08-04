@@ -166,7 +166,7 @@ jobs:
           test -f "$PLIST" || { echo "bundle has no Info.plist"; exit 1; }
           IDENT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$PLIST")
           echo "bundle identifier: $IDENT"
-          test "$IDENT" = "com.grocery-planner.gui" \
+          test "$IDENT" = "com.proteinledger.gui" \
             || { echo "unexpected bundle identifier: $IDENT"; exit 1; }
           BIN=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$PLIST")
           test -x "$APP/Contents/MacOS/$BIN" \
@@ -199,7 +199,7 @@ jobs:
           set -euo pipefail
           mkdir -p release
           cp dist/gplan release/
-          cp -R "dist/gplan-gui.app" "release/Grocery Planner.app"
+          cp -R "dist/gplan-gui.app" "release/Protein Ledger.app"
           cp packaging/install.sh packaging/uninstall.sh release/
           cp packaging/INSTALL.md packaging/UNINSTALL.md release/
           chmod +x release/install.sh release/uninstall.sh
@@ -223,7 +223,7 @@ jobs:
           ./release/install.ps1
           ./release/install.ps1        # idempotence: must change nothing
 
-          $root = Join-Path $env:LOCALAPPDATA "Programs\GroceryPlanner"
+          $root = Join-Path $env:LOCALAPPDATA "Programs\ProteinLedger"
           foreach ($f in @("gplan.exe", "gplan-gui.exe", "install-manifest.json")) {
               if (-not (Test-Path (Join-Path $root $f))) { throw "missing after install: $f" }
           }
@@ -237,7 +237,7 @@ jobs:
           if ($hits.Count -ne 1) { throw "PATH has $($hits.Count) entries for $root, expected 1" }
 
           # Start Menu: one shortcut, not two.
-          $menu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Grocery Planner"
+          $menu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Protein Ledger"
           $links = @(Get-ChildItem $menu -Filter *.lnk -ErrorAction SilentlyContinue)
           if ($links.Count -ne 1) { throw "expected 1 Start Menu shortcut, found $($links.Count)" }
 
@@ -252,10 +252,10 @@ jobs:
           # that EXISTS -- an entry whose Uninstall button does nothing is
           # worse than no entry, because the user believes the credentials in
           # their data folder are gone when they are not.
-          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GroceryPlanner"
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ProteinLedger"
           if (-not (Test-Path $key)) { throw "no Add/Remove Programs entry" }
           $arp = Get-ItemProperty $key
-          if ($arp.DisplayName -ne "Grocery Planner") { throw "wrong DisplayName: $($arp.DisplayName)" }
+          if ($arp.DisplayName -ne "Protein Ledger") { throw "wrong DisplayName: $($arp.DisplayName)" }
           if ($arp.UninstallString -notmatch '"(.+uninstall\.ps1)"') { throw "UninstallString names no script: $($arp.UninstallString)" }
           if (-not (Test-Path $Matches[1])) { throw "UninstallString points at a missing file: $($Matches[1])" }
 
@@ -267,10 +267,10 @@ jobs:
           ./release/install.sh
           ./release/install.sh          # idempotence: must change nothing
 
-          ROOT="$HOME/.local/share/grocery-planner"
+          ROOT="$HOME/.local/share/protein-ledger"
           test -x "$ROOT/gplan"                  || { echo "no CLI at $ROOT/gplan"; exit 1; }
           test -f "$ROOT/install-manifest.json"  || { echo "no manifest"; exit 1; }
-          test -d "$HOME/Applications/Grocery Planner.app" || { echo "no .app"; exit 1; }
+          test -d "$HOME/Applications/Protein Ledger.app" || { echo "no .app"; exit 1; }
 
           # The symlink must point at the installed binary, not at the ZIP the
           # user is about to delete.
@@ -282,7 +282,7 @@ jobs:
 
           # The PATH line must appear at most once however many times we ran.
           if [ -f "$HOME/.zprofile" ]; then
-            COUNT=$(grep -c "added by Grocery Planner installer" "$HOME/.zprofile" || true)
+            COUNT=$(grep -c "added by Protein Ledger installer" "$HOME/.zprofile" || true)
             test "$COUNT" -le 1 || { echo "$COUNT PATH lines in .zprofile"; exit 1; }
           fi
 
@@ -308,7 +308,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $gplan = Join-Path $env:LOCALAPPDATA "Programs\GroceryPlanner\gplan.exe"
+          $gplan = Join-Path $env:LOCALAPPDATA "Programs\ProteinLedger\gplan.exe"
 
           & $gplan timer status
           & $gplan timer install --at 06:30
@@ -316,14 +316,14 @@ jobs:
           & $gplan timer install --at 06:30      # idempotent
 
           # Ask the OS, not the command that just claimed success.
-          $tasks = @(Get-ScheduledTask -TaskPath "\GroceryPlanner\" -ErrorAction SilentlyContinue)
+          $tasks = @(Get-ScheduledTask -TaskPath "\ProteinLedger\" -ErrorAction SilentlyContinue)
           if ($tasks.Count -ne 1) { throw "expected 1 task, found $($tasks.Count)" }
 
           # NO CONSOLE WINDOW is an acceptance criterion, so assert the shape
           # that delivers it: the task must invoke the GUI-subsystem binary,
           # which Windows never gives a console to. Pointing it at gplan.exe
           # would blink a black window onto a customer's screen every morning.
-          $action = (Get-ScheduledTask -TaskPath "\GroceryPlanner\" -TaskName "Refresh").Actions[0]
+          $action = (Get-ScheduledTask -TaskPath "\ProteinLedger\" -TaskName "Refresh").Actions[0]
           Write-Host "task runs: $($action.Execute) $($action.Arguments)"
           # schtasks stores Execute WITH the surrounding quotes it was given,
           # so trim them before matching -- otherwise the string ends in `"`
@@ -339,7 +339,7 @@ jobs:
           # And prove the windowless path actually refreshes rather than just
           # existing. No schedules are configured, so this exits 0 having done
           # nothing -- which is the behaviour a fresh install must have.
-          $gui = Join-Path $env:LOCALAPPDATA "Programs\GroceryPlanner\gplan-gui.exe"
+          $gui = Join-Path $env:LOCALAPPDATA "Programs\ProteinLedger\gplan-gui.exe"
           & $gui --refresh-once
           if ($LASTEXITCODE -ne 0) { throw "windowless refresh exited $LASTEXITCODE" }
 
@@ -347,13 +347,13 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
-          GPLAN="$HOME/.local/share/grocery-planner/gplan"
+          GPLAN="$HOME/.local/share/protein-ledger/gplan"
 
           "$GPLAN" timer status || true
           "$GPLAN" timer install --at 06:30
           "$GPLAN" timer install --at 06:30      # idempotent
 
-          PLIST="$HOME/Library/LaunchAgents/com.grocery-planner.refresh.plist"
+          PLIST="$HOME/Library/LaunchAgents/com.proteinledger.refresh.plist"
           test -f "$PLIST" || { echo "no LaunchAgent plist at $PLIST"; exit 1; }
           /usr/libexec/PlistBuddy -c "Print :Label" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :StartCalendarInterval:Hour" "$PLIST" | grep -qx 6
@@ -374,7 +374,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root = Join-Path $env:LOCALAPPDATA "Programs\GroceryPlanner"
+          $root = Join-Path $env:LOCALAPPDATA "Programs\ProteinLedger"
 
           # Plant a credential-shaped file so "did it remove the secrets?" is
           # an observation rather than an assumption.
@@ -394,13 +394,13 @@ jobs:
           # Now check the MACHINE, not the transcript.
           if (Test-Path $root) { throw "program files survived: $root" }
           if (Test-Path $data) { throw "application data survived: $data" }
-          $menu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Grocery Planner"
+          $menu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Protein Ledger"
           if (Test-Path $menu) { throw "Start Menu folder survived: $menu" }
           $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-          if ($userPath -and ($userPath -split ";" | Where-Object { $_ -like "*GroceryPlanner*" })) {
+          if ($userPath -and ($userPath -split ";" | Where-Object { $_ -like "*ProteinLedger*" })) {
               throw "PATH entry survived"
           }
-          if (Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GroceryPlanner") {
+          if (Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ProteinLedger") {
               throw "Add/Remove Programs entry survived"
           }
           # GFP-102: the timer is the one artifact that keeps ACTING after the
@@ -412,8 +412,8 @@ jobs:
           # uninstall, and schtasks cannot remove one.
           try {
               $svc = New-Object -ComObject Schedule.Service; $svc.Connect()
-              $svc.GetFolder("\GroceryPlanner") | Out-Null
-              throw "the empty \GroceryPlanner Task Scheduler folder survived"
+              $svc.GetFolder("\ProteinLedger") | Out-Null
+              throw "the empty \ProteinLedger Task Scheduler folder survived"
           } catch [System.IO.FileNotFoundException] { }
             catch { if ($_.Exception.Message -like "*survived*") { throw } }
 
@@ -426,7 +426,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
-          ROOT="$HOME/.local/share/grocery-planner"
+          ROOT="$HOME/.local/share/protein-ledger"
           DATA="$HOME/Library/Application Support/grocery-planner"
 
           mkdir -p "$DATA"
@@ -441,7 +441,7 @@ jobs:
           # Check the machine, not the transcript.
           test ! -d "$ROOT" || { echo "program files survived: $ROOT"; exit 1; }
           test ! -d "$DATA" || { echo "application data survived: $DATA"; exit 1; }
-          test ! -e "$HOME/Applications/Grocery Planner.app" || { echo ".app survived"; exit 1; }
+          test ! -e "$HOME/Applications/Protein Ledger.app" || { echo ".app survived"; exit 1; }
           test ! -L "$HOME/.local/bin/gplan" || { echo "symlink survived"; exit 1; }
           # GFP-102: the LaunchAgent is the one artifact that keeps ACTING
           # after the app is gone. An install that leaves one behind is
@@ -450,7 +450,7 @@ jobs:
           if launchctl list 2>/dev/null | grep -q grocery; then
             echo "a LaunchAgent is still loaded"; exit 1
           fi
-          test ! -f "$HOME/Library/LaunchAgents/com.grocery-planner.refresh.plist" \
+          test ! -f "$HOME/Library/LaunchAgents/com.proteinledger.refresh.plist" \
             || { echo "the LaunchAgent plist survived"; exit 1; }
 
           # Idempotence: nothing installed must exit 0, not error.
