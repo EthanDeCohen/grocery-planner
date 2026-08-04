@@ -68,13 +68,34 @@ class WeeklyPlan:
     #: The client's weekly budget, or ``None`` if none is set. Null is not
     #: zero: a client with no budget is unmeasured, not permanently over.
     budget: float | None = None
+    #: The real seven-day allocation, when one was solved (GFP-155).
+    #:
+    #: WHY THIS EXISTS RATHER THAN daily * 7. Once Mix It Up became the
+    #: default (GFP-142), multiplying one day stopped describing the plan the
+    #: client is actually shown: the flat week is $22.17 where the varied one
+    #: is $50.42. A budget verdict computed from the multiplication could
+    #: therefore be wrong BY MORE THAN 2x -- telling a nutritionist their
+    #: client is comfortably under when the plan on screen is far over.
+    #:
+    #: ``None`` keeps the old behaviour for callers that have not been given a
+    #: week, so nothing silently changes meaning underneath them.
+    week: "bill_module.WeekPlan | None" = None
 
     @property
     def weekly_cost(self) -> float:
+        """What seven days actually cost.
+
+        The real week when there is one; otherwise a day multiplied, which is
+        exact only while every day is identical.
+        """
+        if self.week is not None:
+            return self.week.total_cost
         return self.daily.total_cost * DAYS_PER_WEEK
 
     @property
     def weekly_target_grams(self) -> float:
+        if self.week is not None:
+            return self.week.target_grams
         return self.daily.target_grams * DAYS_PER_WEEK
 
     @property
@@ -130,6 +151,7 @@ def weekly_plan(
     customer: Customer,
     categories: Iterable[str] | None = None,
     conn: sqlite3.Connection | None = None,
+    selection: "bill_module.Selection | None" = None,
 ) -> WeeklyPlan | None:
     """This client's plan over seven days. ``None`` with no protein target.
 
@@ -138,10 +160,19 @@ def weekly_plan(
     and pricing a hypothetical should not require a write.
     """
     own = conn or db.connect()
-    daily = bill_module.daily_bill_for(customer, categories=categories, conn=own)
+    daily = bill_module.daily_bill_for(
+        customer, categories=categories, conn=own, selection=selection
+    )
     if daily is None:
         return None
-    return WeeklyPlan(daily=daily, budget=customer.weekly_budget)
+    week = None
+    if customer.id is not None:
+        # The real seven days, so the budget is measured against the plan the
+        # client is shown rather than against a multiplication of day one.
+        week = bill_module.week_plan(
+            customer.id, categories=categories, selection=selection, conn=own
+        )
+    return WeeklyPlan(daily=daily, budget=customer.weekly_budget, week=week)
 
 
 def weekly_plan_for_id(
