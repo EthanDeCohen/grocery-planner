@@ -54,20 +54,51 @@ LINE_WIDTH = 2
 MARKER_RADIUS = 4  # 8px marker, per the mark spec
 GRID_LINES = 4
 
-# GFP-41: the ranges the selector offers. Every one of them must be <=
-# records.RETENTION_FLOOR_DAYS, because retention (GFP-42) only promises to
-# keep that much -- an axis labelled "last 365 days" over 90 days of retained
-# history is a quiet lie of exactly the kind service/trends.py refuses to tell.
-# A test enforces the cap rather than trusting this comment.
-RANGE_CHOICES: tuple[tuple[int, str], ...] = tuple(
-    (days, label) for days, label in (
-        (7, "Last 7 days"), (30, "Last 30 days"), (90, "Last 90 days"),
-    ) if days <= RETENTION_FLOOR_DAYS
+# GFP-41/GFP-42: the ranges the selector offers, stock-market style. Every one
+# must be <= the retention window, because an axis labelled "last 365 days"
+# drawn over 90 days of retained history is a quiet lie of exactly the kind
+# service/trends.py refuses to tell.
+#
+# DERIVED FROM RETENTION, never set alongside it. Retention is the promise;
+# these are what may be shown given that promise. Two independent numbers
+# would drift the moment somebody changed one, and the failure would be a
+# confidently-labelled axis rather than an error.
+_CANDIDATE_RANGES: tuple[tuple[int, str], ...] = (
+    (1, "Today"),
+    (3, "Last 3 days"),
+    (7, "Last 7 days"),
+    (30, "Last 30 days"),
+    (365, "Last year"),
 )
-#: Widest range on offer -- the store selector is populated from this rather
-#: than the current window, so narrowing the range cannot make the store you
-#: were looking at vanish from the picker you would need to get back to it.
-WIDEST_RANGE = max(days for days, _ in RANGE_CHOICES)
+
+
+def range_choices() -> tuple[tuple[int, str], ...]:
+    """The ranges this install may honestly offer.
+
+    A function rather than a constant because retention is configurable, and a
+    module-level tuple would freeze whatever the setting was at import time.
+    """
+    from .. import config
+
+    try:
+        kept = config.history_retention_days()
+    except Exception:                       # noqa: BLE001
+        # A broken config must not empty the selector; fall back to the floor
+        # retention is never allowed below.
+        kept = RETENTION_FLOOR_DAYS
+    offered = tuple((d, label) for d, label in _CANDIDATE_RANGES if d <= kept)
+    # Never nothing: the shortest range is always honest.
+    return offered or (_CANDIDATE_RANGES[0],)
+
+
+def widest_range() -> int:
+    """The longest range on offer.
+
+    The store selector is populated from this rather than from the current
+    window, so narrowing the range cannot make the store you were looking at
+    vanish from the picker you would need to get back to it.
+    """
+    return max(days for days, _ in range_choices())
 #: userData for the "every store" entry. Empty rather than None because
 #: QComboBox.currentData() returns None for a missing role, and the two would
 #: then be indistinguishable.
@@ -388,7 +419,7 @@ class TrendsPane(QWidget):
         self.store_select = QComboBox()
         self.store_select.addItem("All stores", ALL_STORES)
         self.range_select = QComboBox()
-        for days, label in RANGE_CHOICES:
+        for days, label in range_choices():
             self.range_select.addItem(label, days)
         default = self.range_select.findData(service.DEFAULT_WINDOW_DAYS)
         self.range_select.setCurrentIndex(default if default >= 0 else 0)
@@ -412,7 +443,7 @@ class TrendsPane(QWidget):
         would schedule another reload.
         """
         wanted = self.store_select.currentData()
-        stores = service.trend_stores(days=WIDEST_RANGE)
+        stores = service.trend_stores(days=widest_range())
         # Remembered so an empty chart can tell "nothing has ever been scraped"
         # apart from "your filter excluded everything" -- see _explain_empty.
         self._any_history = bool(stores)
@@ -585,7 +616,7 @@ class TrendsPane(QWidget):
         """
         narrowed = (
             self.selected_store is not None
-            or self.selected_days < WIDEST_RANGE
+            or self.selected_days < widest_range()
             or self.meat_only
         )
         if trend.observed_days == 0 and self._any_history and narrowed:

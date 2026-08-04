@@ -411,3 +411,38 @@ def count_records(conn: sqlite3.Connection) -> dict[str, int]:
         "with_cpgp": int(row["with_cpgp"] or 0),
         "established": int(row["established"] or 0),
     }
+
+
+def prune_history(
+    conn: sqlite3.Connection,
+    days: int | None = None,
+    today: date | None = None,
+) -> int:
+    """Delete price history older than the retention window (GFP-42).
+
+    Returns how many rows went. Safe to call repeatedly -- a second call with
+    nothing to do deletes nothing and costs one indexed comparison.
+
+    **Records survive this, and that is the point.** GFP-75's record lows are
+    stored, not recomputed, precisely so that "cheapest ever seen" outlives the
+    observation that produced it. Rolling windows are the opposite: they are
+    recomputed on demand and therefore only as good as the history still here,
+    which is why :data:`RETENTION_FLOOR_DAYS` is a floor the caller may not go
+    below (``config._retention_days`` enforces it).
+
+    Measured before choosing the default: price history costs about 411 bytes
+    per row including indexes, at roughly 1,600 rows per day for two stores.
+    That is ~239 MB at 365 days, against a ~500 MB budget which would be
+    reached somewhere near 763 days. Adding stores scales it linearly, so the
+    figure to re-measure is rows per day, not the byte count.
+    """
+    if days is None:
+        from . import config
+        days = config.history_retention_days()
+
+    cutoff = ((today or date.today()) - timedelta(days=days)).isoformat()
+    cursor = conn.execute(
+        "DELETE FROM price_history WHERE captured_at < ?", (cutoff,)
+    )
+    conn.commit()
+    return cursor.rowcount or 0

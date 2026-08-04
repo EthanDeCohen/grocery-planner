@@ -361,9 +361,29 @@ def run_scrape(
     # describe the same shop.
     record_summary = records.update_records(own, store, zip_code, rows, today)
     own.commit()
+
+    # GFP-42: trim old history AFTER the records are safely committed, and
+    # never before. Records are stored rather than recomputed precisely so a
+    # record low outlives the observation behind it -- pruning first would
+    # discard rows this scrape's record update still had to read.
+    #
+    # Here rather than on a timer for the same reason logs self-prune: nobody
+    # administers this machine, so maintenance has to ride along with the work
+    # that creates the data. A failure to prune must never fail a scrape --
+    # the prices are the point; the disk saving is housekeeping.
+    try:
+        pruned = records.prune_history(own)
+        if pruned:
+            logs.get_logger(__name__).info("pruned %s price_history rows past retention", pruned)
+    except sqlite3.Error as exc:
+        logs.get_logger(__name__).warning(
+            "could not prune price history: %s", exc)
+        pruned = 0
+
     return {
         "flyer": flyer,
         "stats": stats,
         "postal_code": zip_code,
         "records": record_summary,
+        "pruned_history_rows": pruned,
     }
