@@ -13,7 +13,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 from grocery_planner import db
-from grocery_planner.gui.trends import ALL_STORES, RANGE_CHOICES, WIDEST_RANGE
+from grocery_planner.gui.trends import ALL_STORES, range_choices, widest_range
 
 
 def _seed(store: str, item: str, slug: str, offsets, protein=25.0) -> None:
@@ -60,11 +60,15 @@ def _select_days(pane, days: int) -> None:
 # --------------------------------------------------------------------------- #
 def test_no_offered_range_outlives_what_retention_promises_to_keep():
     """A 'last 365 days' option over a 90-day floor would be a quiet lie."""
-    from grocery_planner.records import RETENTION_FLOOR_DAYS
+    from grocery_planner import config
 
-    assert RANGE_CHOICES, "the selector must offer at least one range"
-    assert all(days <= RETENTION_FLOOR_DAYS for days, _ in RANGE_CHOICES)
-    assert WIDEST_RANGE <= RETENTION_FLOOR_DAYS
+    kept = config.history_retention_days()
+    assert range_choices(), "the selector must offer at least one range"
+    # GFP-42: the cap is now the CONFIGURED retention, not the floor -- the
+    # floor is merely the least a user may set it to. Offering a 365-day axis
+    # is honest exactly when 365 days are kept.
+    assert all(days <= kept for days, _ in range_choices())
+    assert widest_range() <= kept
 
 
 def test_the_default_range_is_the_services_default(window):
@@ -114,13 +118,17 @@ def test_all_stores_means_no_filter_not_a_store_called_empty_string(window):
 # The range selector
 # --------------------------------------------------------------------------- #
 def test_narrowing_the_range_drops_older_points(window):
-    _seed("foodlion", "Chicken Breast 16 oz", "gfp41-chicken", [40, 3, 1, 0])
+    # 20 days, not 40: GFP-42 moved the default window from 90 to 30 (90 is no
+    # longer a range the selector offers). The oldest point has to sit inside
+    # the default window or this starts testing the default instead of the
+    # narrowing it is named for.
+    _seed("foodlion", "Chicken Breast 16 oz", "gfp41-chicken", [20, 3, 1, 0])
     window.trends.reload()
     assert window.trends.trend.observed_days == 4
 
     _select_days(window.trends, 7)
     assert window.trends.trend.days == 7
-    assert window.trends.trend.observed_days == 3   # the 40-day-old point is out
+    assert window.trends.trend.observed_days == 3   # the 20-day-old point is out
 
 
 # --------------------------------------------------------------------------- #

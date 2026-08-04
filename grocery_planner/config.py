@@ -116,6 +116,27 @@ def _non_empty(key: str, value: Any) -> str:
     return text
 
 
+def _retention_days(key: str, value: Any) -> int:
+    """Days of price history to keep (GFP-42).
+
+    Floored at ``records.RETENTION_FLOOR_DAYS`` rather than at 1. Pruning
+    below it does not fail -- it silently starts answering "90-day low" from
+    less than 90 days of data, which is the kind of quiet wrongness this
+    codebase refuses everywhere else.
+    """
+    from .records import RETENTION_FLOOR_DAYS
+
+    number = _positive_int(key, value)
+    if number < RETENTION_FLOOR_DAYS:
+        raise SettingError(
+            key, value,
+            f"at least {RETENTION_FLOOR_DAYS} days -- rolling-window lows are "
+            f"computed from this history, so keeping less would make a "
+            f"{RETENTION_FLOOR_DAYS}-day low a lie",
+        )
+    return number
+
+
 def _positive_int(key: str, value: Any) -> int:
     try:
         number = int(str(value).strip())
@@ -146,6 +167,13 @@ SETTINGS: tuple[Setting, ...] = (
         parse=_postal_code,
         env_var="GROCERY_PLANNER_POSTAL_CODE",
         describe="ZIP code prices are fetched for.",
+    ),
+    Setting(
+        key="history_retention_days",
+        default=365,
+        parse=_retention_days,
+        env_var="GROCERY_PLANNER_HISTORY_RETENTION_DAYS",
+        describe="Days of price history to keep before trimming.",
     ),
     Setting(
         key="auto_refresh",
@@ -326,6 +354,10 @@ def get(key: str) -> Any:
 def postal_code() -> str:
     """The ZIP prices are fetched for — the setting this ticket exists for."""
     return get("postal_code")
+
+
+def history_retention_days() -> int:
+    return get("history_retention_days")
 
 
 def auto_refresh() -> bool:

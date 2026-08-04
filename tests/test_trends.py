@@ -193,8 +193,22 @@ def test_the_cached_resolver_matches_a_direct_per_row_computation(conn, priced):
     assert point.value == pytest.approx(direct.cost_per_gram_protein, rel=1e-9)
 
 
-def test_the_window_default_matches_what_retention_promises_to_keep(conn):
-    """A 90-day axis over 30 days of retained history would be a quiet lie."""
+def test_the_window_default_never_claims_more_than_retention_keeps(conn):
+    """An axis over history that was pruned would be a quiet lie.
+
+    Checked against the FLOOR rather than the configured retention: the floor
+    is the least a user may legally keep, so a default at or below it is
+    honest at every setting instead of only at the default one.
+    """
     from grocery_planner.records import RETENTION_FLOOR_DAYS
 
-    assert trends.DEFAULT_WINDOW_DAYS == RETENTION_FLOOR_DAYS
+    assert trends.DEFAULT_WINDOW_DAYS <= RETENTION_FLOOR_DAYS
+
+
+def test_the_window_default_is_a_range_the_selector_offers(conn):
+    """Otherwise findData misses, the combo falls back to its first entry, and
+    the app opens on a window nobody chose -- silently."""
+    pytest.importorskip("PySide6.QtWidgets")
+    from grocery_planner.gui.trends import range_choices
+
+    assert trends.DEFAULT_WINDOW_DAYS in [days for days, _ in range_choices()]

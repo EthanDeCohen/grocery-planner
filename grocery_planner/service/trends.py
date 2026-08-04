@@ -68,10 +68,22 @@ from ..stores import BY_KEY
 #: A line needs at least this many days before it is a trend rather than a dot.
 MIN_POINTS_TO_PLOT = 2
 
-#: Default window. Matches ``records.RETENTION_FLOOR_DAYS`` (GFP-75/GFP-42):
-#: asking for more history than retention promises to keep would quietly
-#: produce a shorter chart than the axis claims.
-DEFAULT_WINDOW_DAYS = 90
+#: Default window.
+#:
+#: Two constraints, both enforced by tests rather than remembered:
+#:
+#: * It must not exceed what retention keeps, or the chart quietly draws a
+#:   shorter span than its axis claims (GFP-75/GFP-42). 30 is chosen against
+#:   ``records.RETENTION_FLOOR_DAYS`` -- the LOWEST retention a user may
+#:   configure -- so it stays honest at every legal setting, not just the
+#:   default one.
+#: * It must be one of the ranges the selector offers
+#:   (``gui.trends.range_choices``), or the combo box silently falls back to
+#:   its first entry and the app opens on a window nobody chose.
+#:
+#: Was 90 while that was the only range on offer. GFP-42 replaced the range
+#: list with 1/3/7/30/365, which no longer contains it.
+DEFAULT_WINDOW_DAYS = 30
 
 
 class Metric(str, Enum):
