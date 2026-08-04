@@ -88,6 +88,7 @@ token broker can replace the local file without touching callers.
 from __future__ import annotations
 
 import configparser
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -220,6 +221,27 @@ class Credentials:
     client_secret: str
 
 
+@dataclass(frozen=True)
+class BearerToken:
+    """An access token minted somewhere else -- the broker (GFP-101).
+
+    **Why this exists at all.** If the broker handed out the client_id and
+    client_secret, they would land in the cache on every customer's disk, and a
+    secret on N disks is a secret. Minting the token server-side means the
+    secret never leaves the broker: what a customer holds is a bearer token
+    that expires in half an hour and buys nothing but grocery prices.
+
+    So a client built from one of these must NOT try to exchange credentials it
+    does not have. :meth:`KrogerClient.token` returns this verbatim.
+    """
+
+    access_token: str
+    #: Seconds of life the issuer claimed. Recorded rather than acted on -- the
+    #: caching decision belongs to :mod:`grocery_planner.broker`, and a token
+    #: that expires mid-scrape should surface as the 401 it is.
+    expires_in: float | None = None
+
+
 def _missing_message(target: Path | str) -> str:
     """The 'no credentials' text, shared by every path that has to say it."""
     return (
@@ -268,6 +290,31 @@ def load_credentials(path: Path | None = None) -> Credentials:
     reads a specific file directly -- tests rely on it, and it stays the
     escape hatch for "check this exact file".
     """
+    auth = load_auth(path)
+    if isinstance(auth, BearerToken):
+        raise CredentialsMissingError(
+            "The credential broker supplied an access token rather than a "
+            "client_id/client_secret pair, and by design: the secret stays on "
+            "the broker. Use load_auth() and hand the result to KrogerClient."
+        )
+    return auth
+
+
+def load_auth(path: Path | None = None) -> Credentials | BearerToken:
+    """Whatever this install authenticates to Kroger with.
+
+    Two shapes, because there are two legitimate sources (GFP-101):
+
+    * an **INI document** with client_id/client_secret -- a local file, the
+      only shape that existed before the broker;
+    * a **JSON document** with ``access_token`` -- a token the broker minted,
+      so that the secret behind it never reaches this machine.
+
+    Which one arrives is decided entirely by the credential provider. Sniffing
+    the document rather than asking the provider what it is keeps the GFP-97
+    seam to its single method: a provider returns a document and the consumer,
+    which is the only party that knows these formats, parses it.
+    """
     if path is not None:
         if not path.exists():
             raise CredentialsMissingError(_missing_message(path))
@@ -278,7 +325,17 @@ def load_credentials(path: Path | None = None) -> Credentials:
             text = credentials.fetch(credentials.KROGER.name)
         except credentials.CredentialsMissingError as exc:
             raise CredentialsMissingError(str(exc)) from exc
-        target = credentials.LocalFileProvider().describe(credentials.KROGER)
+        except credentials.CredentialError as exc:
+            # A broker that could not be reached. Deliberately NOT turned into
+            # CredentialsMissingError: "nothing is configured" tells a user to
+            # go and set something up, when in fact the right advice is to try
+            # again later.
+            raise KrogerError(str(exc)) from exc
+        target = credentials.provider().describe(credentials.KROGER)
+
+    token = _as_token(text)
+    if token is not None:
+        return token
 
     text = text.strip()
     if not text.lstrip().startswith("["):
@@ -305,6 +362,29 @@ def load_credentials(path: Path | None = None) -> Credentials:
     )
 
 
+def _as_token(document: str) -> BearerToken | None:
+    """``document`` read as an OAuth2 token response, or ``None``.
+
+    Returns None for anything that is not JSON carrying a non-empty
+    ``access_token`` -- an INI credential file is not a near miss to be
+    guessed at, it is simply the other format.
+    """
+    try:
+        parsed = json.loads(document)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    value = str(parsed.get("access_token") or "").strip()
+    if not value:
+        return None
+    expires = parsed.get("expires_in")
+    return BearerToken(
+        access_token=value,
+        expires_in=float(expires) if isinstance(expires, (int, float)) else None,
+    )
+
+
 def readiness(config_file: Path | None = None) -> tuple[bool, str]:
     """Whether a scrape could run right now, and why not.
 
@@ -312,12 +392,20 @@ def readiness(config_file: Path | None = None) -> tuple[bool, str]:
     check rather than full validation, so `gplan stores` stays fast and the
     detailed error belongs to the scrape itself.
     """
-    target = config_file or config_path()
-    if not target.exists():
-        return False, (
-            f"needs Kroger API credentials at {target} "
-            "(register at developer.kroger.com)"
-        )
+    if config_file is not None:
+        if not config_file.exists():
+            return False, (
+                f"needs Kroger API credentials at {config_file} "
+                "(register at developer.kroger.com)"
+            )
+        return True, ""
+
+    # Asked through the provider rather than by looking for a file: under the
+    # broker there IS no local file and there is not meant to be, so a file
+    # check would report a perfectly working install as unconfigured (GFP-101).
+    entry = credentials.status(credentials.KROGER.name)[0]
+    if not entry.configured:
+        return False, f"needs Kroger API credentials at {entry.location}"
     return True, ""
 
 
@@ -332,7 +420,9 @@ class KrogerClient:
     seeing rather than papering over.
     """
 
-    def __init__(self, credentials: Credentials, timeout: float = 45.0):
+    def __init__(
+        self, credentials: Credentials | BearerToken, timeout: float = 45.0
+    ):
         self._credentials = credentials
         self._http = httpx.Client(timeout=timeout)
         # GFP-108: set by a caller that wants to SHOW a retry happening -- the
@@ -340,7 +430,12 @@ class KrogerClient:
         # "Scraping..." with no explanation. None means retry silently.
         self._on_retry = None
 
-        self._token: str | None = None
+        # A brokered token is already the answer, so the OAuth2 exchange below
+        # never runs -- there is no client_secret on this machine to run it
+        # with, which is the point of brokering (GFP-101).
+        self._token: str | None = (
+            credentials.access_token if isinstance(credentials, BearerToken) else None
+        )
 
     def __enter__(self) -> "KrogerClient":
         return self
@@ -774,7 +869,7 @@ def scrape(
     terms = tuple(queries) if queries is not None else DEFAULT_QUERIES
 
     owned_client = client is None
-    active = client or KrogerClient(load_credentials(config_file))
+    active = client or KrogerClient(load_auth(config_file))
     own = conn or db.connect()
 
     try:

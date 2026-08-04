@@ -64,6 +64,10 @@ from .paths import data_dir
 #: than a code change (see :func:`provider`).
 PROVIDER_ENV_VAR = "GROCERY_PLANNER_CREDENTIAL_PROVIDER"
 LOCAL_PROVIDER = "local"
+#: GFP-101. Fetches credentials from a hosted broker over the network. Still
+#: opt-in and still not the default: a build with no broker deployed must not
+#: start failing because a default changed underneath it.
+BROKER_PROVIDER = "broker"
 
 
 class CredentialError(RuntimeError):
@@ -94,11 +98,31 @@ class CredentialSpec:
     env_var: str
     #: One line telling a human how to obtain this credential.
     obtain_hint: str
+    #: Whether :attr:`env_var` holds the credential ITSELF rather than a path
+    #: to a file containing it. False for every credential whose document is a
+    #: multi-line INI or JSON blob -- those belong in a file. True only for
+    #: :data:`LICENCE`, which is one short opaque string.
+    #:
+    #: This is not cosmetic: without it, ``override()`` would hand a licence
+    #: key to ``Path()`` and the app would look for a file named after the
+    #: secret, which is both wrong and a way to leak it into an error message.
+    env_holds_value: bool = False
 
     def override(self) -> Path | None:
-        """The path this spec's environment variable points at, if set."""
+        """The path this spec's environment variable points at, if set.
+
+        Always ``None`` when the variable holds the value rather than a path.
+        """
+        if self.env_holds_value:
+            return None
         raw = os.environ.get(self.env_var)
         return Path(raw).expanduser() if raw else None
+
+    def env_value(self) -> str | None:
+        """The credential straight from the environment, for specs that allow it."""
+        if not self.env_holds_value:
+            return None
+        return (os.environ.get(self.env_var) or "").strip() or None
 
 
 #: The credentials this app knows about. Registered here rather than in the
@@ -125,7 +149,33 @@ WHOLEFOODS = CredentialSpec(
     ),
 )
 
-SPECS: dict[str, CredentialSpec] = {s.name: s for s in (KROGER, WHOLEFOODS)}
+#: The broker's OWN auth (GFP-101). Without it the broker is an open relay for
+#: whatever upstream secret it holds -- anyone who found the URL could draw on
+#: the shared Kroger quota, which since GFP-119 has no paid tier to escape to.
+#:
+#: Registered here like any other credential so it is stored, listed and
+#: redacted by machinery that already exists, rather than getting its own
+#: half-considered handling. Two things make it unlike the others, both handled
+#: in :mod:`grocery_planner.broker`:
+#:
+#: * Its environment variable holds the KEY ITSELF, not a path to a file. A
+#:   licence key is one short opaque string and demanding a file for it would
+#:   be friction with no benefit.
+#: * It is the one credential the broker can never supply, because it is what
+#:   you present TO the broker. ``BrokerCredentialProvider`` reads it locally.
+LICENCE = CredentialSpec(
+    name="licence",
+    keys=("licence_key",),
+    filename="licence.json",
+    env_var="GROCERY_PLANNER_LICENCE_KEY",
+    obtain_hint=(
+        "The key you were given with the app. It identifies this install to "
+        "the credential broker."
+    ),
+    env_holds_value=True,
+)
+
+SPECS: dict[str, CredentialSpec] = {s.name: s for s in (KROGER, WHOLEFOODS, LICENCE)}
 
 
 @runtime_checkable
@@ -161,6 +211,12 @@ class LocalFileProvider:
         return spec.override() or (data_dir() / spec.filename)
 
     def fetch(self, spec: CredentialSpec) -> str | None:
+        # A spec whose environment variable carries the value skips the disk
+        # entirely -- there is no file to read and nothing to write one from.
+        from_env = spec.env_value()
+        if from_env:
+            return from_env
+
         target = self.path(spec)
         if not target.exists():
             return None
@@ -170,6 +226,8 @@ class LocalFileProvider:
         return target.read_text(encoding="utf-8-sig")
 
     def describe(self, spec: CredentialSpec) -> str:
+        if spec.env_holds_value and spec.env_value():
+            return f"${spec.env_var}"
         return str(self.path(spec))
 
 
@@ -187,13 +245,19 @@ def provider() -> CredentialProvider:
     if _provider is not None:
         return _provider
     choice = os.environ.get(PROVIDER_ENV_VAR, LOCAL_PROVIDER).strip().lower()
-    if choice != LOCAL_PROVIDER:
-        raise UnknownProviderError(
-            f"{PROVIDER_ENV_VAR}={choice!r} but this build only implements "
-            f"{LOCAL_PROVIDER!r}. A hosted token broker is scaffolded for but "
-            "deliberately not built (GFP-97): there is one operator today."
-        )
-    return LocalFileProvider()
+    if choice == LOCAL_PROVIDER:
+        return LocalFileProvider()
+    if choice == BROKER_PROVIDER:
+        # Imported here, not at module scope: broker.py imports this module,
+        # and the seam must stay usable in a build where the broker is never
+        # selected.
+        from .broker import BrokerCredentialProvider
+
+        return BrokerCredentialProvider()
+    raise UnknownProviderError(
+        f"{PROVIDER_ENV_VAR}={choice!r} but this build implements only "
+        f"{LOCAL_PROVIDER!r} and {BROKER_PROVIDER!r}."
+    )
 
 
 def set_provider(new: CredentialProvider | None) -> None:
@@ -248,6 +312,33 @@ class CredentialStatus:
     overridden: bool
 
 
+def _is_configured(active: CredentialProvider, target: CredentialSpec) -> bool:
+    """Whether ``target`` is set up, without letting the check itself fail.
+
+    A provider may answer cheaply via an optional ``configured`` method -- the
+    broker does, because fetching every credential merely to LIST them would
+    put a network round trip in the middle of the command you run when the
+    network is what is broken. Otherwise fall back to actually fetching.
+
+    Either way a failure reports "not configured" rather than propagating:
+    ``gplan credentials`` exists to diagnose a broken install and must survive
+    one.
+    """
+    cheap = getattr(active, "configured", None)
+    try:
+        if callable(cheap):
+            return bool(cheap(target))
+        return active.fetch(target) is not None
+    except CredentialError:
+        return False
+
+
+def _hint(active: CredentialProvider, target: CredentialSpec) -> str:
+    """The provider's advice for obtaining ``target``, or the spec's own."""
+    override = getattr(active, "hint", None)
+    return override(target) if callable(override) else target.obtain_hint
+
+
 def status(name: str | None = None) -> list[CredentialStatus]:
     """Presence and location of every known credential. Reveals no values."""
     active = provider()
@@ -257,10 +348,14 @@ def status(name: str | None = None) -> list[CredentialStatus]:
         target = spec(key)
         out.append(CredentialStatus(
             name=target.name,
-            configured=active.fetch(target) is not None,
+            configured=_is_configured(active, target),
             location=active.describe(target),
             origin=active.origin,
-            obtain_hint=target.obtain_hint,
+            # A provider may override the advice, because the right remedy
+            # depends on where the credential was meant to come from: "register
+            # an application at developer.kroger.com" is correct for a local
+            # file and wrong for a brokered customer, who registers nothing.
+            obtain_hint=_hint(active, target),
             overridden=target.override() is not None,
         ))
     return out

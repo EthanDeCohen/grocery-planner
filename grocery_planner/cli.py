@@ -1016,14 +1016,41 @@ def stores() -> None:
 
 
 @app.command("credentials")
-def credentials_cmd() -> None:
+def credentials_cmd(
+    set_licence: str = typer.Option(
+        None, "--set-licence",
+        help="Store this install's licence key for the credential broker.",
+    ),
+    refresh: bool = typer.Option(
+        False, "--refresh",
+        help="Drop cached brokered credentials so the next scrape refetches.",
+    ),
+) -> None:
     """Show which credentials are configured, and where (GFP-97).
 
     Deliberately prints presence and location only, never a value. This is the
     command to run when supporting someone else's install: it answers "is the
     Kroger key set up, and which file is it reading?" without anyone having to
     read a client_secret out loud.
+
+    ``--refresh`` is what makes an upstream rotation take effect NOW rather
+    than whenever the cache happens to expire (GFP-101). It is also the honest
+    answer to "it says my key is fine but the scrape 401s".
     """
+    if set_licence is not None:
+        from . import broker
+
+        target = broker.set_licence_key(set_licence)
+        # Not echoing the key back. See the closing line of this command.
+        typer.echo(f"Licence key stored at {target}")
+        typer.echo("Cached broker credentials dropped, so the next scrape refetches.")
+
+    if refresh:
+        from . import broker
+
+        broker.forget()
+        typer.echo("Cached broker credentials dropped.")
+
     entries = credentials.status()
     _print_table(
         ["credential", "status", "source"],
