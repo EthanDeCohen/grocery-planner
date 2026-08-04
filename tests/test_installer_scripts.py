@@ -243,3 +243,47 @@ def test_no_shell_script_has_windows_line_endings(path):
     assert b"\r\n" not in path.read_bytes(), (
         f"{path.name} has CRLF line endings and would not run on macOS"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The RELEASE WORKFLOW is part of the pinned-name surface too (GFP-158)
+# --------------------------------------------------------------------------- #
+RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+
+
+def test_the_release_ships_the_app_bundle_under_its_pinned_name():
+    """THE BUG THIS EXISTS FOR, and it shipped in v1.1.0.
+
+    GFP-158 renamed MACOS_APP_BUNDLE_NAME, and every installer script followed
+    because the tests above pin them. release.yml was NOT covered, so it kept
+    copying the bundle to "Grocery Planner.app" while install.sh looked for
+    "Protein Ledger.app".
+
+    The failure was silent by design: install.sh treats a missing bundle as "a
+    CLI-only release is legitimate" and installs the CLI alone. So the macOS
+    ZIP shipped a GUI that the installer beside it would never install, and
+    nothing failed loudly enough to notice.
+    """
+    workflow = _text(RELEASE_WORKFLOW)
+    assert f'"$NAME/{ip.MACOS_APP_BUNDLE_NAME}"' in workflow, (
+        f"release.yml does not ship the bundle as {ip.MACOS_APP_BUNDLE_NAME!r}; "
+        "install.sh will not find it and will silently install the CLI only"
+    )
+
+
+def test_the_release_workflow_carries_no_stale_product_name():
+    """A half-done rename across the packaging surface is how the above
+    happened. This catches the next one anywhere in the file."""
+    workflow = _text(RELEASE_WORKFLOW)
+    for stale in ("Grocery Planner", "GroceryPlanner"):
+        assert stale not in workflow, f"release.yml still says {stale!r}"
+
+
+def test_the_installer_can_find_what_the_release_packages():
+    """The two halves of the contract, asserted against each other rather than
+    against a literal: whatever release.yml copies in, install.sh must look
+    for."""
+    workflow = _text(RELEASE_WORKFLOW)
+    installer = _text(MACOS_INSTALLER)
+    assert ip.MACOS_APP_BUNDLE_NAME in workflow
+    assert ip.MACOS_APP_BUNDLE_NAME in installer

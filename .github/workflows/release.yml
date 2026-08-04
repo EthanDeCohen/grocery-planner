@@ -100,7 +100,7 @@ jobs:
           KROGER_CREDENTIAL: ${{ secrets.KROGER_CREDENTIAL }}
         run: |
           $ErrorActionPreference = "Stop"
-          $name = "grocery-planner-${{ github.ref_name }}-windows"
+          $name = "protein-ledger-${{ github.ref_name }}-windows"
           New-Item -ItemType Directory -Force -Path $name | Out-Null
           Copy-Item dist/gplan.exe, dist/gplan-gui.exe $name/
           Copy-Item packaging/install.ps1, packaging/uninstall.ps1 $name/
@@ -130,10 +130,10 @@ jobs:
           KROGER_CREDENTIAL: ${{ secrets.KROGER_CREDENTIAL }}
         run: |
           set -euo pipefail
-          NAME="grocery-planner-${{ github.ref_name }}-macos"
+          NAME="protein-ledger-${{ github.ref_name }}-macos"
           mkdir -p "$NAME"
           cp dist/gplan "$NAME/"
-          cp -R "dist/gplan-gui.app" "$NAME/Grocery Planner.app"
+          cp -R "dist/gplan-gui.app" "$NAME/Protein Ledger.app"
           cp packaging/install.sh packaging/uninstall.sh "$NAME/"
           cp packaging/INSTALL.md packaging/UNINSTALL.md "$NAME/"
           # GFP-146, as for Windows. `set -u` is on, so the unset case needs
