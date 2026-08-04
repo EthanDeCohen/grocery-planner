@@ -414,9 +414,17 @@ class Selection:
     #: one model (objective + composable constraints) is why this is a flag
     #: here rather than a parallel mechanism.
     #:
-    #: Default False, preserving today's optimiser output: turning it on by
-    #: default would silently change every existing client's plan on upgrade.
-    vary_week: bool = False
+    #: DEFAULT TRUE. A plan that recommends the same item seven days running
+    #: is not one a nutritionist would hand a client, so the professional
+    #: default is the varied week and the flat one is the opt-out.
+    #:
+    #: Shipped False first, on the reasoning that changing a default silently
+    #: rewrites every existing client's plan. Two things retired that: there
+    #: are no production installs to disrupt, and the cost penalty was
+    #: measured wrong -- 127% for a client with ONE category ticked, but 20%
+    #: unconstrained. The expensive case is a narrow preference list, not
+    #: variety itself.
+    vary_week: bool = True
 
 
 #: How many days back "do not repeat" looks when :attr:`Selection.vary_week`

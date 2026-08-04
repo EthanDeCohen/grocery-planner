@@ -79,16 +79,26 @@ def scarce(conn):
 # --------------------------------------------------------------------------- #
 # The default does not change today's output
 # --------------------------------------------------------------------------- #
-def test_repeat_cheapest_is_the_default(market, conn):
-    """Turning variety on by default would silently change every existing
-    client's plan on upgrade, with no action from them."""
-    assert bill.Selection().vary_week is False
+def test_mix_it_up_is_the_default(market, conn):
+    """A plan recommending the same item seven days running is not one a
+    nutritionist would hand a client, so the varied week is the professional
+    default and the flat one is the opt-out.
+
+    Shipped the other way round first. What retired that reasoning: there are
+    no production installs whose plans could be disrupted, and the cost
+    penalty had been measured on a client with ONE category ticked (127%)
+    rather than unconstrained (20%) -- the expensive case is a narrow
+    preference list, not variety itself.
+    """
+    assert bill.Selection().vary_week is True
 
 
 def test_repeat_cheapest_repeats(market, conn):
     """The behaviour GFP-142 was raised about, still available on request."""
     client = _client(conn)
-    week = bill.week_plan(client.id, selection=bill.Selection(), conn=conn)
+    week = bill.week_plan(
+        client.id, selection=bill.Selection(vary_week=False), conn=conn
+    )
     assert week.distinct_items == 1
     assert week.repeated_days == 6          # every day matches the one before
 
@@ -127,7 +137,9 @@ def test_variety_costs_more_and_that_is_shown_honestly(market, conn):
     """A trade the user is choosing. The figure must reflect it rather than
     being massaged."""
     client = _client(conn)
-    cheap = bill.week_plan(client.id, selection=bill.Selection(), conn=conn)
+    cheap = bill.week_plan(
+        client.id, selection=bill.Selection(vary_week=False), conn=conn
+    )
     varied = bill.week_plan(
         client.id, selection=bill.Selection(vary_week=True), conn=conn
     )
@@ -139,7 +151,8 @@ def test_variety_costs_more_and_that_is_shown_honestly(market, conn):
 # --------------------------------------------------------------------------- #
 def test_variety_never_costs_protein(market, conn):
     client = _client(conn)
-    for selection in (bill.Selection(), bill.Selection(vary_week=True)):
+    for selection in (bill.Selection(vary_week=False),
+                      bill.Selection(vary_week=True)):
         week = bill.week_plan(client.id, selection=selection, conn=conn)
         assert week.is_complete
         assert week.covered_grams == pytest.approx(week.target_grams)
@@ -161,7 +174,9 @@ def test_variety_gives_way_when_it_would_starve_the_client(scarce, conn):
 def test_the_daily_target_is_untouched_by_the_mode(market, conn):
     """No mode may reduce what the client needs -- only how it is met."""
     client = _client(conn)
-    plain = bill.week_plan(client.id, selection=bill.Selection(), conn=conn)
+    plain = bill.week_plan(
+        client.id, selection=bill.Selection(vary_week=False), conn=conn
+    )
     varied = bill.week_plan(
         client.id, selection=bill.Selection(vary_week=True), conn=conn
     )
@@ -210,7 +225,9 @@ def test_a_client_with_no_target_has_no_week(market, conn):
 # --------------------------------------------------------------------------- #
 # The control
 # --------------------------------------------------------------------------- #
-def test_the_panel_defaults_to_repeat_cheapest():
+def test_the_panel_defaults_to_mix_it_up():
+    """The control and the Selection default must agree, or the panel shows
+    one thing while the engine does another."""
     pytest.importorskip("PySide6.QtWidgets")
     from PySide6.QtWidgets import QApplication
 
@@ -218,8 +235,9 @@ def test_the_panel_defaults_to_repeat_cheapest():
 
     QApplication.instance() or QApplication([])
     panel = SelectionPanel()
-    assert panel.repeat_cheapest.isChecked()
-    assert panel.selection().vary_week is False
+    assert panel.mix_it_up.isChecked()
+    assert panel.selection().vary_week is True
+    assert panel.selection().vary_week is bill.Selection().vary_week
 
 
 def test_the_panel_expresses_mix_it_up_as_a_constraint():
