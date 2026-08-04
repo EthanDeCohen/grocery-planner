@@ -68,7 +68,13 @@ def test_every_retired_control_is_reachable_from_the_menu_bar(window):
 
     assert "Export deals…" in _menu_actions(window, "File")
     assert "Run scrape…" in _menu_actions(window, "Data")
-    assert _menu_actions(window, "Settings") == ["Formulas…", "Automatic refresh…"]
+    # "Load credential…" joined in GFP-148 and is TEMPORARY: GFP-149 removes it
+    # in v2, when the hosted server supplies the credential and there is
+    # nothing left for a user to load. When that happens, this line is the
+    # reminder that the menu item has to go too.
+    assert _menu_actions(window, "Settings") == [
+        "Formulas…", "Automatic refresh…", "Load credential…",
+    ]
 
 
 def test_menu_actions_open_their_dialogs(window):

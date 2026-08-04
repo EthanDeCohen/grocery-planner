@@ -52,8 +52,12 @@ is rotating.
 """
 from __future__ import annotations
 
+import codecs
+import configparser
+import json
 import os
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -359,3 +363,162 @@ def status(name: str | None = None) -> list[CredentialStatus]:
             overridden=target.override() is not None,
         ))
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Loading a credential someone was sent (GFP-148)
+# --------------------------------------------------------------------------- #
+#: Records which credential files THIS APP put on disk, so v2 can remove them
+#: again without touching one the user created themselves.
+#:
+#: That distinction is the entire reason this file exists. GFP-149 removes the
+#: shipped Kroger credential once the hosted server takes over, and "delete
+#: kroger-env.config from the data dir" would also delete an operator's own key
+#: -- silently, during an upgrade they did not think was risky.
+PROVENANCE_FILENAME = "installed-credentials.json"
+
+#: The UTF-8 byte-order mark, as text. Taken from :mod:`codecs` rather than
+#: written as a literal on purpose: GFP-95's console-safety test scans this
+#: module's string literals for characters a cp1252 console cannot encode, and
+#: a bare U+FEFF would trip it. This one is only ever stripped, never printed,
+#: but encoding that distinction in a comment is weaker than not having the
+#: literal at all.
+BOM = codecs.BOM_UTF8.decode("utf-8")
+
+
+class UnrecognisedCredentialError(CredentialError):
+    """A file was offered that is not a credential this app knows.
+
+    Distinct from "not configured": something WAS provided, and telling the
+    user it is missing would send them looking for a file they are holding.
+    """
+
+
+def _document_keys(document: str) -> set[str]:
+    """The key names in ``document``, whether it is JSON or INI.
+
+    Both formats are in use -- Whole Foods and the licence are JSON, Kroger is
+    INI, with or without a section header. Reading key NAMES rather than values
+    means this never has to hold a secret to work out what it is looking at.
+    """
+    # The BOM comes off FIRST. A leading ﻿ stops json.loads parsing and
+    # stops an INI section header being recognised as one, so a file that is
+    # perfectly valid apart from a byte the user cannot see would be reported
+    # as "not a credential".
+    text = (document or "").lstrip(BOM).strip()
+    if not text:
+        return set()
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return {str(k).strip().lower() for k in parsed}
+    except json.JSONDecodeError:
+        pass
+
+    if not text.lstrip().startswith("["):
+        text = "[credential]\n" + text
+    parser = configparser.ConfigParser()
+    try:
+        parser.read_string(text)
+    except configparser.Error:
+        return set()
+    return {
+        key.strip().lower()
+        for section in parser.sections()
+        for key, _value in parser.items(section)
+    }
+
+
+def identify(document: str) -> CredentialSpec | None:
+    """Which credential ``document`` is, or ``None`` if it is not one.
+
+    Matched against each spec's declared ``keys``, which is what makes the UI
+    able to say "Load credential" rather than naming a store: adding a new
+    credential to :data:`SPECS` teaches this function about it for free.
+
+    Where several specs match, the most specific wins -- a document carrying
+    both a client_id/client_secret pair and something else is the Kroger one.
+    """
+    present = _document_keys(document)
+    if not present:
+        return None
+    matches = [s for s in SPECS.values() if set(s.keys) <= present]
+    if not matches:
+        return None
+    return max(matches, key=lambda s: len(s.keys))
+
+
+def _read_provenance() -> dict:
+    """Never raises: a corrupt record means "we did not install it", which is
+    the safe answer, because it stops v2 deleting something it should not."""
+    try:
+        parsed = json.loads(
+            (data_dir() / PROVENANCE_FILENAME).read_text(encoding="utf-8-sig")
+        )
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def installed_by_app(name: str) -> bool:
+    """Whether this app placed the credential file for ``name``."""
+    return name in _read_provenance()
+
+
+def install(document: str, source: str = "loaded") -> CredentialSpec:
+    """Write ``document`` to wherever its credential belongs. Returns which.
+
+    The counterpart to a user being emailed a credential file: they should not
+    have to know that a Kroger key goes in an INI file in a per-OS data
+    directory whose path differs on every platform. They open the file; this
+    puts it where the app already looks.
+
+    Deliberately overwrites. Unlike the installer -- which must never replace a
+    credential the user did not ask it to touch -- this runs only because
+    somebody chose a file and confirmed, and refusing at that point would
+    leave them with no way to replace an expired credential at all.
+    """
+    spec = identify(document)
+    if spec is None:
+        raise UnrecognisedCredentialError(
+            "That file is not a credential this app recognises. Expected one "
+            "containing " + ", or ".join(
+                " + ".join(s.keys) for s in SPECS.values()
+            ) + "."
+        )
+
+    target = data_dir() / spec.filename
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # Normalised to \n and written as plain UTF-8 with no BOM. A file that
+    # arrived by email has been through a mail client and possibly a Windows
+    # editor; a BOM breaks an INI section header, which was a real bug in this
+    # project (GFP-93).
+    #
+    # newline="" is load-bearing on Windows: without it write_text translates
+    # every \n back into \r\n on the way out, so the normalisation above would
+    # be undone by the write that was meant to apply it.
+    with open(target, "w", encoding="utf-8", newline="") as handle:
+        handle.write(document.lstrip(BOM).replace("\r\n", "\n"))
+
+    record = _read_provenance()
+    record[spec.name] = {
+        "filename": spec.filename,
+        "installed_on": date.today().isoformat(),
+        "source": source,
+    }
+    try:
+        (data_dir() / PROVENANCE_FILENAME).write_text(
+            json.dumps(record, indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        # Losing the record costs v2 the ability to clean this up
+        # automatically. It must not cost the user their credential.
+        pass
+    return spec
+
+
+def install_from_path(path: Path, source: str = "loaded") -> CredentialSpec:
+    """:func:`install`, reading the document from a file the user chose."""
+    # utf-8-sig: the file may well have come from Notepad or a mail client.
+    return install(Path(path).read_text(encoding="utf-8-sig"), source=source)
