@@ -120,6 +120,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field, replace
+from datetime import date, timedelta
 from enum import Enum
 from typing import Iterable
 
@@ -572,6 +573,68 @@ def _single_store(
     return best
 
 
+def _eligible(
+    ranked: list[dict],
+    applied_categories: list[str],
+    conn: sqlite3.Connection,
+) -> list[dict]:
+    """Stage 1: which ranked deals this client may be given at all.
+
+    Zero preferences means UNCONSTRAINED, never "match nothing".
+
+    GFP-134: resolved through nutrition.food_ids_in, which understands that
+    foods.category holds two taxonomies at once -- broad buckets ("Meat")
+    beside specific kinds ("chicken") -- and consults protein_kind as well.
+
+    Comparing the category STRING here is what made a client who ticked
+    "chicken" miss the cheapest chicken in the database: Harris Teeter
+    Drumsticks are filed under "Meat", so they failed a string equality test
+    and the bill was built from breast at 2.5x the price.
+
+    Extracted so the client chart (GFP-144) applies the SAME eligibility rule
+    as the bill. The two disagreeing is precisely the bug that ticket exists
+    to fix, so they must not be able to.
+    """
+    if not applied_categories:
+        return ranked
+    allowed_ids = nutrition.food_ids_in(applied_categories, conn=conn)
+    return [item for item in ranked if item.get("food_id") in allowed_ids]
+
+
+def effective_cost_per_gram(
+    ranked: list[dict],
+    target_grams: float,
+    applied_categories: list[str],
+    selection: "Selection",
+    conn: sqlite3.Connection,
+) -> float | None:
+    """What one day's plan actually costs per gram of protein (GFP-144).
+
+    Total cost divided by grams covered, for the plan the CURRENT selection
+    produces -- not for the cheapest thing the client is willing to eat.
+
+    The distinction is the whole ticket. The client chart used to filter by
+    category alone, so with "include every protein I ticked" switched on it
+    reported that a client's preferences cost nothing extra while the bill
+    beside it showed +$2.70/day. Both were on screen at once.
+
+    ``None`` when nothing could be allocated: no deals, or none eligible. A
+    day with no answer draws no point rather than a zero, which would read as
+    "free" -- the same rule savings.py holds to.
+
+    Takes an ALREADY-RANKED pool because ranking a day of history is the
+    expensive part (~40 ms) and does not depend on the selection, while this
+    is effectively free. A caller redrawing on every checkbox click ranks once
+    and calls this many times.
+    """
+    candidates = _eligible(ranked, applied_categories, conn)
+    lines = _select(candidates, target_grams, applied_categories, selection, conn)
+    covered = sum(line.grams_protein for line in lines)
+    if covered <= 0:
+        return None
+    return sum(line.cost for line in lines) / covered
+
+
 def _build_bill(
     customer_id: int | None,
     target_grams: float,
@@ -610,22 +673,7 @@ def _build_bill(
     )
     excluded_deals = len(all_deals) - len(ranked)
 
-    if applied_categories:
-        # GFP-134: resolved through nutrition.food_ids_in, which understands
-        # that foods.category holds two taxonomies at once -- broad buckets
-        # ("Meat") beside specific kinds ("chicken") -- and matches on
-        # protein_kind as well.
-        #
-        # Comparing the category STRING here is what made a client who ticked
-        # "chicken" miss the cheapest chicken in the database: Harris Teeter
-        # Drumsticks are filed under "Meat", so they failed a string equality
-        # test and the bill was built from breast at 2.5x the price.
-        allowed_ids = nutrition.food_ids_in(applied_categories, conn=conn)
-        candidates = [
-            item for item in ranked if item.get("food_id") in allowed_ids
-        ]
-    else:
-        candidates = ranked
+    candidates = _eligible(ranked, applied_categories, conn)
 
     lines = _select(candidates, target_grams, applied_categories, selection, conn)
 
@@ -734,3 +782,69 @@ def daily_bill(
     if customer is None:
         return None
     return daily_bill_for(customer, categories=categories, conn=own, selection=selection)
+
+
+def rank_history_by_day(
+    days: int,
+    conn: sqlite3.Connection,
+    today: "date | None" = None,
+    postal_code: str | None = None,
+) -> dict[str, list[dict]]:
+    """One ranked candidate pool per day, from ``price_history`` (GFP-144).
+
+    Reads price_history rather than ``deals`` because a scrape REPLACES deals
+    and only appends to history -- the same reason service/trends.py reads it.
+
+    Each day's rows are put back into the shape ``rank_by_cost_per_gram_protein``
+    already consumes, so the $/g chain, the size parsing and the food matching
+    are the ones the bill uses rather than a second implementation that could
+    disagree with it.
+
+    THIS IS THE EXPENSIVE HALF, about 40 ms per day of history against ~1,900
+    rows, and it is independent of the selection. Callers that redraw when a
+    checkbox moves should hold on to the result and re-run only
+    :func:`effective_cost_per_gram`, which is free by comparison.
+    """
+    anchor = today or date.today()
+    since = (anchor - timedelta(days=days)).isoformat()
+
+    # ONE ZIP IS ONE MARKET. Now that the ZIP can be changed from the main
+    # window (GFP-122), an install can hold history captured under two of them,
+    # and averaging Greensboro prices with Beverly Hills prices into a single
+    # line would be a quiet lie of exactly the kind service/trends.py refuses.
+    # None means "every ZIP", which is what the CLI and the tests want.
+    where = [
+        "captured_at >= ?",
+        "COALESCE(dollar_price, sale_price, regular_price) > 0",
+    ]
+    params: list[object] = [since]
+    if postal_code:
+        where.append("postal_code = ?")
+        params.append(postal_code)
+
+    rows = conn.execute(
+        "SELECT substr(captured_at, 1, 10) AS day, store, item_name, "
+        "       COALESCE(dollar_price, sale_price, regular_price) AS dollar_price "
+        "FROM price_history "
+        f"WHERE {' AND '.join(where)} "
+        # Deterministic, for the same reason the deal query is: SQLite gives no
+        # row order without one, and rank_by_cost_per_gram_protein's sort is
+        # stable, so ties would otherwise swap between runs.
+        "ORDER BY day, store, item_name",
+        params,
+    ).fetchall()
+
+    by_day: dict[str, list[dict]] = {}
+    for row in rows:
+        by_day.setdefault(row["day"], []).append({
+            "store": row["store"],
+            "item_name": row["item_name"],
+            "dollar_price": row["dollar_price"],
+        })
+
+    return {
+        day: savings.rank_by_cost_per_gram_protein(
+            deals, conn=conn, limit=0, min_confidence=None
+        )
+        for day, deals in by_day.items()
+    }
