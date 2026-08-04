@@ -114,6 +114,21 @@ class MainWindow(QMainWindow):
         self.schedule_action.triggered.connect(self.open_schedule)
         settings_menu.addAction(self.schedule_action)
 
+        # GFP-148. Deliberately not named after a store: the loader identifies
+        # which credential a file is from its contents, so one menu item covers
+        # all of them and a new credential needs no new UI.
+        #
+        # TEMPORARY BY DESIGN. GFP-149 removes this in v2, when the hosted
+        # server supplies the credential and there is nothing for a user to
+        # load.
+        settings_menu.addSeparator()
+        self.load_credential_action = QAction("&Load credential…", self)
+        self.load_credential_action.setStatusTip(
+            "Install a credential file you were sent, so prices can be fetched."
+        )
+        self.load_credential_action.triggered.connect(self.open_load_credential)
+        settings_menu.addAction(self.load_credential_action)
+
         # GFP-96. Present but DISABLED until a check finds something, so the
         # menu never offers an action that would do nothing -- and so the app
         # has somewhere to put the news other than a modal.
@@ -126,6 +141,24 @@ class MainWindow(QMainWindow):
         )
         self.update_action.triggered.connect(self.open_releases_page)
         help_menu.addAction(self.update_action)
+
+    def open_load_credential(self) -> None:
+        """Install a credential file the user was sent (GFP-148).
+
+        Says what to do next rather than refreshing anything: a credential
+        changes what a scrape CAN do, not what is currently on screen. Quietly
+        reloading the charts would show identical numbers and read as though
+        nothing had happened.
+        """
+        from . import loadcredential
+
+        installed = loadcredential.load(self)
+        if installed is None:
+            return
+        self.statusBar().showMessage(
+            f"Credential loaded ({installed.name}). "
+            "Run a scrape to pull prices with it.", 12000
+        )
 
     def open_releases_page(self) -> None:
         """Hand off to the browser, and stop there.
