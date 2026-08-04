@@ -191,6 +191,7 @@ def relaxations(
     customer: Customer,
     categories: Iterable[str] | None = None,
     conn: sqlite3.Connection | None = None,
+    selection: "bill_module.Selection | None" = None,
 ) -> list[Relaxation]:
     """Price each preference this client could relax, cheapest week first.
 
@@ -211,18 +212,33 @@ def relaxations(
         # the optimiser can do. There is nothing to give back.
         return []
 
-    known = nutrition.list_categories(own)
+    # GFP-156: only categories the nutritionist can actually TICK. GFP-139
+    # removed the broad buckets ("Meat", "Seafood") from the preference
+    # checkboxes because they overlap the specific kinds beneath them -- so
+    # advising "allow Meat" would name a control that does not exist, and the
+    # saving it quotes could not be acted on.
+    buckets = set(nutrition.CATEGORY_MEMBERS)
+    known = [
+        c for c in nutrition.list_categories(own)
+        if c and c.strip().lower() not in buckets
+    ]
     excluded = [c for c in known if c not in allowed]
     if not excluded:
         return []
 
-    current = weekly_plan(customer, categories=allowed, conn=own)
+    # GFP-156: every plan here is solved under the SAME selection as the one
+    # on screen. Advice priced under different constraints from the plan it is
+    # advising about would be the GFP-144 defect again -- two numbers that look
+    # comparable and are not.
+    current = weekly_plan(customer, categories=allowed, conn=own, selection=selection)
     if current is None:
         return []
 
     found: list[Relaxation] = []
     for category in excluded:
-        plan = weekly_plan(customer, categories=allowed + [category], conn=own)
+        plan = weekly_plan(
+            customer, categories=allowed + [category], conn=own, selection=selection
+        )
         if plan is None:
             continue
         found.append(
@@ -276,6 +292,7 @@ def advise(
     customer: Customer,
     categories: Iterable[str] | None = None,
     conn: sqlite3.Connection | None = None,
+    selection: "bill_module.Selection | None" = None,
 ) -> BudgetAdvice | None:
     """The over-budget situation, priced. ``None`` with no target or no budget.
 
@@ -284,7 +301,7 @@ def advise(
     two code paths.
     """
     own = conn or db.connect()
-    plan = weekly_plan(customer, categories=categories, conn=own)
+    plan = weekly_plan(customer, categories=categories, conn=own, selection=selection)
     if plan is None or not plan.has_budget:
         return None
     if not plan.is_over:
@@ -294,8 +311,13 @@ def advise(
     # is the cheapest the optimiser can possibly go. If that is still over, no
     # amount of relaxing preferences will help and saying "allow pork" would be
     # actively misleading.
-    unconstrained = weekly_plan(customer, categories=[], conn=own)
+    unconstrained = weekly_plan(
+        customer, categories=[], conn=own, selection=selection
+    )
     unreachable = unconstrained is not None and unconstrained.is_over
 
-    options = [r for r in relaxations(customer, categories, own) if r.saves > CENT]
+    options = [
+        r for r in relaxations(customer, categories, own, selection=selection)
+        if r.saves > CENT
+    ]
     return BudgetAdvice(plan=plan, options=options, unreachable=unreachable)

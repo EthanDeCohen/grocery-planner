@@ -255,3 +255,138 @@ def test_switching_to_a_client_without_a_budget_hides_the_row(market, conn):
     assert panel.budget_label.isHidden() is False
     panel.set_client(without.id)
     assert panel.budget_label.isHidden() is True
+
+
+# --------------------------------------------------------------------------- #
+# The two options that follow the verdict (GFP-156)
+# --------------------------------------------------------------------------- #
+def _budget_reachable_by_relaxing(conn, client, selection):
+    """A budget the CURRENT preferences miss but a relaxation reaches.
+
+    Computed rather than hardcoded: picking a number by hand produced a budget
+    so low that nothing reached it, so the panel correctly reported
+    "unreachable" and the test was asserting against the wrong branch.
+    """
+    constrained = budget.weekly_plan(client, conn=conn, selection=selection)
+    unconstrained = budget.weekly_plan(
+        client, categories=[], conn=conn, selection=selection
+    )
+    assert unconstrained.weekly_cost < constrained.weekly_cost, (
+        "fixture gives relaxing nothing to do"
+    )
+    return (constrained.weekly_cost + unconstrained.weekly_cost) / 2
+
+
+def test_over_budget_names_one_relaxation_and_the_alternative(market, conn):
+    """GFP-131's framing, in the user's words: "keep to cost low or going
+    above budget -- the only two options the nutritionist will have to make".
+
+    So the panel names the BEST relaxation and states the alternative. Listing
+    all eight would turn a decision into a table, on a panel the user has
+    twice asked to be less wordy.
+    """
+    _deal(conn, "Cheap Pork", 0.50, "pork", "pork")
+    selection = bill.Selection(vary_week=True)
+    probe = _client(conn)
+    preferences.set_preferences(probe.id, ["chicken"], conn=conn)
+    cap = _budget_reachable_by_relaxing(conn, probe, selection)
+
+    client = _client(conn, weekly_budget=cap)
+    preferences.set_preferences(client.id, ["chicken"], conn=conn)
+    panel = _panel(client.id, selection)
+
+    text = panel.options_label.text()
+    assert panel.options_label.isHidden() is False
+    assert "pork" in text
+    assert "accept going over" in text
+
+
+def test_the_other_options_stay_reachable_without_being_shown(market, conn):
+    """Reachable, not deleted -- the nutritionist may want the second-best."""
+    _deal(conn, "Cheap Pork", 0.50, "pork", "pork")
+    _deal(conn, "Cheap Tofu", 0.60, "tofu", None)
+    selection = bill.Selection(vary_week=True)
+    probe = _client(conn)
+    preferences.set_preferences(probe.id, ["chicken"], conn=conn)
+    cap = _budget_reachable_by_relaxing(conn, probe, selection)
+
+    client = _client(conn, weekly_budget=cap)
+    preferences.set_preferences(client.id, ["chicken"], conn=conn)
+    panel = _panel(client.id, selection)
+    assert panel.options_label.toolTip()
+
+
+def test_under_budget_offers_nothing(market, conn):
+    """There is no decision to make, so there is no line."""
+    client = _client(conn, weekly_budget=100_000.0)
+    panel = _panel(client.id)
+    assert panel.options_label.isHidden() is True
+
+
+def test_no_budget_offers_nothing(market, conn):
+    client = _client(conn, weekly_budget=None)
+    panel = _panel(client.id)
+    assert panel.options_label.isHidden() is True
+
+
+def test_an_unreachable_budget_says_so_rather_than_naming_a_preference(market, conn):
+    """When allowing EVERYTHING is still over, the preferences are not the
+    problem. Naming one to relax would be actively misleading."""
+    client = _client(conn, weekly_budget=0.01)
+    preferences.set_preferences(client.id, ["chicken"], conn=conn)
+    panel = _panel(client.id, bill.Selection(vary_week=True))
+    text = panel.options_label.text()
+    assert "No preference change" in text
+
+
+# --------------------------------------------------------------------------- #
+# The advice is priced under the SAME selection as the plan
+# --------------------------------------------------------------------------- #
+def test_advice_follows_the_selection(market, conn):
+    """Advice priced under different constraints from the plan it advises
+    about is the GFP-144 defect again -- two numbers that look comparable and
+    are not."""
+    _deal(conn, "Cheap Pork", 0.50, "pork", "pork")
+    client = _client(conn, weekly_budget=1.0)
+    preferences.set_preferences(client.id, ["chicken"], conn=conn)
+
+    flat = budget.advise(client, conn=conn, selection=bill.Selection(vary_week=False))
+    varied = budget.advise(client, conn=conn, selection=bill.Selection(vary_week=True))
+    assert flat.plan.weekly_cost != pytest.approx(varied.plan.weekly_cost)
+
+
+def test_advice_never_offers_a_category_the_user_cannot_tick(market, conn):
+    """GFP-139 removed the broad buckets ("Meat", "Seafood") from the
+    preference checkboxes because they overlap the kinds beneath them.
+    Advising "allow Meat" would name a control that does not exist and quote
+    a saving nobody can act on."""
+    from grocery_planner import nutrition
+
+    _deal(conn, "Cheap Pork", 0.50, "pork", "pork")
+    client = _client(conn, weekly_budget=1.0)
+    preferences.set_preferences(client.id, ["chicken"], conn=conn)
+
+    options = budget.relaxations(client, conn=conn)
+    buckets = set(nutrition.CATEGORY_MEMBERS)
+    offered = {r.category.strip().lower() for r in options}
+    assert not (offered & buckets), f"advice offers unofferable buckets: {offered & buckets}"
+
+
+def test_relaxing_the_named_preference_really_reaches_the_budget(market, conn):
+    """The claim is checkable, so check it: the option the panel names must
+    actually produce the week it quotes."""
+    _deal(conn, "Cheap Pork", 0.50, "pork", "pork")
+    selection = bill.Selection(vary_week=True)
+    probe = _client(conn)
+    preferences.set_preferences(probe.id, ["chicken"], conn=conn)
+    client = _client(conn, weekly_budget=_budget_reachable_by_relaxing(conn, probe, selection))
+    preferences.set_preferences(client.id, ["chicken"], conn=conn)
+
+    advice = budget.advise(client, conn=conn, selection=selection)
+    best = advice.best
+    assert best is not None
+
+    actual = budget.weekly_plan(
+        client, categories=["chicken", best.category], conn=conn, selection=selection
+    )
+    assert actual.weekly_cost == pytest.approx(best.weekly_cost)
