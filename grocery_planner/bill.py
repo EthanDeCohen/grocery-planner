@@ -927,6 +927,16 @@ class WeekPlan:
         return all(day.is_complete for day in self.days)
 
     @property
+    def categories(self) -> list[str]:
+        """The preference list every day was built under.
+
+        Exposed on the week rather than left for callers to dig out of
+        ``days[0]``: a caller reaching into one day to learn something about
+        the whole week is a caller that will eventually read the wrong day.
+        """
+        return list(self.days[0].categories) if self.days else []
+
+    @property
     def distinct_items(self) -> int:
         return len({line.item_name for day in self.days for line in day.lines})
 
@@ -941,11 +951,27 @@ class WeekPlan:
         return sum(1 for a, b in zip(sets, sets[1:]) if a and a == b)
 
 
+def rank_current_deals(conn: sqlite3.Connection) -> tuple[list[dict], int]:
+    """The ranked candidate pool for THIS week's deals, and how many were dropped.
+
+    Split out so a caller solving the same week several ways -- the GFP-153
+    comparison grid runs four -- pays the ranking once. It is the expensive
+    part (~40 ms over ~1,900 deals) and it does not depend on the selection or
+    the client.
+    """
+    all_deals = service.fetch_deals(hide_expired=True, conn=conn)
+    ranked = savings.rank_by_cost_per_gram_protein(
+        all_deals, conn=conn, limit=0, min_confidence=None
+    )
+    return ranked, len(all_deals) - len(ranked)
+
+
 def week_plan(
     customer_id: int,
     categories: Iterable[str] | None = None,
     selection: Selection | None = None,
     conn: sqlite3.Connection | None = None,
+    ranked: tuple[list[dict], int] | None = None,
 ) -> WeekPlan | None:
     """Seven daily plans, varied or not per ``selection``. ``None`` with no target."""
     own = conn or db.connect()
@@ -955,7 +981,9 @@ def week_plan(
     target = targets.protein_target_for(customer, conn=own)
     if target is None or not target.daily_grams:
         return None
-    return _week_from(target.daily_grams, customer_id, categories, selection, own)
+    return _week_from(
+        target.daily_grams, customer_id, categories, selection, own, ranked
+    )
 
 
 def _week_from(
@@ -964,6 +992,7 @@ def _week_from(
     categories: Iterable[str] | None,
     selection: Selection | None,
     conn: sqlite3.Connection,
+    ranked: tuple[list[dict], int] | None = None,
 ) -> WeekPlan:
     """Build the week one day at a time.
 
@@ -980,12 +1009,8 @@ def _week_from(
     else:
         applied = sorted({c for c in (categories or ())})
 
-    all_deals = service.fetch_deals(hide_expired=True, conn=conn)
-    ranked = savings.rank_by_cost_per_gram_protein(
-        all_deals, conn=conn, limit=0, min_confidence=None
-    )
-    excluded = len(all_deals) - len(ranked)
-    eligible = _eligible(ranked, applied, conn)
+    pool_ranked, excluded = ranked if ranked is not None else rank_current_deals(conn)
+    eligible = _eligible(pool_ranked, applied, conn)
 
     days: list[Bill] = []
     recent: list[set[str]] = []            # item names used, most recent last
