@@ -233,7 +233,16 @@ if [ "$DRY_RUN" -eq 0 ]; then
         fi
         exit 1
     fi
-    VERSION="$(printf '%s' "$OUTPUT" | sed -n 's/^grocery-planner[[:space:]]\{1,\}\(.*\)$/\1/p')"
+    # GFP-159: match the VERSION, not the product name. This parsed
+    # "grocery-planner <version>" and silently produced "unknown" the moment
+    # GFP-158 made `gplan version` print the display name -- so the closing
+    # banner read "Protein Ledger unknown installed" while the verification
+    # line two lines above correctly showed 1.1.1.
+    #
+    # A version-shaped trailing token survives any future rename, which is the
+    # point: this is the second time a rename has broken a string an installer
+    # prints.
+    VERSION="$(printf '%s' "$OUTPUT" | sed -n 's/.*[[:space:]]\([0-9][0-9.]*[^[:space:]]*\)[[:space:]]*$/\1/p')"
     [ -n "$VERSION" ] || VERSION="unknown"
     green "gplan runs: $OUTPUT"
 fi
@@ -256,9 +265,14 @@ if [ -d "$APPS_DIR/$APP_BUNDLE_NAME" ] && [ "$DRY_RUN" -eq 0 ]; then
         else
             echo
             warn "macOS has quarantined this app because it is not signed."
-            gray "The first launch will be refused. To allow it, either:"
-            gray "  * right-click the app in Finder and choose Open, once, or"
-            gray "  * re-run this installer with --clear-quarantine"
+            gray "The first launch will be refused. To allow it:"
+            gray "  * re-run this installer with --clear-quarantine  (simplest), or"
+            gray "  * open System Settings > Privacy & Security, scroll to"
+            gray "    Security, and click 'Open Anyway' next to $APP_DISPLAY_NAME"
+            gray ""
+            gray "Note: right-clicking the app and choosing Open no longer works"
+            gray "on macOS 15 and later -- Apple removed that bypass for unsigned"
+            gray "apps, so System Settings is the only route without the flag."
         fi
     fi
 fi

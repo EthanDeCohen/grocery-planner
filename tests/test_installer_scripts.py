@@ -338,3 +338,127 @@ def test_every_launchctl_check_greps_for_the_real_agent_label():
                         f"which does not occur in {ip.MACOS_LAUNCH_AGENT_LABEL!r}"
                     )
     assert offenders == [], "launchctl checks look for the wrong agent:\n" + "\n".join(offenders)
+
+
+# --------------------------------------------------------------------------- #
+# Double-click wrappers (GFP-161)
+# --------------------------------------------------------------------------- #
+WRAPPERS = {
+    "Install.cmd": "install.ps1",
+    "Uninstall.cmd": "uninstall.ps1",
+    "Install.command": "install.sh",
+    "Uninstall.command": "uninstall.sh",
+}
+
+
+@pytest.mark.parametrize("wrapper,target", sorted(WRAPPERS.items()))
+def test_each_wrapper_exists_and_calls_its_installer(wrapper, target):
+    """A user should never have to type a command to install this.
+
+    On Windows a .ps1 is refused outright under the default RemoteSigned
+    policy once it carries a mark-of-the-web; on macOS Finder will not run a
+    .sh on a double-click at all. Both are solved by an extension the shell
+    treats differently, not by asking the user to change a setting.
+    """
+    text = _text(PACKAGING / wrapper)
+    assert target in text, f"{wrapper} does not invoke {target}"
+
+
+@pytest.mark.parametrize("wrapper", ["Install.cmd", "Uninstall.cmd"])
+def test_the_windows_wrappers_bypass_policy_for_one_invocation_only(wrapper):
+    """-ExecutionPolicy Bypass on the command line applies to THAT process.
+
+    It must never become Set-ExecutionPolicy, which would weaken the user's
+    machine permanently to install one app.
+    """
+    text = _text(PACKAGING / wrapper)
+    assert "-ExecutionPolicy Bypass" in text
+    assert "Set-ExecutionPolicy" not in text, (
+        f"{wrapper} changes the machine's policy instead of bypassing for one run"
+    )
+
+
+@pytest.mark.parametrize("wrapper", ["Install.cmd", "Uninstall.cmd"])
+def test_the_windows_wrappers_resolve_paths_from_their_own_folder(wrapper):
+    r"""Double-clicking from Explorer often starts in C:\Windows, so a bare
+    relative path would look for the installer in the wrong place."""
+    assert "%~dp0" in _text(PACKAGING / wrapper)
+
+
+@pytest.mark.parametrize("wrapper", ["Install.cmd", "Uninstall.cmd"])
+def test_the_windows_wrappers_keep_the_window_open(wrapper):
+    """Without `pause` the window closes instantly and the user sees nothing --
+    neither success nor the error explaining a failure."""
+    assert "pause" in _text(PACKAGING / wrapper)
+
+
+@pytest.mark.parametrize("wrapper", ["Install.command", "Uninstall.command"])
+def test_the_macos_wrappers_are_shell_scripts_with_unix_endings(wrapper):
+    """A .command with CRLF fails on the shebang line. This is the third time
+    a Windows-authored file has needed this check."""
+    raw = (PACKAGING / wrapper).read_bytes()
+    assert raw.startswith(b"#!"), f"{wrapper} has no shebang"
+    assert b"\r\n" not in raw, f"{wrapper} has Windows line endings"
+
+
+def test_the_macos_installer_wrapper_clears_quarantine_and_says_so():
+    """The double-click path is aimed at somebody who would otherwise meet
+    "Apple could not verify..." with no way forward but System Settings.
+
+    Clearing quarantine on the app THIS installer just installed is within
+    what the user asked for -- but it must be announced, not silent.
+    """
+    text = _text(PACKAGING / "Install.command")
+    assert "--clear-quarantine" in text
+    assert "without a security warning" in text, (
+        "Install.command clears quarantine without telling the user"
+    )
+
+
+def test_plain_install_sh_still_refuses_to_clear_quarantine_on_its_own():
+    """The conservative default stays for the terminal path. Only the
+    double-click wrapper opts in."""
+    text = _text(MACOS_INSTALLER)
+    assert "CLEAR_QUARANTINE=0" in text or "CLEAR_QUARANTINE:-0" in text
+
+
+def test_the_quarantine_advice_is_not_the_one_apple_removed():
+    """install.sh told users to right-click and choose Open. Apple removed
+    that bypass for unsigned apps in macOS 15, so the advice sent people to a
+    dead end -- worse than no advice."""
+    text = _text(MACOS_INSTALLER)
+    assert "Privacy & Security" in text, "no working route offered"
+    assert "no longer works" in text, "the stale right-click route is unqualified"
+
+
+@pytest.mark.parametrize("wrapper", sorted(WRAPPERS))
+def test_the_release_ships_every_wrapper(wrapper):
+    """A wrapper that exists in packaging/ but not in the ZIP helps nobody."""
+    assert wrapper in _text(RELEASE_WORKFLOW), f"release.yml does not ship {wrapper}"
+
+
+# --------------------------------------------------------------------------- #
+# Version parsing (GFP-159)
+# --------------------------------------------------------------------------- #
+def test_neither_installer_parses_the_version_by_product_name():
+    """The banner read "Protein Ledger unknown installed" because both
+    installers matched "grocery-planner <version>", which GFP-158 stopped
+    producing. On Windows the same value lands in the registry as
+    DisplayVersion, so Add/Remove Programs showed "unknown" too.
+
+    Matching a version-shaped token instead survives the next rename.
+    """
+    for script in (MACOS_INSTALLER, WINDOWS_INSTALLER):
+        text = _text(script)
+        assert r"grocery-planner\s+" not in text and "^grocery-planner" not in text, (
+            f"{script.name} still parses the version by the old product name"
+        )
+
+
+def test_the_version_regex_matches_what_gplan_actually_prints():
+    """Asserted against the real output shape rather than a remembered one."""
+    from grocery_planner import __version__, install_paths
+
+    printed = f"{install_paths.APP_DISPLAY_NAME} {__version__}"
+    match = re.search(r"(\d+\.\d+\.\d+\S*)\s*$", printed)
+    assert match and match.group(1) == __version__

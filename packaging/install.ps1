@@ -244,7 +244,11 @@ if (-not $DryRun) {
         Write-Host $output -ForegroundColor DarkGray
         exit 1
     }
-    if ($output -match "grocery-planner\s+(\S+)") { $version = $Matches[1] }
+    # GFP-159: match the VERSION, not the product name -- see install.sh for
+    # the full reasoning. On Windows this value also lands in the registry as
+    # DisplayVersion, so a stale parse showed "unknown" in Add/Remove Programs
+    # and not merely in the closing banner.
+    if ($output -match "(\d+\.\d+\.\d+\S*)\s*$") { $version = $Matches[1] }
     Write-Did "gplan runs: $output"
 }
 
