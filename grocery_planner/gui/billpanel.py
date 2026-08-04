@@ -101,6 +101,14 @@ class BillPanel(QWidget):
         self.headline.setFont(headline_font)
         layout.addWidget(self.headline)
 
+        # Shown ONLY when a budget is set. A client with no budget is
+        # unmeasured, not permanently under -- and a row reading "no budget"
+        # on every client who does not use the feature is clutter.
+        self.budget_label = QLabel("")
+        self.budget_label.setWordWrap(True)
+        self.budget_label.setVisible(False)
+        layout.addWidget(self.budget_label)
+
         self.comparison_label = QLabel("")
         self.comparison_label.setWordWrap(True)
         layout.addWidget(self.comparison_label)
@@ -194,6 +202,7 @@ class BillPanel(QWidget):
         self._set_boxes([])
         self.categories_widget.setEnabled(False)
         self.headline.setText("—")
+        self.budget_label.setVisible(False)
         self.comparison_label.setText("No client selected.")
         self.caveat_label.setText("")
         self.caveat_label.setVisible(False)
@@ -217,6 +226,7 @@ class BillPanel(QWidget):
             # GFP-29's rule: say so, never price a guessed weight.
             self.comparison = None
             self.headline.setText("—")
+            self.budget_label.setVisible(False)
             self.comparison_label.setText(
                 "No protein target for this client yet, so there is no bill to "
                 "compute. Add a weight in the biometrics panel."
@@ -262,6 +272,74 @@ class BillPanel(QWidget):
         self.reload()
 
     # ----------------------------------------------------------------- #
+    def _render_week(self, plan: bill.Bill) -> None:
+        """Fold the week into the headline, and state the budget in one line.
+
+        The user asked for "7 day total vs 1 day" and then, seeing it, that it
+        was too wordy. Both notes were true: the panel showed $3.17/day twice
+        (headline and comparison line) and spent a full sentence explaining
+        why a varied week is not seven times a day.
+
+        So the two figures share the headline, the explanation becomes a
+        tooltip, and the budget gets one short line that appears only when
+        there is a budget -- the user's rule: no budget, no problem.
+
+        The week comes from ``budget.weekly_plan``, which since GFP-155 prices
+        the REAL seven days. With Mix It Up on, multiplying day one says
+        $22.17 where the plan costs $50.42, so a verdict built on it could be
+        wrong by more than 2x.
+        """
+        from .. import budget as budget_module
+        from ..customers import CustomerRepository
+
+        self.budget_label.setVisible(False)
+        if self.customer_id is None:
+            return
+
+        conn = db.connect()
+        customer = CustomerRepository.get(self.customer_id, conn=conn)
+        if customer is None:
+            return
+
+        weekly = budget_module.weekly_plan(
+            customer, categories=self.categories, conn=conn,
+            selection=self.selection,
+        )
+        if weekly is None:
+            return
+
+        week_cost = weekly.weekly_cost
+        self.headline.setText(
+            f"{_money(plan.total_cost)}/day  ·  {_money(week_cost)}/week"
+        )
+
+        flat = plan.total_cost * budget_module.DAYS_PER_WEEK
+        note = bill.AMORTIZATION_NOTE
+        if abs(week_cost - flat) >= 0.005:
+            # A reader who multiplies and gets a different number will assume
+            # one of the figures is wrong, so the reason stays available --
+            # just not occupying a line of the panel.
+            note += (
+                "\n\nThe week is not seven times the day because Mix It Up "
+                "varies it; a varied week costs more."
+            )
+        self.headline.setToolTip(note)
+
+        if not weekly.has_budget:
+            return
+
+        self.budget_label.setVisible(True)
+        if weekly.is_over:
+            self.budget_label.setText(
+                f"{_money(weekly.over_by)} over {_money(weekly.budget)} budget"
+            )
+            self.budget_label.setStyleSheet("color: #b3261e; font-weight: 600;")
+        else:
+            self.budget_label.setText(
+f"{_money(weekly.headroom)} left of {_money(weekly.budget)}"
+            )
+            self.budget_label.setStyleSheet("color: #146c2e; font-weight: 600;")
+
     def _render_lines(self, plan: bill.Bill) -> None:
         """One widget row per item: what it is, what it gives, what it costs,
         where to buy it, and a link (GFP-123).
@@ -361,6 +439,8 @@ class BillPanel(QWidget):
         self.comparison = comparison
         plan = comparison.constrained
         self.headline.setText(f"{_money(plan.total_cost)}/day")
+        self._render_week(plan)
+
 
         if comparison.is_constrained:
             delta = comparison.delta_cost
@@ -369,13 +449,14 @@ class BillPanel(QWidget):
                 # Half a cent apart is the same plan by another route; naming a
                 # "+$0.00 penalty" for it would invent a cost that isn't there.
                 self.comparison_label.setText(
-                    f"Baseline {baseline}/day — these preferences cost nothing extra."
+                    f"Cheapest {baseline}/day — no extra cost."
                 )
             else:
                 sign = "+" if delta > 0 else "−"
+                # No longer repeats the plan's own figure: it is the
+                # headline directly above this line.
                 self.comparison_label.setText(
-                    f"Baseline {baseline}/day  ·  your plan "
-                    f"{_money(plan.total_cost)}/day  ({sign}{_money(abs(delta))})"
+f"Cheapest {baseline}/day  ({sign}{_money(abs(delta))})"
                 )
         else:
             # Nothing ticked: the two solves are the same, so one figure.
