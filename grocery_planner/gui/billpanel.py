@@ -109,6 +109,17 @@ class BillPanel(QWidget):
         self.budget_label.setVisible(False)
         layout.addWidget(self.budget_label)
 
+        # GFP-156: the CHOICE that follows the verdict. One line, shown only
+        # when over budget. The user's framing (GFP-131) is that there are two
+        # options and only two -- relax a preference, or accept going over --
+        # so this names the best relaxation and says the alternative plainly
+        # rather than listing all eight.
+        self.options_label = QLabel("")
+        self.options_label.setWordWrap(True)
+        self.options_label.setStyleSheet("color: #666;")
+        self.options_label.setVisible(False)
+        layout.addWidget(self.options_label)
+
         self.comparison_label = QLabel("")
         self.comparison_label.setWordWrap(True)
         layout.addWidget(self.comparison_label)
@@ -203,6 +214,7 @@ class BillPanel(QWidget):
         self.categories_widget.setEnabled(False)
         self.headline.setText("—")
         self.budget_label.setVisible(False)
+        self.options_label.setVisible(False)
         self.comparison_label.setText("No client selected.")
         self.caveat_label.setText("")
         self.caveat_label.setVisible(False)
@@ -227,6 +239,7 @@ class BillPanel(QWidget):
             self.comparison = None
             self.headline.setText("—")
             self.budget_label.setVisible(False)
+            self.options_label.setVisible(False)
             self.comparison_label.setText(
                 "No protein target for this client yet, so there is no bill to "
                 "compute. Add a weight in the biometrics panel."
@@ -293,6 +306,7 @@ class BillPanel(QWidget):
         from ..customers import CustomerRepository
 
         self.budget_label.setVisible(False)
+        self.options_label.setVisible(False)
         if self.customer_id is None:
             return
 
@@ -334,11 +348,64 @@ class BillPanel(QWidget):
                 f"{_money(weekly.over_by)} over {_money(weekly.budget)} budget"
             )
             self.budget_label.setStyleSheet("color: #b3261e; font-weight: 600;")
+            self._render_options(customer, conn)
         else:
             self.budget_label.setText(
 f"{_money(weekly.headroom)} left of {_money(weekly.budget)}"
             )
             self.budget_label.setStyleSheet("color: #146c2e; font-weight: 600;")
+
+    def _render_options(self, customer, conn) -> None:
+        """The two ways out of being over budget (GFP-156).
+
+        GFP-131's framing, in the user's words: "keep to cost low or going
+        above budget -- the only two options the nutritionist will have to
+        make". So this names the single BEST relaxation and states the
+        alternative, rather than listing all eight and turning a decision into
+        a table.
+
+        Going over budget is a legitimate choice and is presented as one. The
+        protein target is never the thing that gives way (GFP-131/GFP-136).
+        """
+        from .. import budget as budget_module
+
+        advice = budget_module.advise(
+            customer, categories=self.categories, conn=conn,
+            selection=self.selection,
+        )
+        if advice is None or not advice.is_over:
+            return
+
+        self.options_label.setVisible(True)
+        if advice.unreachable:
+            # Allowing everything is still over. Naming a preference to relax
+            # here would be actively misleading -- the preferences are not the
+            # problem.
+            self.options_label.setText(
+                "No preference change reaches this budget at current prices."
+            )
+            self.options_label.setToolTip("")
+            return
+
+        best = advice.best
+        if best is None:
+            self.options_label.setText("")
+            self.options_label.setVisible(False)
+            return
+
+        self.options_label.setText(
+            f"Allow {best.category}: {_money(best.weekly_cost)}/week, "
+            f"or accept going over"
+        )
+        # The other options stay reachable without occupying the panel.
+        others = advice.options[1:]
+        self.options_label.setToolTip(
+            "\n".join(
+                f"allow {r.category}: {_money(r.weekly_cost)}/week "
+                f"(saves {_money(r.saves)})"
+                for r in advice.options
+            ) if others else ""
+        )
 
     def _render_lines(self, plan: bill.Bill) -> None:
         """One widget row per item: what it is, what it gives, what it costs,
