@@ -271,12 +271,32 @@ def test_the_release_ships_the_app_bundle_under_its_pinned_name():
     )
 
 
-def test_the_release_workflow_carries_no_stale_product_name():
-    """A half-done rename across the packaging surface is how the above
-    happened. This catches the next one anywhere in the file."""
-    workflow = _text(RELEASE_WORKFLOW)
-    for stale in ("Grocery Planner", "GroceryPlanner"):
-        assert stale not in workflow, f"release.yml still says {stale!r}"
+#: The legacy Excel workbook, which is a real filename in the repo root and
+#: is NOT part of the rename. Anything else matching the old product name is.
+LEGACY_FILENAME = "GroceryPlanner.xlsm"
+
+
+def test_no_workflow_carries_a_stale_product_name():
+    """EVERY workflow, not just the release one.
+
+    The GFP-158 rename reached install_paths.py and every script the tests
+    above pin, and missed all three workflow files. release.yml shipped a
+    bundle the installer could not find; ci.yml and macos-lifecycle.yml
+    asserted paths that no longer existed, so the macOS lifecycle test was
+    checking for an app bundle at a name nothing produces any more.
+
+    Scanning the whole directory rather than a list of files, so a workflow
+    added later is covered without anyone remembering to add it here.
+    """
+    offenders = {}
+    for workflow in sorted((ROOT / ".github").rglob("*")):
+        if not workflow.is_file() or workflow.suffix not in (".yml", ".yaml", ".md"):
+            continue
+        text = _text(workflow).replace(LEGACY_FILENAME, "")
+        hits = [s for s in ("Grocery Planner", "GroceryPlanner") if s in text]
+        if hits:
+            offenders[workflow.relative_to(ROOT).as_posix()] = hits
+    assert offenders == {}, f"stale product name in: {offenders}"
 
 
 def test_the_installer_can_find_what_the_release_packages():

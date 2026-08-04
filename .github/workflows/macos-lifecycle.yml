@@ -100,7 +100,7 @@ jobs:
           set -euo pipefail
           mkdir -p release
           cp dist/gplan release/
-          cp -R "dist/gplan-gui.app" "release/Grocery Planner.app"
+          cp -R "dist/gplan-gui.app" "release/Protein Ledger.app"
           cp packaging/install.sh packaging/uninstall.sh release/
           cp packaging/INSTALL.md packaging/UNINSTALL.md release/
           chmod +x release/install.sh release/uninstall.sh
@@ -137,12 +137,12 @@ jobs:
               echo "  MISSING $1: $2"; fail=1
             fi
           }
-          check "app bundle"   "$HOME/Applications/Grocery Planner.app"
-          check "CLI"          "$HOME/.local/share/grocery-planner/gplan"
+          check "app bundle"   "$HOME/Applications/Protein Ledger.app"
+          check "CLI"          "$HOME/.local/share/protein-ledger/gplan"
           check "PATH symlink" "$HOME/.local/bin/gplan"
-          check "manifest"     "$HOME/.local/share/grocery-planner/install-manifest.json"
-          check "uninstaller"  "$HOME/.local/share/grocery-planner/uninstall.sh"
-          check "LaunchAgent"  "$HOME/Library/LaunchAgents/com.grocery-planner.refresh.plist"
+          check "manifest"     "$HOME/.local/share/protein-ledger/install-manifest.json"
+          check "uninstaller"  "$HOME/.local/share/protein-ledger/uninstall.sh"
+          check "LaunchAgent"  "$HOME/Library/LaunchAgents/com.proteinledger.refresh.plist"
           test "$fail" -eq 0
         # tee inside `run` would swallow the exit code through the pipe, so
         # the log is captured by the step's own output and the artifact below.
@@ -175,7 +175,7 @@ jobs:
             #
             # The outer timeout is belt and braces: nothing in this job should
             # ever be able to hang a macOS runner again.
-            BUNDLE="$HOME/Applications/Grocery Planner.app/Contents/MacOS/gplan-gui"
+            BUNDLE="$HOME/Applications/Protein Ledger.app/Contents/MacOS/gplan-gui"
             if command -v timeout >/dev/null 2>&1; then
               timeout 120 "$BUNDLE" --refresh-once
             else
@@ -234,7 +234,7 @@ jobs:
           # And specifically: exactly one agent, one symlink, one PATH line.
           COUNT=$(launchctl list | grep -c grocery || true)
           test "$COUNT" -eq 1 || { echo "$COUNT LaunchAgents loaded, expected 1"; exit 1; }
-          LINES=$(grep -c "added by Grocery Planner installer" "$HOME/.zprofile" 2>/dev/null || true)
+          LINES=$(grep -c "added by Protein Ledger installer" "$HOME/.zprofile" 2>/dev/null || true)
           test "${LINES:-0}" -le 1 || { echo "${LINES} PATH lines in .zprofile"; exit 1; }
 
       # ---------------------------------------------------------------- #
@@ -269,7 +269,7 @@ jobs:
       - name: Uninstall
         run: |
           set -euo pipefail
-          "$HOME/.local/share/grocery-planner/uninstall.sh" --yes 2>&1 \
+          "$HOME/.local/share/protein-ledger/uninstall.sh" --yes 2>&1 \
             | tee "$EVIDENCE/31-uninstall.log"
 
       - name: Snapshot -- after uninstall
@@ -289,11 +289,11 @@ jobs:
               echo "  gone     $1: $2"
             fi
           }
-          gone "app bundle"    "$HOME/Applications/Grocery Planner.app"
-          gone "program files" "$HOME/.local/share/grocery-planner"
+          gone "app bundle"    "$HOME/Applications/Protein Ledger.app"
+          gone "program files" "$HOME/.local/share/protein-ledger"
           gone "PATH symlink"  "$HOME/.local/bin/gplan"
           gone "data dir"      "$HOME/Library/Application Support/grocery-planner"
-          gone "LaunchAgent"   "$HOME/Library/LaunchAgents/com.grocery-planner.refresh.plist"
+          gone "LaunchAgent"   "$HOME/Library/LaunchAgents/com.proteinledger.refresh.plist"
 
           if launchctl list 2>/dev/null | grep -i grocery; then
             echo "  SURVIVED a loaded LaunchAgent"; fail=1
