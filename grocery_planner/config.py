@@ -224,6 +224,22 @@ def defaults() -> dict[str, Any]:
     return {s.key: s.default for s in SETTINGS}
 
 
+def is_first_run() -> bool:
+    """Whether this install has never been configured (GFP-122).
+
+    Deliberately "no config file", NOT "no database". Someone who clears their
+    data to start over has already answered the setup questions, and asking
+    again would be the app forgetting something it was told. Conversely a
+    config file with nothing useful in it still counts as configured -- the
+    user has been through setup and chose the defaults.
+
+    ``postal_code`` is the reason this exists. It defaults to 27401, which is
+    the DEVELOPER's ZIP: an install that never asks silently prices a different
+    city, and a wrong ZIP does not error, it just answers the wrong question.
+    """
+    return not path().exists()
+
+
 def _read_file(target: Path, problems: list[str]) -> dict[str, Any]:
     """The file's contents, or ``{}`` with a problem recorded.
 
