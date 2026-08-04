@@ -307,3 +307,34 @@ def test_the_installer_can_find_what_the_release_packages():
     installer = _text(MACOS_INSTALLER)
     assert ip.MACOS_APP_BUNDLE_NAME in workflow
     assert ip.MACOS_APP_BUNDLE_NAME in installer
+
+
+def test_every_launchctl_check_greps_for_the_real_agent_label():
+    """THE THIRD INSTANCE OF THE SAME BUG, and the one the earlier guards
+    still missed.
+
+    GFP-158 renamed MACOS_LAUNCH_AGENT_LABEL to com.proteinledger.refresh.
+    The workflows verify registration with `launchctl list | grep -c grocery`
+    -- a bare, lowercase, unbranded substring that neither the rename sweep
+    (which matched "Grocery Planner" and "GroceryPlanner") nor the stale-name
+    guard (which looks for those same two strings) covered.
+
+    The agent registered perfectly; the CHECK looked for the old name and
+    reported "expected 1 loaded agent, found 0". A correct install failing its
+    own verification.
+
+    So this asserts the relationship rather than a spelling: whatever a
+    workflow greps launchctl for must actually occur in the label.
+    """
+    label = ip.MACOS_LAUNCH_AGENT_LABEL.lower()
+    pattern = re.compile(r"launchctl[^\n|]*\|\s*grep\s+(?:-\w+\s+)*([^\s;|&]+)")
+    offenders = []
+    for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        for number, line in enumerate(_text(workflow).splitlines(), 1):
+            for needle in pattern.findall(line):
+                if needle.strip("\"'").lower() not in label:
+                    offenders.append(
+                        f"{workflow.name}:{number} greps {needle!r}, "
+                        f"which does not occur in {ip.MACOS_LAUNCH_AGENT_LABEL!r}"
+                    )
+    assert offenders == [], "launchctl checks look for the wrong agent:\n" + "\n".join(offenders)

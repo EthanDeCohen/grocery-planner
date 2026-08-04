@@ -164,7 +164,7 @@ jobs:
             echo "--- gplan uninstall-plan ---"
             "$HOME/.local/bin/gplan" uninstall-plan
             echo "--- the LaunchAgent, per launchctl ---"
-            launchctl list | grep grocery
+            launchctl list | grep proteinledger
             echo "--- the app binary inside the bundle actually executes ---"
             # --refresh-once, NOT --help. The bundle is a GUI-subsystem binary
             # and any argument it does not recognise falls through to main(),
@@ -232,7 +232,7 @@ jobs:
           fi
 
           # And specifically: exactly one agent, one symlink, one PATH line.
-          COUNT=$(launchctl list | grep -c grocery || true)
+          COUNT=$(launchctl list | grep -c proteinledger || true)
           test "$COUNT" -eq 1 || { echo "$COUNT LaunchAgents loaded, expected 1"; exit 1; }
           LINES=$(grep -c "added by Protein Ledger installer" "$HOME/.zprofile" 2>/dev/null || true)
           test "${LINES:-0}" -le 1 || { echo "${LINES} PATH lines in .zprofile"; exit 1; }
@@ -295,7 +295,7 @@ jobs:
           gone "data dir"      "$HOME/Library/Application Support/grocery-planner"
           gone "LaunchAgent"   "$HOME/Library/LaunchAgents/com.proteinledger.refresh.plist"
 
-          if launchctl list 2>/dev/null | grep -i grocery; then
+          if launchctl list 2>/dev/null | grep -i proteinledger; then
             echo "  SURVIVED a loaded LaunchAgent"; fail=1
           else
             echo "  gone     no LaunchAgent is loaded"

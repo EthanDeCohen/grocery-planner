@@ -359,7 +359,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Print :StartCalendarInterval:Hour" "$PLIST" | grep -qx 6
 
           # Exactly one, however many times we registered.
-          COUNT=$(launchctl list | grep -c grocery || true)
+          COUNT=$(launchctl list | grep -c proteinledger || true)
           test "$COUNT" -eq 1 || { echo "expected 1 loaded agent, found $COUNT"; exit 1; }
 
       # GFP-92: uninstall for real, and check the machine afterwards rather
@@ -447,7 +447,7 @@ jobs:
           # after the app is gone. An install that leaves one behind is
           # malware-shaped, and a plist deleted while still loaded keeps
           # running until logout -- so check BOTH.
-          if launchctl list 2>/dev/null | grep -q grocery; then
+          if launchctl list 2>/dev/null | grep -q proteinledger; then
             echo "a LaunchAgent is still loaded"; exit 1
           fi
           test ! -f "$HOME/Library/LaunchAgents/com.proteinledger.refresh.plist" \
