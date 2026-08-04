@@ -28,7 +28,20 @@ setlocal
 echo.
 echo   Installing Protein Ledger...
 echo.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1" %*
+REM GFP-162: strip the mark-of-the-web from everything we shipped, BEFORE
+REM trying to run any of it. Windows tags every file extracted from a
+REM downloaded ZIP as "came from the internet", and that one tag causes both
+REM problems a new user hits: PowerShell refuses install.ps1 because of it,
+REM and SmartScreen objects to gplan.exe because of it.
+REM
+REM It has to happen here rather than inside install.ps1, because install.ps1
+REM cannot unblock itself -- it is the file being blocked.
+REM
+REM Scoped to %~dp0, this folder. Never machine-wide.
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "Get-ChildItem -LiteralPath '%~dp0' -Recurse -Force -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue"
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1" -Unblock %*
 set RESULT=%ERRORLEVEL%
 echo.
 if %RESULT% NEQ 0 (

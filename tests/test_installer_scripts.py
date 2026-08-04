@@ -462,3 +462,66 @@ def test_the_version_regex_matches_what_gplan_actually_prints():
     printed = f"{install_paths.APP_DISPLAY_NAME} {__version__}"
     match = re.search(r"(\d+\.\d+\.\d+\S*)\s*$", printed)
     assert match and match.group(1) == __version__
+
+
+# --------------------------------------------------------------------------- #
+# Mark-of-the-web (GFP-162)
+# --------------------------------------------------------------------------- #
+def test_the_windows_wrapper_unblocks_before_running_the_installer():
+    """ORDER IS THE WHOLE POINT. install.ps1 cannot unblock itself -- it is the
+    file Windows is refusing to run. So the wrapper must strip the tag first,
+    then invoke it.
+
+    Verified on a real download: Unblock-File alone made `.\install.ps1` work
+    with no policy change at all, which is what identified mark-of-the-web
+    rather than the policy as the actual obstacle.
+    """
+    text = _text(PACKAGING / "Install.cmd")
+    assert "Unblock-File" in text
+    assert text.index("Unblock-File") < text.index("-File \"%~dp0install.ps1\""), (
+        "Install.cmd runs the installer before unblocking it, which cannot work"
+    )
+
+
+def test_the_windows_wrapper_unblocks_only_its_own_folder():
+    """Scoped to %~dp0. Unblocking machine-wide would strip a security marker
+    from files this installer has nothing to do with."""
+    text = _text(PACKAGING / "Install.cmd")
+    assert "-LiteralPath '%~dp0'" in text
+
+
+def test_unblocking_the_installed_files_is_opt_in():
+    """Same position as install.sh's --clear-quarantine: silently removing a
+    security marker on the user's behalf is not the installer's call. The
+    double-click path opts in; a terminal user does not get it by default."""
+    text = _text(WINDOWS_INSTALLER)
+    assert "[switch]$Unblock" in text
+    assert "if ($Unblock)" in text
+    assert "mark-of-the-web left in place" in text, (
+        "the default path does not say that it left the tag alone"
+    )
+
+
+def test_the_double_click_path_passes_unblock():
+    assert "-Unblock" in _text(PACKAGING / "Install.cmd")
+
+
+def test_the_two_platforms_take_the_same_position():
+    """Windows -Unblock and macOS --clear-quarantine are the same decision
+    about the same kind of marker. If one ever becomes default-on without the
+    other, that is a drift worth arguing about rather than inheriting."""
+    windows = _text(WINDOWS_INSTALLER)
+    macos = _text(MACOS_INSTALLER)
+    assert "CLEAR_QUARANTINE=0" in macos
+    assert "[switch]$Unblock" in windows      # a switch defaults to false
+    for text, wrapper in ((windows, "Install.cmd"), (macos, "Install.command")):
+        assert "not the installer's call" in text, (
+            "the opt-in reasoning is no longer stated beside the code"
+        )
+
+
+def test_neither_installer_claims_unblocking_makes_it_signed():
+    """A user told "this makes it safe" would be misled. Removing
+    mark-of-the-web suppresses warnings about being DOWNLOADED; it does
+    nothing about the absence of a signature."""
+    assert "does NOT make an unsigned binary signed" in _text(WINDOWS_INSTALLER)
