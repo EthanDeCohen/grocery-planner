@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMainWindow,
     QSplitter,
+    QPushButton,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -63,6 +64,7 @@ class MainWindow(QMainWindow):
 
         self._dialogs: dict[str, QDialog] = {}
         self._build_menus()
+        self._build_zip_corner()
         self.setCentralWidget(self._build_central())
         self.statusBar().showMessage(
             f"{service.count_deals(hide_expired=True)} current deals stored."
@@ -141,6 +143,95 @@ class MainWindow(QMainWindow):
         )
         self.update_action.triggered.connect(self.open_releases_page)
         help_menu.addAction(self.update_action)
+
+    # ----------------------------------------------------------------- #
+    # The ZIP, always on screen (GFP-122)
+    # ----------------------------------------------------------------- #
+    def _build_zip_corner(self) -> None:
+        """Show the ZIP in the menu bar's corner, and let it be changed there.
+
+        THE POINT IS VISIBILITY, not convenience. Every price in this app is
+        for one ZIP, and until now that ZIP appeared nowhere in the interface:
+        an install pointed at the wrong city looked exactly like one pointed at
+        the right city. Putting it in the corner means a wrong ZIP is
+        noticeable at a glance, on every screen, without anyone going looking.
+
+        The menu bar corner rather than a toolbar because it is global -- it
+        scopes the whole dataset, not the chart it would otherwise sit beside.
+        """
+        from PySide6.QtWidgets import QHBoxLayout, QLabel
+
+        # HELD ON self, and that reference is load-bearing rather than tidy.
+        # setCornerWidget does not keep the Python wrapper alive, so a corner
+        # widget kept only in a local is garbage-collected once this method
+        # returns -- destroying its C++ children with it. The control then
+        # never appears, and touching self.zip_button raises "already deleted".
+        #
+        # Isolated by removing each guard in turn: the self reference is what
+        # fixes it; parenting to the menu bar alone does not. Found by a
+        # screenshot, and the regression test needs an explicit gc.collect()
+        # to reproduce it deterministically.
+        corner = QWidget(self.menuBar())
+        self._zip_corner = corner
+        row = QHBoxLayout(corner)
+        row.setContentsMargins(0, 0, 8, 0)
+        row.setSpacing(6)
+
+        label = QLabel("ZIP")
+        label.setStyleSheet("color: #666;")
+        row.addWidget(label)
+
+        self.zip_button = QPushButton(config.postal_code())
+        self.zip_button.setFlat(True)
+        self.zip_button.setStyleSheet("font-weight: 600;")
+        self.zip_button.setStatusTip(
+            "Prices are looked up for this ZIP code. Click to change it."
+        )
+        self.zip_button.clicked.connect(self.open_change_zip)
+        row.addWidget(self.zip_button)
+
+        self.menuBar().setCornerWidget(corner)
+
+    def open_change_zip(self) -> None:
+        """Change the ZIP every price is looked up for.
+
+        Says plainly that stored prices are now for somewhere else. Silently
+        swapping the ZIP under a screen full of prices from the old one would
+        leave the user reading the wrong city's numbers with no hint of it --
+        which is the same failure GFP-122 exists to prevent, arrived at from a
+        different direction.
+        """
+        from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+        from .firstrun import ZIP_PATTERN
+
+        current = config.postal_code()
+        text, ok = QInputDialog.getText(
+            self, "Change ZIP code",
+            "Look up prices for which ZIP code?", text=current,
+        )
+        if not ok:
+            return
+        candidate = text.strip()
+        if not ZIP_PATTERN.match(candidate):
+            QMessageBox.warning(
+                self, "That is not a ZIP code", "A ZIP code is five digits."
+            )
+            return
+        if candidate == current:
+            return
+
+        try:
+            config.set_value("postal_code", candidate)
+        except Exception as exc:            # noqa: BLE001
+            QMessageBox.warning(self, "Could not save that ZIP", str(exc))
+            return
+
+        self.zip_button.setText(candidate)
+        self.statusBar().showMessage(
+            f"ZIP changed to {candidate}. Prices already stored are still for "
+            f"{current} -- run a scrape to refresh them.", 20000
+        )
 
     def open_load_credential(self) -> None:
         """Install a credential file the user was sent (GFP-148).
@@ -433,6 +524,16 @@ def main() -> int:
     #
     # After show(), so the window is already on screen when the scrape dialog
     # appears over it rather than the app seeming to open into a dialog.
+    # GFP-122. BEFORE the refresh, and that ordering is the whole ticket:
+    # postal_code defaults to 27401 (the developer's ZIP), and GFP-105 would
+    # otherwise make the very first act of a new install a confident scrape of
+    # the wrong city -- with nothing on screen to suggest it.
+    if config.is_first_run():
+        from .firstrun import ask
+
+        chosen = ask(window)
+        if chosen:
+            window.zip_button.setText(chosen)
     window.maybe_auto_refresh()
     # GFP-96: passive, and in main() for the same reason as the refresh above
     # -- constructing a window must never touch the network. Held on the
