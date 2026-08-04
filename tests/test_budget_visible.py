@@ -153,15 +153,21 @@ def _qt():
 def _panel(customer_id, selection=None):
     """A BillPanel over the test database.
 
+    ``_qt()`` runs BEFORE the BillPanel import, and that order is the point:
+    CI installs ``.[dev]`` without the gui extra, so importing the panel first
+    raises ModuleNotFoundError instead of skipping. Every GUI test in this file
+    failed on CI for exactly that reason while passing locally, where PySide6
+    is present.
+
     Visibility is asserted with isHidden(), NOT isVisible(): a widget whose
     window has never been shown reports isVisible() False whatever its own
     flag says, so every "the row is hidden" assertion would have passed
     vacuously -- and two of them did, until a "the row is shown" assertion
     failed and exposed it.
     """
+    _qt()                       # skips FIRST -- see below
     from grocery_planner.gui.billpanel import BillPanel
 
-    _qt()
     panel = BillPanel()
     panel.set_selection(None, selection or bill.Selection())
     panel.set_client(customer_id)

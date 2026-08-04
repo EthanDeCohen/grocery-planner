@@ -106,6 +106,7 @@ def test_the_dialog_accepts_exactly_what_the_config_layer_accepts(text, valid):
     and ``config._postal_code`` strips before matching. Feeding one padded
     input would test a path neither takes.
     """
+    pytest.importorskip("PySide6.QtWidgets", reason="GUI extra not installed")
     from grocery_planner.config import SettingError, _postal_code
     from grocery_planner.gui.firstrun import ZIP_PATTERN
 
@@ -188,6 +189,7 @@ def test_the_zip_is_asked_before_the_first_scrape(fresh_install, monkeypatch):
     reintroduce the exact bug: a confident scrape of the wrong city."""
     import inspect
 
+    pytest.importorskip("PySide6.QtWidgets", reason="GUI extra not installed")
     from grocery_planner.gui import app as app_module
 
     source = inspect.getsource(app_module.main)

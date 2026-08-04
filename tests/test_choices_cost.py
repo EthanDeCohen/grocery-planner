@@ -91,9 +91,15 @@ def _qt():
 
 
 def _pane(customer_id):
+    """A ChoicesCostPane over the test database.
+
+    ``_qt()`` runs BEFORE the import: CI installs ``.[dev]`` without the gui
+    extra, so importing the pane first raises ModuleNotFoundError rather than
+    skipping.
+    """
+    _qt()
     from grocery_planner.gui.choicescost import ChoicesCostPane
 
-    _qt()
     pane = ChoicesCostPane()
     pane.set_client(customer_id)
     return pane
@@ -171,6 +177,7 @@ def test_the_two_rows_carry_DIFFERENT_variety_penalties(market, conn):
 # What it renders
 # --------------------------------------------------------------------------- #
 def test_the_grid_has_both_rows_and_all_columns(market, conn):
+    _qt()
     from grocery_planner.gui.choicescost import HEADERS, THEIRS, UNRESTRICTED
 
     client = _client(conn)
@@ -222,6 +229,7 @@ def test_a_reload_does_not_stack_a_second_grid(market, conn):
 # --------------------------------------------------------------------------- #
 def test_a_zero_penalty_reads_as_words_not_plus_zero(market, conn):
     """"+0%" invites somebody to wonder whether the control is broken."""
+    _qt()
     from grocery_planner.gui.choicescost import _penalty
 
     class _P:
@@ -232,6 +240,7 @@ def test_a_zero_penalty_reads_as_words_not_plus_zero(market, conn):
 
 
 def test_an_unbuildable_plan_shows_a_dash_not_a_zero(market, conn):
+    _qt()
     from grocery_planner.gui.choicescost import _money, _penalty
 
     assert _money(None) == "—"
