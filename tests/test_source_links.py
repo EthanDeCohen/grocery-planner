@@ -165,7 +165,13 @@ def test_scraped_row_persists_source_url_and_image_url(conn):
         f"INSERT INTO deals(store, postal_code, {', '.join(cols)}, source, imported_at) "
         f"VALUES (:store, :postal_code, {', '.join(':' + c for c in cols)}, "
         f":source, :imported_at)",
-        {**row, "store": "foodlion", "postal_code": "27401", "source": "scrape",
+        # The {c: None} default fill is part of run_scrape's shape, not an
+        # extra: a scraper only emits the columns its source actually has, and
+        # every other DEAL_COLUMN is NULL. Omitting it here made this test
+        # break the first time a column was added that Flipp does not populate
+        # (weight_basis, GFP-152) -- a failure of the mirror, not of the code.
+        {**{c: None for c in cols}, **row,
+         "store": "foodlion", "postal_code": "27401", "source": "scrape",
          "imported_at": "2026-08-01T00:00:00+00:00"},
     )
     conn.commit()

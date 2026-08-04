@@ -97,7 +97,7 @@ from typing import Any, Iterable
 
 import httpx
 
-from .. import credentials, db, matching
+from .. import credentials, db, matching, weight_basis
 from . import base, retry
 
 # The CLI/registry name. Distinct from STORE_KEY because this is a SECOND
@@ -779,6 +779,12 @@ def product_to_row(
         "flipp_item_id": None,
         "flipp_coupon_id": None,
         "sold_by": sold_by,
+        # GFP-152. Computed HERE because this is the only place the evidence
+        # exists: `categories` is not persisted, and by the time a row reaches
+        # the display layer there is nothing left to classify from.
+        "weight_basis": weight_basis.classify(
+            sold_by, product.get("categories"), description
+        ),
         "price_per_unit": per_unit,
         "price_per_unit_uom": per_unit_uom,
         # GFP-111: Kroger's own productId, written at scrape time from the

@@ -73,6 +73,7 @@ TABLE deals
   sub_category: TEXT
   valid_from: TEXT
   valid_to: TEXT
+  weight_basis: TEXT
 
 TABLE food_nutrients
   amount_per_100g: REAL
@@ -117,6 +118,7 @@ TABLE price_history
   store: TEXT NOT NULL
   sub_category: TEXT
   updated_at: TEXT
+  weight_basis: TEXT
 
 TABLE price_records
   first_seen_at: TEXT NOT NULL

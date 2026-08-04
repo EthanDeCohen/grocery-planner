@@ -1,10 +1,18 @@
-"""How to choose, as a panel (GFP-136 / GFP-137).
+"""How to choose, as a panel (GFP-136 / GFP-137 / GFP-142).
 
 The protein-preference checkboxes used to sit in the middle of the bill panel,
 between the headline figure and the itemised list. Two problems with that: they
 pushed the list down out of sight, and they answered a different question from
 everything around them. The bill says *what this costs*; these controls say
 *how to pick it*. So they move into their own column, with the new controls.
+
+"Weekly plan" (GFP-142) sits with the constraints rather than the objective,
+and deliberately: "lowest cost" still decides what to reach for, and Mix It Up
+constrains what counts as an acceptable WEEK -- exactly as cover-all and
+single-store constrain a day. It is rendered as its own radio pair only
+because the two options are mutually exclusive, not because it is a rival
+objective. Default Repeat Cheapest, so an upgrade changes nobody's plan
+without them asking.
 
 **Constraints and objective are separate, and that is the point.** "Include
 all" and "lowest price" were first described as rival modes, but lowest price
@@ -64,6 +72,24 @@ class SelectionPanel(QWidget):
         objective_layout.addWidget(self.within_budget)
         layout.addWidget(objective_box)
 
+        # --- the week (GFP-142) ------------------------------------------ #
+        week_box = QGroupBox("Weekly plan")
+        week_layout = QVBoxLayout(week_box)
+        self.repeat_cheapest = QRadioButton("Repeat Cheapest")
+        self.repeat_cheapest.setChecked(True)
+        self.repeat_cheapest.setToolTip(
+            "The cheapest $/g every day, even if that is the same item all\n"
+            "seven days. This is what the optimiser has always done."
+        )
+        self.mix_it_up = QRadioButton("Mix It Up")
+        self.mix_it_up.setToolTip(
+            "Vary the week rather than recommending one item seven days\n"
+            "running. Costs more; never delivers less protein."
+        )
+        week_layout.addWidget(self.mix_it_up)
+        week_layout.addWidget(self.repeat_cheapest)
+        layout.addWidget(week_box)
+
         # --- the constraints: any combination ---------------------------- #
         constraint_box = QGroupBox("Must also")
         constraint_layout = QVBoxLayout(constraint_box)
@@ -95,7 +121,8 @@ class SelectionPanel(QWidget):
         layout.addWidget(self.note)
         layout.addStretch(1)
 
-        for widget in (self.lowest_cost, self.within_budget):
+        for widget in (self.lowest_cost, self.within_budget,
+                       self.mix_it_up, self.repeat_cheapest):
             widget.toggled.connect(self._emit)
         for widget in (self.cover_all, self.single_store):
             widget.stateChanged.connect(self._emit)
@@ -150,6 +177,7 @@ class SelectionPanel(QWidget):
             single_store=self.single_store.isChecked(),
             objective=objective,
             daily_budget=daily_budget,
+            vary_week=self.mix_it_up.isChecked(),
         )
 
     # ------------------------------------------------------------------ #
