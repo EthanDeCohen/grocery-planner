@@ -104,6 +104,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path $name | Out-Null
           Copy-Item dist/gplan.exe, dist/gplan-gui.exe $name/
           Copy-Item packaging/install.ps1, packaging/uninstall.ps1 $name/
+          # GFP-161: the double-click entry points. A .cmd carries no
+          # execution-policy restriction, so a user never meets one.
+          Copy-Item packaging/Install.cmd, packaging/Uninstall.cmd $name/
           Copy-Item packaging/INSTALL.md, packaging/UNINSTALL.md $name/
           # GFP-146: the Kroger credential, written from a repository secret
           # and never from a file in the repo. If the secret is unset the
@@ -135,6 +138,9 @@ jobs:
           cp dist/gplan "$NAME/"
           cp -R "dist/gplan-gui.app" "$NAME/Protein Ledger.app"
           cp packaging/install.sh packaging/uninstall.sh "$NAME/"
+          # GFP-161: Finder will not run a .sh on a double-click; it will
+          # run a .command.
+          cp packaging/Install.command packaging/Uninstall.command "$NAME/"
           cp packaging/INSTALL.md packaging/UNINSTALL.md "$NAME/"
           # GFP-146, as for Windows. `set -u` is on, so the unset case needs
           # the :- default rather than a bare test.
@@ -145,6 +151,7 @@ jobs:
             echo "::warning::KROGER_CREDENTIAL secret is not set; this release ships without a credential"
           fi
           chmod +x "$NAME/install.sh" "$NAME/uninstall.sh" "$NAME/gplan"
+          chmod +x "$NAME/Install.command" "$NAME/Uninstall.command"
           "$NAME/gplan" version
           # ditto, not zip: it preserves the .app bundle's symlinks and
           # resource forks. A bundle round-tripped through plain zip can arrive

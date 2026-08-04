@@ -30,10 +30,20 @@
 # release ZIP and are run by customers.
 *.sh text eol=lf
 
+# GFP-161's double-click wrappers, same rule as their targets. A .command is a
+# shell script macOS runs on a double-click, so CRLF breaks it on the shebang
+# line exactly as it would a .sh -- and it is the FIRST thing a customer runs,
+# so the failure would greet them before anything else. A .cmd is the Windows
+# mirror and follows *.ps1.
+*.command text eol=lf
+*.cmd text eol=crlf
+
 # Binary-ish assets git should not touch.
 *.png binary
 *.jpg binary
 *.ico binary
+*.icns binary
+*.svg text eol=lf
 *.sqlite3 binary
 *.xlsm binary
 *.xlsx binary

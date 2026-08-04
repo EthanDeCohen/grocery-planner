@@ -37,36 +37,44 @@ project is private, so it is not a public download.
 ### On a Mac
 
 1. Unzip the file (double-click it).
-2. Open **Terminal** (press ⌘ + Space, type `Terminal`, press Enter).
-3. Type `cd ` — *with a space after it* — then drag the unzipped folder onto the
-   Terminal window and press Enter.
-4. Type this and press Enter:
+2. Double-click **Install.command**.
 
-   ```bash
-   ./install.sh
-   ```
+That is all. A Terminal window opens, shows what it is doing, and tells you when
+it has finished.
 
-If macOS says the app "cannot be opened because the developer cannot be
-verified", run this instead — it is macOS quarantining anything downloaded from
-the internet, not a problem with the app:
+macOS may say *"Install.command cannot be opened because it is from an
+unidentified developer."* If it does, right-click **Install.command**, choose
+**Open**, then **Open** again. You only do this once.
 
-```bash
-./install.sh --clear-quarantine
-```
+<details>
+<summary>If you would rather use Terminal</summary>
+
+`cd` into the unzipped folder and run `./install.sh --clear-quarantine`. The
+flag tells macOS to trust the app; without it the app is installed but macOS
+refuses to open it, and the only way through is
+**System Settings ▸ Privacy & Security ▸ Open Anyway**.
+
+</details>
 
 ### On Windows
 
 1. Unzip the file (right-click → **Extract All**).
-2. Right-click **install.ps1** → **Run with PowerShell**.
+2. Double-click **Install.cmd**.
 
-If Windows blocks it, open PowerShell in that folder and run:
+That is all. A window opens, shows what it is doing, and stays open so you can
+read the result.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
+Windows may show a blue *"Windows protected your PC"* box because the app is not
+signed. Click **More info**, then **Run anyway**.
 
-That block is Windows' default protection for downloaded scripts. `install.ps1`
-is plain text and is meant to be read first if you want to.
+<details>
+<summary>Why not install.ps1 directly?</summary>
+
+Windows refuses to run PowerShell scripts that came from the internet, so
+double-clicking `install.ps1` fails with "cannot be loaded". `Install.cmd` is a
+two-line file that runs it properly. Both are plain text and meant to be read.
+
+</details>
 
 ---
 
