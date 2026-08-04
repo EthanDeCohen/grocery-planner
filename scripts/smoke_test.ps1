@@ -107,7 +107,7 @@ $storesProbe = (& $gplan stores 2>&1 | Out-String)
 $wholefoodsReady = -not ($storesProbe -match "(?m)^wholefoods\b.*needs setup")
 
 try {
-    Test-Case "version"                  @("version")                                      0 "grocery-planner"
+    Test-Case "version"                  @("version")                                      0 "Protein Ledger"
     Test-Case "db-path"                  @("db-path")                                      0
     Test-Case "stores (empty)"           @("stores")                                       0 "Food Lion"
     Test-Case "import sample data"       @("import", $dataDir)                             0 "Imported"
@@ -223,7 +223,7 @@ try {
     # real Scheduled Task is a machine-wide side effect, and a smoke test that
     # a developer runs twenty times a day is the wrong place for one. CI
     # registers it for real on a throwaway runner.
-    Test-Case "timer status"             @("timer", "status")                              0 "GroceryPlanner"
+    Test-Case "timer status"             @("timer", "status")                              0 "ProteinLedger"
     Test-Case "timer install --dry-run"  @("timer", "install", "--dry-run")                0 "DAILY"
     Test-Case "timer remove --dry-run"   @("timer", "remove", "--dry-run")                 0 "Delete"
     Test-Case "timer bad time"           @("timer", "install", "--at", "99:99")            1 "expected HH:MM"

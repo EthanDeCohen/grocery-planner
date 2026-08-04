@@ -1,6 +1,6 @@
 #!/bin/bash
 # ===========================================================================
-# Remove Grocery Planner and all of its data from this user account (GFP-92).
+# Remove Protein Ledger and all of its data from this user account (GFP-92).
 # ===========================================================================
 # The macOS counterpart of uninstall.ps1, designed around the same two
 # failures.
@@ -40,13 +40,13 @@ set -uo pipefail          # NOT -e: a removal that fails must be REPORTED, not
                           # abort the run and leave the rest in place.
 
 # Pinned by GFP-102 -- mirrored in grocery_planner/install_paths.py.
-APP_DISPLAY_NAME="Grocery Planner"
-APP_BUNDLE_NAME="Grocery Planner.app"
-SUPPORT_DIRNAME=".local/share/grocery-planner"
+APP_DISPLAY_NAME="Protein Ledger"
+APP_BUNDLE_NAME="Protein Ledger.app"
+SUPPORT_DIRNAME=".local/share/protein-ledger"
 CLI_DIRNAME=".local/bin"
 APPLICATIONS_DIRNAME="Applications"
-LAUNCH_AGENT_LABEL="com.grocery-planner.refresh"
-SAVED_STATE="com.grocery-planner.gui.savedState"
+LAUNCH_AGENT_LABEL="com.proteinledger.refresh"
+SAVED_STATE="com.proteinledger.gui.savedState"
 MANIFEST_FILENAME="install-manifest.json"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -228,10 +228,10 @@ remove_path "Program files" "$SUPPORT_DIR"
 # profile is a bigger intrusion than leaving one harmless line, and the line is
 # marked so they can find it.
 PROFILE="$HOME/.zprofile"
-if [ -f "$PROFILE" ] && grep -qF "added by Grocery Planner installer" "$PROFILE"; then
+if [ -f "$PROFILE" ] && grep -qF "added by Protein Ledger installer" "$PROFILE"; then
     echo
     gray "Your $PROFILE still contains the PATH line this installer added:"
-    gray "  # added by Grocery Planner installer"
+    gray "  # added by Protein Ledger installer"
     gray "Remove it by hand if nothing else needs $HOME/$CLI_DIRNAME."
 fi
 

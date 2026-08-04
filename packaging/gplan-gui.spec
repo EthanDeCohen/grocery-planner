@@ -7,6 +7,16 @@
 # magnitude larger than the CLI because it carries Qt; that is expected.
 import sys
 
+import os
+import pathlib
+
+# GFP-158. PyInstaller runs a spec with exec() and does not define __file__,
+# so the icon path is resolved from SPECPATH -- the one variable PyInstaller
+# guarantees, holding the directory of this spec. A relative "icons/icon.ico"
+# would resolve against the CWD, which differs between a local build (repo
+# root) and the release workflow (packaging/).
+SPEC_DIR = pathlib.Path(SPECPATH)
+
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hiddenimports = collect_submodules("apscheduler") + [
@@ -22,7 +32,11 @@ hiddenimports = collect_submodules("apscheduler") + [
 # why this must be explicit rather than assumed to "just come along". Same
 # reasoning covers grocery_planner/data/*.json, GFP-24's vendored USDA snapshot.
 datas = (
-    collect_data_files("tzdata")
+    # GFP-158: the window icon, read at run time by gui.app.app_icon().
+    # The .ico/.icns above are consumed by PyInstaller itself; this PNG
+    # is what the running process loads, so it has to be a data file.
+    [(str(SPEC_DIR / "icons" / "icon-256.png"), "icons")]
+    + collect_data_files("tzdata")
     + collect_data_files("db_script")
     + collect_data_files("grocery_planner", includes=["data/*.json"])
     # GFP-47's default client avatar. GUI-only, so it is not in gplan.spec.
@@ -69,6 +83,12 @@ exe = EXE(
     a.datas,
     [],
     name="gplan-gui",
+    # GFP-158. Windows reads the icon out of the EXE itself, which is what
+    # puts it on the taskbar and in Explorer. Built from packaging/icon.svg by
+    # scripts/build_icons.py and CHECKED IN, so the release runners need no
+    # rasteriser -- adding an image toolchain to a release job is a new way for
+    # a release to fail for a reason unrelated to the code.
+    icon=str(SPEC_DIR / "icons" / "icon.ico"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -86,7 +106,7 @@ if sys.platform == "darwin":
     app = BUNDLE(
         exe,
         name="gplan-gui.app",
-        icon=None,
-        bundle_identifier="com.grocery-planner.gui",
+        icon=str(SPEC_DIR / "icons" / "icon.icns"),
+        bundle_identifier="com.proteinledger.gui",
         info_plist={"NSHighResolutionCapable": True},
     )

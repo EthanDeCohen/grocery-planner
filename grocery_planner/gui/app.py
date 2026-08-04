@@ -27,6 +27,7 @@ the bar had as a flag; the menu's Export writes the current (non-expired) deals.
 """
 from __future__ import annotations
 
+import pathlib
 import sys
 
 from PySide6.QtCore import QThread, Signal
@@ -43,7 +44,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import config, logs, service
+from .. import config, install_paths, logs, service
 from .cheapest import CheapestMeatStrip
 from .client import ClientDetailPage
 from .formulas import FormulaDialog
@@ -59,7 +60,8 @@ SPLIT_SIZES = (340, 580)
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Grocery Planner")
+        self.setWindowTitle(install_paths.APP_DISPLAY_NAME)
+        self.setWindowIcon(app_icon())
         self.resize(920, 560)
 
         self._dialogs: dict[str, QDialog] = {}
@@ -488,6 +490,32 @@ class _UpdateCheck(QThread):
             self.found.emit(result.message, result.url)
 
 
+def app_icon() -> "QIcon":
+    """The steak (GFP-158), or an empty icon if it is not there.
+
+    Looked up in three places because the file lives somewhere different in
+    each of the ways this app runs: beside the sources in a dev checkout,
+    under sys._MEIPASS in a PyInstaller onefile build, and beside the
+    executable in a onedir build.
+
+    A missing icon is NEVER fatal. Qt falls back to a default window icon,
+    which is a cosmetic loss; refusing to open the window over it would turn a
+    missing asset into an app that does not start.
+    """
+    from PySide6.QtGui import QIcon
+
+    here = pathlib.Path(__file__).resolve().parent
+    candidates = [
+        here.parent.parent / "packaging" / "icons" / "icon-256.png",
+        pathlib.Path(getattr(sys, "_MEIPASS", "")) / "icons" / "icon-256.png",
+        pathlib.Path(sys.executable).parent / "icons" / "icon-256.png",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return QIcon(str(candidate))
+    return QIcon()
+
+
 def main() -> int:
     """Launch the desktop app; returns the Qt exit code."""
     # GFP-86: the GUI is the unattended-est path of all -- a scheduled refresh
@@ -514,6 +542,8 @@ def main() -> int:
         )
 
     app = QApplication(sys.argv)
+    app.setApplicationName(install_paths.APP_DISPLAY_NAME)
+    app.setWindowIcon(app_icon())
     window = MainWindow()
     window.show()
     # GFP-105 lives HERE and not in MainWindow.__init__ on purpose. Building a

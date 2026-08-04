@@ -31,6 +31,7 @@ from . import (
     formulas,
     logs,
     importers,
+    install_paths,
     jobs,
     nutrition,
     scheduler,
@@ -94,7 +95,7 @@ def _repo_data_dir() -> Path:
 @app.command()
 def version() -> None:
     """Print the version."""
-    typer.echo(f"grocery-planner {__version__}")
+    typer.echo(f"{install_paths.APP_DISPLAY_NAME} {__version__}")
 
 
 @app.command("db-path")

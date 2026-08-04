@@ -10,7 +10,7 @@ runner = CliRunner()
 def test_version():
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
-    assert "grocery-planner" in result.stdout
+    assert "Protein Ledger" in result.stdout
 
 
 def test_stores_empty(env_db):

@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>Protein Ledger</title>
+
+  <!--
+    Protein Ledger's app icon (GFP-158): a generic steak.
+
+    HOW THE FAT CAP IS DRAWN, because it is the whole trick. The first attempt
+    drew the fat as a separate wedge in one corner, and it read as a bite taken
+    out of a red blob. Here the CUT is drawn once in cream, then the LEAN is
+    drawn on top as a slightly smaller copy of the same silhouette, nudged down
+    and left. The cream that survives around the top-right is the fat cap, and
+    because it comes from the same outline it hugs the edge at a believable,
+    varying thickness instead of sitting on it.
+
+    Constraints this is drawn against, all practical rather than aesthetic:
+
+      * It has to survive rasterising to 16x16 for a taskbar. So: few shapes,
+        high contrast, and the silhouette does the work. Marbling is the first
+        thing to disappear at that size and that is fine.
+      * PyInstaller embeds an .ico / .icns built from this by
+        scripts/build_icons.py. No gradients, no filters, no external refs, so
+        the build machine and a designer's preview cannot disagree.
+      * It is checked into the repo, so it should be editable as text.
+
+    NOTE FOR EDITORS: a run of two hyphens is illegal inside an XML comment.
+    The house style uses one as an em-dash everywhere else in this codebase,
+    which is exactly why the first version of this file would not parse and
+    QSvgRenderer reported only "not valid SVG".
+
+    Deliberately a generic cut: the app is not beef-specific, and the steak
+    stands in for "protein" rather than for a recommendation.
+  -->
+
+  <!-- App tile, so the icon reads as a tile rather than a sticker floating on
+       a light taskbar. -->
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="#6f2618"/>
+
+  <!-- The whole cut, in fat-cream. The lean below covers most of it. -->
+  <path fill="#f0dfc8" d="
+    M 74 84
+    C 84 52, 124 38, 158 44
+    C 196 51, 220 80, 218 118
+    C 216 158, 186 190, 148 202
+    C 108 214, 68 198, 56 166
+    C 45 136, 62 112, 74 84
+    Z"/>
+
+  <!-- The lean: the same silhouette, ~8px smaller and nudged down-left, so
+       cream survives only along the top-right edge. -->
+  <path fill="#c9402a" d="
+    M 74 96
+    C 83 68, 120 55, 151 61
+    C 185 67, 206 92, 204 126
+    C 202 161, 176 189, 142 200
+    C 106 210, 71 196, 61 168
+    C 51 141, 64 120, 74 96
+    Z"/>
+
+  <!-- Marbling. Runs in ONE direction with small branches off it, the way it
+       does in a real cut.
+
+       The previous version used symmetrical pairs: two upright strokes above
+       two horizontal curves. Rendered, it read unmistakably as a face — two
+       eyes and a smile. Anything symmetrical placed in the middle of a
+       rounded shape will, so these are deliberately all diagonal, unequal in
+       length, and none of them mirrors another. -->
+  <g stroke="#f0dfc8" stroke-width="5.5" stroke-linecap="round" fill="none" opacity="0.62">
+    <path d="M 92 132 C 108 116, 126 102, 148 92"/>
+    <path d="M 100 156 C 118 138, 140 122, 166 112"/>
+    <path d="M 118 176 C 134 160, 152 146, 174 136"/>
+    <path d="M 126 118 C 134 124, 138 132, 139 142"/>
+    <path d="M 152 148 C 158 154, 161 162, 161 172"/>
+    <path d="M 86 108 C 92 112, 96 118, 98 125"/>
+  </g>
+
+</svg>
