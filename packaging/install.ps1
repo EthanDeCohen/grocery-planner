@@ -50,6 +50,23 @@
     alone. CI (GFP-116) runs WITHOUT this flag on a throwaway runner, which is
     where those steps get their real test.
 
+.PARAMETER Unblock
+    Remove the mark-of-the-web from the installed binaries (GFP-162).
+
+    Windows tags every file extracted from a downloaded ZIP as "came from the
+    internet". That one tag causes both problems a new user hits: PowerShell
+    refuses install.ps1 because of it, and SmartScreen objects to gplan.exe
+    because of it.
+
+    OFF by default. This is the Windows counterpart of install.sh's
+    --clear-quarantine and takes the same position: silently removing a
+    security marker on the user's behalf is not the installer's call to make.
+    Install.cmd passes it, because that is the double-click path used by
+    somebody who would otherwise have no way forward.
+
+    It does NOT make an unsigned binary signed -- it suppresses the warnings
+    that come from "downloaded", not the absence of a signature.
+
 .PARAMETER DryRun
     Print every action without performing any of it. Same spirit as
     `gplan scrape --dry-run` (GFP-87): an operation that changes a machine
@@ -65,6 +82,7 @@ param(
     [string]$Prefix,
     [switch]$NoIntegrate,
     [switch]$NoTimer,
+    [switch]$Unblock,
     [switch]$DryRun
 )
 
@@ -218,6 +236,28 @@ if (Test-Path $bundledCredential) {
     # A CLI-only or credential-free build is legitimate; the app already tells
     # the user how to configure one via `gplan credentials`.
     Write-Skip "no Kroger credential bundled -- run 'gplan credentials' to see what is needed"
+}
+
+# --------------------------------------------------------------------------- #
+# 3c. Mark-of-the-web (GFP-162).
+#
+# Windows tags every file extracted from a downloaded ZIP as "came from the
+# internet", and that tag is what makes SmartScreen object when the app is
+# first launched. Stripping it from the binaries we just installed removes the
+# warning; it does NOT make an unsigned binary signed.
+#
+# OPT-IN, exactly like install.sh's --clear-quarantine, and for the same
+# reason: silently removing a security marker on somebody's behalf is not the
+# installer's call to make. Install.cmd -- the double-click path, used by
+# somebody who would otherwise be stuck -- passes it and says so on screen.
+# --------------------------------------------------------------------------- #
+if ($Unblock) {
+    Invoke-Action "tell Windows the installed files are safe to run" {
+        Get-ChildItem -LiteralPath $installRoot -Recurse -Force -ErrorAction SilentlyContinue |
+            Unblock-File -ErrorAction SilentlyContinue
+    }
+} else {
+    Write-Skip "mark-of-the-web left in place (pass -Unblock, or use Install.cmd)"
 }
 
 # --------------------------------------------------------------------------- #

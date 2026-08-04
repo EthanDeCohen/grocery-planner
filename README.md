@@ -64,8 +64,10 @@ refuses to open it, and the only way through is
 That is all. A window opens, shows what it is doing, and stays open so you can
 read the result.
 
-Windows may show a blue *"Windows protected your PC"* box because the app is not
-signed. Click **More info**, then **Run anyway**.
+`Install.cmd` also tells Windows the files are safe to run, so you should not
+see the blue *"Windows protected your PC"* box. If it appears anyway, click
+**More info** then **Run anyway** — the app is not signed by Microsoft, which
+costs money we have not spent yet.
 
 <details>
 <summary>Why not install.ps1 directly?</summary>
