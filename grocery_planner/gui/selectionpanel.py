@@ -11,8 +11,9 @@ and deliberately: "lowest cost" still decides what to reach for, and Mix It Up
 constrains what counts as an acceptable WEEK -- exactly as cover-all and
 single-store constrain a day. It is rendered as its own radio pair only
 because the two options are mutually exclusive, not because it is a rival
-objective. Default Repeat Cheapest, so an upgrade changes nobody's plan
-without them asking.
+objective. Default Mix It Up: recommending one item seven days running is not
+something a nutritionist would hand a client, so the varied week is the
+professional default and the flat one is the opt-out.
 
 **Constraints and objective are separate, and that is the point.** "Include
 all" and "lowest price" were first described as rival modes, but lowest price
@@ -76,12 +77,12 @@ class SelectionPanel(QWidget):
         week_box = QGroupBox("Weekly plan")
         week_layout = QVBoxLayout(week_box)
         self.repeat_cheapest = QRadioButton("Repeat Cheapest")
-        self.repeat_cheapest.setChecked(True)
         self.repeat_cheapest.setToolTip(
             "The cheapest $/g every day, even if that is the same item all\n"
             "seven days. This is what the optimiser has always done."
         )
         self.mix_it_up = QRadioButton("Mix It Up")
+        self.mix_it_up.setChecked(True)
         self.mix_it_up.setToolTip(
             "Vary the week rather than recommending one item seven days\n"
             "running. Costs more; never delivers less protein."
