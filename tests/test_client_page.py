@@ -148,7 +148,14 @@ def test_the_page_has_four_panes_in_order(page):
     assert page.columns.widget(0) is page.biometrics_drawer
     assert page.columns.widget(1) is page.selection_panel
     assert page.columns.widget(2) is page.bill_panel
-    assert page.columns.widget(3) is page.trend
+    # GFP-153: the fourth column now stacks the chart over the cost grid.
+    # The grid answers a question ABOUT the two lines above it -- what the gap
+    # between them costs over a week -- so separating them into their own
+    # columns would put the number away from the picture it explains.
+    fourth = page.columns.widget(3)
+    assert fourth is not page.trend, "the fourth column is now a stack"
+    assert page.trend.parent() is fourth
+    assert page.choices_cost.parent() is fourth
     assert not page.where_to_buy.isVisibleTo(page)
 
 

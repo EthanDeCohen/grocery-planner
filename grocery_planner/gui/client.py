@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 from .. import db, service, targets
 from ..customers import CustomerRepository
 from .billpanel import BillPanel
+from .choicescost import ChoicesCostPane
 from .clienttrend import ClientTrendPane
 from ..budget import DAYS_PER_WEEK
 from .selectionpanel import SelectionPanel
@@ -159,7 +160,19 @@ class ClientDetailPage(QWidget):
         # content, and the chart is the thing that page previously could not
         # answer at all, being entirely a snapshot.
         self.trend = ClientTrendPane()
-        self.columns.addWidget(self.trend)
+
+        # GFP-153. Under the chart rather than beside it: the request named
+        # the empty space in the lower right, and the grid answers a question
+        # ABOUT the two lines above it -- what the gap between them costs over
+        # a week. Putting it in its own column would separate the number from
+        # the picture it explains.
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.addWidget(self.trend, 1)
+        self.choices_cost = ChoicesCostPane()
+        right_layout.addWidget(self.choices_cost)
+        self.columns.addWidget(right)
         # Every pane can shrink; none of them may vanish entirely, which is
         # what made the chart unreadable at a normal window size.
         for index in range(self.columns.count()):
@@ -175,6 +188,7 @@ class ClientDetailPage(QWidget):
         # having to guess when a checkbox changed something.
         self.bill_panel.bill_changed.connect(self._sync_where_to_buy)
         self.bill_panel.bill_changed.connect(self.trend.reload)
+        self.bill_panel.bill_changed.connect(self.choices_cost.reload)
 
     # ----------------------------------------------------------------- #
     def show_client(self, customer_id: int) -> bool:
@@ -189,6 +203,7 @@ class ClientDetailPage(QWidget):
             self.bill_panel.clear()
             self.where_to_buy.clear()
             self.trend.clear()
+            self.choices_cost.clear()
             self.selection_panel.clear()
             return False
 
@@ -203,6 +218,7 @@ class ClientDetailPage(QWidget):
         self._push_selection(customer)
         self.bill_panel.set_client(customer_id)
         self.trend.set_client(customer_id)
+        self.choices_cost.set_client(customer_id)
         self._sync_where_to_buy()
         return True
 
