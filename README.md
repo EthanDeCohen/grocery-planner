@@ -1,19 +1,177 @@
 # Grocery Planner
 
-A local-first command-line tool for scraping, storing, and comparing grocery
-deals and prices across stores in the Greensboro, NC area (ZIP 27401). Everything
-runs on your machine against a single-file SQLite database — no server, no
-account, no cloud.
+**Work out what a client should eat to hit their protein target for the least
+money — and how that changes when their preferences or budget change.**
 
-The runtime is the **`gplan`** CLI (the `grocery_planner` Python package). Store
-weekly ads and digital coupons are fetched from the Flipp/Wishabi flyer API;
-results are normalized into a `deals` table you can query, filter, and feed into
-your own savings formulas.
+Built for a nutritionist. Everything runs on your own computer: no account, no
+sign-up, no cloud, no subscription. Your clients' details never leave the
+machine.
 
-> Excel was the original runtime and has been retired — see the git history if
-> you need the old VBA workbook and template builders.
+![The main window](docs/images/main-window.png)
 
 ---
+
+## What it does
+
+You tell it a client's weight and what they will and won't eat. It looks at real
+supermarket prices and works out:
+
+- **how much protein they need a day**, from their goal weight
+- **the cheapest way to actually get it**, item by item, and which shop to go to
+- **what their preferences cost them** — "eating only beef costs $7.45 a week
+  more than eating whatever is cheapest"
+- **whether they fit their weekly budget**, and what to change if they don't
+
+Prices are refreshed automatically, and it keeps a year of price history so you
+can see whether things are getting dearer.
+
+---
+
+## Installing it
+
+You need the ZIP file for your computer. **It will be sent to you** — the
+project is private, so it is not a public download.
+
+### On a Mac
+
+1. Unzip the file (double-click it).
+2. Open **Terminal** (press ⌘ + Space, type `Terminal`, press Enter).
+3. Type `cd ` — *with a space after it* — then drag the unzipped folder onto the
+   Terminal window and press Enter.
+4. Type this and press Enter:
+
+   ```bash
+   ./install.sh
+   ```
+
+If macOS says the app "cannot be opened because the developer cannot be
+verified", run this instead — it is macOS quarantining anything downloaded from
+the internet, not a problem with the app:
+
+```bash
+./install.sh --clear-quarantine
+```
+
+### On Windows
+
+1. Unzip the file (right-click → **Extract All**).
+2. Right-click **install.ps1** → **Run with PowerShell**.
+
+If Windows blocks it, open PowerShell in that folder and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+That block is Windows' default protection for downloaded scripts. `install.ps1`
+is plain text and is meant to be read first if you want to.
+
+---
+
+## First time you open it
+
+It asks which ZIP code you shop in. **This matters** — grocery prices are
+different in every area, and the app cannot guess yours.
+
+![Asking for the ZIP code on first run](docs/images/first-run-zip.png)
+
+You can change it later: it is shown in the **top-right corner** of the main
+window, and clicking it lets you change it.
+
+### Loading the price key
+
+You will be emailed a small file that lets the app look up prices. Save it
+somewhere you can find it, then in the app:
+
+**Settings ▸ Load credential…** → choose the file.
+
+That is the whole setup. You do not need to register anything.
+
+---
+
+## Using it
+
+![A client's page](docs/images/client-page.png)
+
+Add a client, and the page shows everything at once:
+
+| | |
+| --- | --- |
+| **Client details** (left) | Weight, goal weight, and their weekly budget. Open and close it with the button under their name. |
+| **Selection type** | What "best" means for this client — see below. |
+| **Daily protein bill** | What it costs per day and per week, what to buy, and where. |
+| **Charts** (right) | Their prices over time against the cheapest available, and what their choices cost. |
+
+### The choices you make per client
+
+**Optimise for** — *Lowest cost* (the default) or *Most protein within budget*.
+
+**Weekly plan** — *Mix It Up* varies the week so they are not eating the same
+thing seven days running. *Repeat Cheapest* just picks the cheapest thing every
+day. Mix It Up costs more, and the app shows you exactly how much.
+
+**Must also** — tick *Include every protein I ticked* to spread the plan across
+all of them instead of filling it from whichever is cheapest. Tick *Buy from one
+store only* to avoid sending someone to three shops.
+
+**Protein preferences** — tick what they will eat. Ticking nothing means
+"anything", not "nothing".
+
+> **The protein target is never reduced.** No setting will quietly feed a client
+> less protein to make a plan look cheaper or more varied. Cost gives way, or
+> variety gives way — never the nutrition.
+
+### Budgets
+
+Set a weekly budget in **Client details**. If the plan goes over, the app says
+so and tells you the cheapest single change that would fix it:
+
+```
+$20.42 over $30.00 budget
+Allow pork: $19.78/week, or accept going over
+```
+
+Going over budget is a legitimate choice. The app will not stop you.
+
+### Prices marked with a symbol
+
+Some prices depend on weight, so the till total can differ:
+
+| | |
+| --- | --- |
+| `*` | Deli item — price depends on how much is cut for you |
+| `**` | Pre-packaged by weight — may be slightly over or under |
+| `†` | We could not tell which of the two it is; treat as an estimate |
+
+No symbol means a fixed price for a fixed package.
+
+---
+
+## Getting rid of it
+
+**Mac:** `~/.local/share/grocery-planner/uninstall.sh`
+**Windows:** *Add or Remove Programs* → **Grocery Planner**, or run
+`uninstall.ps1` from the install folder.
+
+Add `--keep-data` (Mac) or `-KeepData` (Windows) to remove the program but keep
+your clients.
+
+---
+
+## Something went wrong
+
+- **"needs credentials"** — the price key has not been loaded. See *Loading the
+  price key* above.
+- **Prices look like the wrong city** — check the ZIP in the top-right corner.
+- **Prices are not updating** — **Data ▸ Run scrape…** does it by hand and shows
+  what happened.
+
+---
+---
+
+# Developer reference
+
+Everything below is for working on the app rather than using it.
 
 ## How it works
 
