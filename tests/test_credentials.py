@@ -33,7 +33,10 @@ def local_dir(tmp_path, monkeypatch):
 # The seam itself
 # --------------------------------------------------------------------------- #
 def test_every_known_credential_has_a_spec():
-    assert set(credentials.SPECS) == {"kroger", "wholefoods"}
+    # 'licence' joined the registry with GFP-101: it is the broker's own auth,
+    # and registering it here rather than inside broker.py means listing the
+    # credentials does not depend on the broker having been imported.
+    assert set(credentials.SPECS) == {"kroger", "wholefoods", "licence"}
     for spec in credentials.SPECS.values():
         assert spec.filename and spec.env_var and spec.obtain_hint
         assert spec.keys
@@ -109,10 +112,26 @@ def test_a_broker_that_has_nothing_still_produces_the_helpful_error():
 
 
 def test_an_unimplemented_provider_refuses_rather_than_falling_back(monkeypatch):
-    """Asking for a broker must not silently read secrets off this disk."""
-    monkeypatch.setenv(credentials.PROVIDER_ENV_VAR, "broker")
-    with pytest.raises(credentials.UnknownProviderError, match="only implements"):
+    """Asking for a provider this build does not have must not silently read
+    secrets off this disk.
+
+    ``broker`` was the example here until GFP-101 implemented it, so the test
+    now names something genuinely unimplemented. The property under test never
+    changed: an unrecognised value is refused rather than quietly downgraded to
+    local files, because someone who set it has said they do not want that.
+    """
+    monkeypatch.setenv(credentials.PROVIDER_ENV_VAR, "vault")
+    with pytest.raises(credentials.UnknownProviderError, match="implements only"):
         credentials.provider()
+
+
+def test_the_broker_provider_is_selectable(monkeypatch):
+    """The other half of the test above: 'broker' must now resolve, or the
+    seam GFP-97 built has a config value that still goes nowhere."""
+    monkeypatch.setenv(credentials.PROVIDER_ENV_VAR, credentials.BROKER_PROVIDER)
+    from grocery_planner.broker import BrokerCredentialProvider
+
+    assert isinstance(credentials.provider(), BrokerCredentialProvider)
 
 
 def test_the_default_provider_is_the_local_file_one(monkeypatch):
