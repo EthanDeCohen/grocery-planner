@@ -16,7 +16,10 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from grocery_planner import db  # noqa: E402
 from grocery_planner.customers import (
+    ACTIVITY_LEVELS,
     DEFAULT_PROTEIN_FACTOR,
+    GOALS,
+    SEXES,
     MAX_PROTEIN_FACTOR,
     MIN_PROTEIN_FACTOR,
 )
@@ -169,10 +172,14 @@ def test_save_persists_all_edited_fields(panel):
 
     panel.height_spin.setValue(165.0)
     panel.age_spin.setValue(34)
-    panel.sex_edit.setText("female")
-    panel.activity_edit.setText("moderate")
-    panel.goal_edit.setText("maintenance")
+    # GFP-138: dropdowns now. "maintenance" is deliberately NOT in GOALS --
+    # it stands in for a value a real client already has on file, and must
+    # survive rather than being snapped to the nearest offered option.
+    panel.sex_box.setCurrentText("female")
+    panel.activity_box.setCurrentText("moderate")
+    panel.goal_box.setCurrentText("maintenance")
     panel.notes_edit.setText("prefers chicken")
+    panel.budget_spin.setValue(45.0)                 # GFP-127
     panel.on_save()
 
     reloaded = CustomerRepository.get(ana.id, conn=db.connect())
@@ -182,6 +189,7 @@ def test_save_persists_all_edited_fields(panel):
     assert reloaded.activity_level == "moderate"
     assert reloaded.goal == "maintenance"
     assert reloaded.notes == "prefers chicken"
+    assert reloaded.weekly_budget == pytest.approx(45.0)
 
 
 def test_set_client_returns_false_for_a_missing_client(panel):
@@ -406,3 +414,85 @@ def test_the_headline_uses_the_goal_weight_when_there_is_one(panel):
 
     assert "112 g/day" in panel.headline_value.text()      # 140 x 0.8
     assert "goal weight" in panel.factor_ends.text()
+
+
+# --------------------------------------------------------------------------- #
+# GFP-138: controlled vocabularies
+# --------------------------------------------------------------------------- #
+def test_sex_offers_only_the_agreed_values(panel):
+    """The user asked for male or female only."""
+    offered = [panel.sex_box.itemText(i) for i in range(panel.sex_box.count())]
+    assert offered == list(SEXES)
+    assert "female" in offered and "male" in offered
+
+
+def test_a_blank_is_a_legitimate_answer(panel):
+    """Nothing in this app reads `sex` for any calculation. Forcing a choice
+    would collect a datum the software does not use and cannot always get
+    right for a real person."""
+    assert SEXES[0] == ""
+    assert ACTIVITY_LEVELS[0] == ""
+    assert GOALS[0] == ""
+
+
+def test_activity_and_goal_are_lists_too(panel):
+    activity = [panel.activity_box.itemText(i) for i in range(panel.activity_box.count())]
+    goals = [panel.goal_box.itemText(i) for i in range(panel.goal_box.count())]
+    assert "moderate" in activity and "sedentary" in activity
+    assert "cut" in goals and "maintain" in goals
+
+
+def test_a_value_already_on_file_is_kept_not_snapped(panel):
+    """The schema never constrained these columns, so real rows hold values
+    outside any list this app now offers. Snapping them to the nearest option
+    would rewrite a nutritionist's note without asking."""
+    ana = _add("Ana Ruiz", 62.0, "kg")
+    CustomerRepository.save(
+        replace(CustomerRepository.get(ana.id, conn=db.connect()),
+                goal="something bespoke"),
+        conn=db.connect(),
+    )
+    panel.set_client(ana.id)
+    assert panel.goal_box.currentText() == "something bespoke"
+
+    panel.on_save()
+    assert CustomerRepository.get(
+        ana.id, conn=db.connect()
+    ).goal == "something bespoke"
+
+
+# --------------------------------------------------------------------------- #
+# GFP-127: the budget entry the user could never find
+# --------------------------------------------------------------------------- #
+def test_the_budget_can_be_set_in_the_app(panel):
+    """It had a column, a CLI flag and a service module, and no way to enter
+    it in the GUI -- which is why the user never saw it."""
+    ana = _add("Ana Ruiz", 62.0, "kg")
+    panel.set_client(ana.id)
+    panel.budget_spin.setValue(30.0)
+    panel.on_save()
+    assert CustomerRepository.get(
+        ana.id, conn=db.connect()
+    ).weekly_budget == pytest.approx(30.0)
+
+
+def test_no_budget_is_not_a_budget_of_zero(panel):
+    """Null is not zero: a client whose money has never been discussed is
+    unmeasured, not permanently over budget."""
+    ana = _add("Ana Ruiz", 62.0, "kg")
+    panel.set_client(ana.id)
+    assert panel.budget_spin.value() == 0.0
+    assert panel.budget_spin.specialValueText() == "not set"
+
+    panel.on_save()
+    assert CustomerRepository.get(ana.id, conn=db.connect()).weekly_budget is None
+
+
+def test_a_stored_budget_is_shown_on_load(panel):
+    ana = _add("Ana Ruiz", 62.0, "kg")
+    CustomerRepository.save(
+        replace(CustomerRepository.get(ana.id, conn=db.connect()), weekly_budget=25.0),
+        conn=db.connect(),
+    )
+    panel.set_client(ana.id)
+    assert panel.budget_spin.value() == pytest.approx(25.0)

@@ -78,6 +78,11 @@ class BillPanel(QWidget):
         super().__init__(parent)
         self.customer_id: int | None = None
         self.comparison: bill.BillComparison | None = None
+        #: GFP-136/137: set by the client page from SelectionPanel. None means
+        #: "use the client's stored preferences and the default selection",
+        #: which is what this panel does when driven on its own.
+        self.categories: list[str] | None = None
+        self.selection: bill.Selection | None = None
         self._boxes: dict[str, QCheckBox] = {}
 
         layout = QVBoxLayout(self)
@@ -121,10 +126,17 @@ class BillPanel(QWidget):
         layout.addWidget(self.amortisation_label)
 
         # --- preference checkboxes --------------------------------------- #
-        layout.addWidget(QLabel("Protein preferences:"))
+        # GFP-137: the preference checkboxes moved to SelectionPanel, which
+        # is where "how to pick" now lives. Kept and HIDDEN rather than
+        # deleted: this panel is still usable on its own, and the client page
+        # simply drives it from outside.
+        self.preferences_label = QLabel("Protein preferences:")
+        self.preferences_label.setVisible(False)
+        layout.addWidget(self.preferences_label)
         self.categories_widget = QWidget()
         self.categories_layout = QGridLayout(self.categories_widget)
         self.categories_layout.setContentsMargins(0, 0, 0, 0)
+        self.categories_widget.setVisible(False)
         layout.addWidget(self.categories_widget)
 
         # --- itemised lines ---------------------------------------------- #
@@ -193,7 +205,10 @@ class BillPanel(QWidget):
     def set_client(self, customer_id: int) -> bool:
         """Load one client's bill. ``False`` if there is no such client."""
         conn = db.connect()
-        comparison = bill.compare_bills(customer_id, conn=conn)
+        comparison = bill.compare_bills(
+            customer_id, categories=self.categories, conn=conn,
+            selection=self.selection,
+        )
         self.customer_id = customer_id
         self.categories_widget.setEnabled(True)
         self._set_boxes(preferences.list_preferences(customer_id, conn=conn))
@@ -216,9 +231,18 @@ class BillPanel(QWidget):
         return True
 
     def reload(self) -> None:
-        """Recompute for the current client — after a biometric edit or a scrape."""
+        """Recompute for the current client — after a biometric edit, a scrape,
+        or a change in the selection panel."""
         if self.customer_id is not None:
             self.set_client(self.customer_id)
+
+    def set_selection(
+        self, categories: list[str] | None, selection: bill.Selection | None
+    ) -> None:
+        """Drive this panel from outside and recompute (GFP-136/137)."""
+        self.categories = categories
+        self.selection = selection
+        self.reload()
 
     # ----------------------------------------------------------------- #
     def _on_preference_toggled(self, _checked: bool) -> None:

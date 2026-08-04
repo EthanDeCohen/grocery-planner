@@ -258,11 +258,21 @@ class TrendChart(QWidget):
             metrics.height(), plot_top, plot_bottom,
         )
         painter.setPen(QPen(muted, 1))
+        # ELIDE rather than let a label run off the edge (GFP-137). The right
+        # margin above is measured from the longest label, but it is floored at
+        # _MIN_PLOT_WIDTH so the plot itself stays usable -- which means a
+        # narrow column can leave less room than the labels want.
+        #
+        # Overflowing there prints text that is silently cut mid-word, which is
+        # the "chart lying quietly" this module already worries about in the
+        # margin comment. An ellipsis says the name is abbreviated; a hard cut
+        # does not, and the tooltip carries the full text either way.
+        room = max(0, self.width() - int(plot_right + _LABEL_GAP))
         for store_trend, y in zip(series, label_y):
             painter.drawText(
                 int(plot_right + _LABEL_GAP),
                 int(y + metrics.height() / 3),
-                labels[store_trend.key],
+                metrics.elidedText(labels[store_trend.key], Qt.ElideRight, room),
             )
         painter.end()
 

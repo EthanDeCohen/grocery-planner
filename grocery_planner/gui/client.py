@@ -25,13 +25,14 @@ cheaper" question without a second chart here.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QSplitter,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -40,6 +41,8 @@ from .. import db, service, targets
 from ..customers import CustomerRepository
 from .billpanel import BillPanel
 from .clienttrend import ClientTrendPane
+from ..budget import DAYS_PER_WEEK
+from .selectionpanel import SelectionPanel
 from .biometrics import BiometricsPanel
 from .wheretobuy import WhereToBuyPane
 
@@ -112,8 +115,32 @@ class ClientDetailPage(QWidget):
         self.bill_panel = BillPanel()
         self.where_to_buy = WhereToBuyPane()
 
+        # GFP-137: biometrics goes in a DRAWER. It is a form a nutritionist
+        # edits occasionally and reads rarely, whereas the bill and the chart
+        # are what they look at during a consultation -- so it is the right
+        # column to be able to put away. Before this the page needed ~1500px
+        # to show everything and the CHART was what lost, which is the pane
+        # that needs width most: a squeezed time series is unreadable in a way
+        # a squeezed form is not.
+        self.biometrics_drawer = QWidget()
+        drawer_layout = QVBoxLayout(self.biometrics_drawer)
+        drawer_layout.setContentsMargins(0, 0, 0, 0)
+        self.biometrics_toggle = QToolButton()
+        self.biometrics_toggle.setText("Client details")
+        self.biometrics_toggle.setCheckable(True)
+        self.biometrics_toggle.setChecked(True)
+        self.biometrics_toggle.setArrowType(Qt.DownArrow)
+        self.biometrics_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.biometrics_toggle.toggled.connect(self._toggle_biometrics)
+        drawer_layout.addWidget(self.biometrics_toggle)
+        drawer_layout.addWidget(self.biometrics, 1)
+
+        self.selection_panel = SelectionPanel()
+        self.selection_panel.changed.connect(self._on_selection_changed)
+
         self.columns = QSplitter()
-        self.columns.addWidget(self.biometrics)
+        self.columns.addWidget(self.biometrics_drawer)
+        self.columns.addWidget(self.selection_panel)
         self.columns.addWidget(self.bill_panel)
         # GFP-123: where-to-buy is no longer a column. It was a second panel
         # listing the SAME items as the bill in different words, and two
@@ -133,7 +160,11 @@ class ClientDetailPage(QWidget):
         # answer at all, being entirely a snapshot.
         self.trend = ClientTrendPane()
         self.columns.addWidget(self.trend)
-        self.columns.setSizes(list(COLUMN_SIZES))
+        # Every pane can shrink; none of them may vanish entirely, which is
+        # what made the chart unreadable at a normal window size.
+        for index in range(self.columns.count()):
+            self.columns.setStretchFactor(index, 1)
+        self.columns.setChildrenCollapsible(False)
         layout.addWidget(self.columns, 1)
 
         # A biometric save changes the target, which changes the bill, which
@@ -158,12 +189,18 @@ class ClientDetailPage(QWidget):
             self.bill_panel.clear()
             self.where_to_buy.clear()
             self.trend.clear()
+            self.selection_panel.clear()
             return False
 
         self.customer_id = customer_id
         self.name_label.setText(customer.name)
         self._render_target(customer, conn)
         self.biometrics.set_client(customer_id)
+        # The selection panel first: the bill is computed FROM it, so loading
+        # the other way round would price one client with the last one's
+        # preferences for an instant.
+        self.selection_panel.set_client(customer_id)
+        self._push_selection(customer)
         self.bill_panel.set_client(customer_id)
         self.trend.set_client(customer_id)
         self._sync_where_to_buy()
@@ -195,6 +232,35 @@ class ClientDetailPage(QWidget):
         self._render_target(customer, conn)
         self.bill_panel.reload()
         self._sync_where_to_buy()
+
+    def _toggle_biometrics(self, open_: bool) -> None:
+        """Open or close the details drawer, and say which state it is in."""
+        self.biometrics.setVisible(open_)
+        self.biometrics_toggle.setArrowType(Qt.DownArrow if open_ else Qt.RightArrow)
+
+    def _push_selection(self, customer=None) -> None:
+        """Hand the panel's constraints and objective to the bill.
+
+        The weekly budget becomes a DAILY one here because the bill is a daily
+        figure. Dividing rather than comparing weekly totals keeps one unit in
+        the engine -- see budget.py for the week-level view.
+        """
+        target = customer if customer is not None else None
+        weekly = getattr(target, "weekly_budget", None)
+        daily = None if not weekly else weekly / DAYS_PER_WEEK
+        self.bill_panel.set_selection(
+            self.selection_panel.checked_categories(),
+            self.selection_panel.selection(daily_budget=daily),
+        )
+
+    def _on_selection_changed(self) -> None:
+        conn = db.connect()
+        customer = (
+            CustomerRepository.get(self.customer_id, conn=conn)
+            if self.customer_id is not None else None
+        )
+        self._push_selection(customer)
+        self.trend.reload()
 
     def _sync_where_to_buy(self) -> None:
         """Hand the bill's current lines to the where-to-buy column."""
