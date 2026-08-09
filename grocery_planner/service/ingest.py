@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from .. import config, db, importers, logs, records, scrapers
+from .. import config, db, importers, logs, matching, records, scrapers
 from ..scrapers import SCRAPERS
 
 
@@ -362,6 +362,31 @@ def run_scrape(
     record_summary = records.update_records(own, store, zip_code, rows, today)
     own.commit()
 
+    # GFP-121: match the deals to foods, for EVERY store, right after they
+    # land. Nothing in the app called matching.match_deals() -- Kroger and
+    # Whole Foods write deal_food_match inline from their own scrapers, so the
+    # two stores with bespoke ingest looked fine while the store-agnostic
+    # matcher sat orphaned. Food Lion, which has no bespoke path, therefore
+    # never had a single match row and its 297 priced deals were invisible to
+    # $/g protein, gplan cheapest, the trends chart and every grocery list.
+    #
+    # Here, not in a Food Lion branch: GFP-32's rule is that the engine never
+    # branches on store identity, and a fix that special-cased one store would
+    # leave the next store to be added with the same silent hole. match_deals
+    # already runs over every distinct (store, item_name) and already refuses
+    # to overwrite a manual correction, so calling it on the one path that
+    # writes deals is the whole fix.
+    #
+    # A failure here must not fail a scrape, for the same reason pruning does
+    # not: the prices are the point, and unmatched deals are recoverable on the
+    # next run while a lost scrape is not.
+    try:
+        match_summary = matching.match_deals(conn=own)
+    except sqlite3.Error as exc:
+        logs.get_logger(__name__).warning(
+            "could not match deals to foods after scraping %s: %s", store, exc)
+        match_summary = None
+
     # GFP-42: trim old history AFTER the records are safely committed, and
     # never before. Records are stored rather than recomputed precisely so a
     # record low outlives the observation behind it -- pruning first would
@@ -386,4 +411,5 @@ def run_scrape(
         "postal_code": zip_code,
         "records": record_summary,
         "pruned_history_rows": pruned,
+        "matches": match_summary,
     }
