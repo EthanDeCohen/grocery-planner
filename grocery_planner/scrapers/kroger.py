@@ -854,6 +854,28 @@ def _upsert_food_fact(conn: sqlite3.Connection, fact: _FoodFact) -> None:
 # --------------------------------------------------------------------------- #
 # Orchestration
 # --------------------------------------------------------------------------- #
+def serves(postal_code: str) -> bool | None:
+    """Does a grocery store of this chain exist near ``postal_code``? (GFP-257)
+
+    The real capability, and the reason GFP-257's design is "ask the source":
+    Kroger already answers this exactly, and :func:`pick_store` already reads
+    the ``chain`` value BACK rather than trusting a name -- GFP-77's lesson,
+    which cost real time to learn.
+
+    ``None`` when the question cannot be put -- no credentials, an API error, a
+    rate limit. Unknown is not the same as absent, and availability.py treats it
+    permissively: a store we could not ask about is still scraped.
+    """
+    ready, _ = readiness()
+    if not ready:
+        return None
+    try:
+        with KrogerClient(load_auth()) as client:
+            return pick_store(client.locations_near(postal_code)) is not None
+    except (KrogerError, OSError, ValueError):
+        return None
+
+
 def scrape(
     postal_code: str | None = None,
     queries: Iterable[tuple[str, str]] | None = None,

@@ -22,6 +22,24 @@ SOURCE = "prism"
 #: Human label for the registry surface, as kroger.py does -- these modules
 #: are not Flipp-sourced, so there is no Flipp merchant name to carry.
 MERCHANT = "Food Lion (PRISM catalogue)"
+
+#: GFP-257: Food Lion's footprint as ZIP prefixes. DECLARED, not asked --
+#: GFP-246 measured that /store-locator returns 403 with X-DataDome: protected
+#: and a location cookie is ignored, so this banner cannot be asked which ZIPs
+#: it serves. Coarse and hand-maintained is the honest alternative to
+#: pretending. Food Lion operates across the Southeast and mid-Atlantic:
+#: DE, MD, NC, SC, GA, PA, TN, VA, WV, KY.
+SERVICE_AREA = (
+    "197", "198", "199",                             # DE
+    "20", "21",                                      # DC / MD
+    "22", "23", "24",                                # VA / WV
+    "25", "26",                                      # WV
+    "27", "28",                                      # NC
+    "29",                                            # SC
+    "30", "31",                                      # GA
+    "37", "38",                                      # TN
+    "40", "41", "42",                                # KY
+)
 DEFAULT_POSTAL_CODE = STORE.default_postal_code
 
 

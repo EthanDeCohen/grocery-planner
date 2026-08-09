@@ -24,6 +24,17 @@ SOURCE = "prism"
 #: Human label for the registry surface, as kroger.py does -- these modules
 #: are not Flipp-sourced, so there is no Flipp merchant name to carry.
 MERCHANT = "GIANT (PRISM catalogue)"
+
+#: GFP-257: The GIANT Company's footprint as ZIP prefixes. DECLARED for the
+#: same reason as Food Lion's -- the PRISM store locator is DataDome-protected
+#: (GFP-246), so this banner cannot be asked. GIANT operates in Pennsylvania,
+#: Maryland, Virginia and West Virginia.
+SERVICE_AREA = (
+    "15", "16", "17", "18", "19",                    # PA
+    "20", "21",                                      # MD
+    "22", "23", "24",                                # VA
+    "25", "26",                                      # WV
+)
 DEFAULT_POSTAL_CODE = STORE.default_postal_code
 
 

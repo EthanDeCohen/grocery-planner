@@ -185,6 +185,13 @@ TABLE scraping_jobs
   started_at: TEXT
   status: TEXT
 
+TABLE store_availability
+  checked_at: TEXT NOT NULL
+  method: TEXT NOT NULL
+  postal_code: TEXT NOT NULL PK
+  scraper_key: TEXT NOT NULL PK
+  state: TEXT NOT NULL
+
 TABLE stores
   data_folder: TEXT NOT NULL
   display_name: TEXT NOT NULL

@@ -12,7 +12,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from .. import config, db, importers, logs, matching, records, scrapers, sourcelink
+from .. import (
+    availability, config, db, importers, logs, matching, records, scrapers,
+    sourcelink,
+)
 from ..scrapers import SCRAPERS
 
 
@@ -303,10 +306,35 @@ def run_scrape(
     # behaviour.
     store = scrapers.store_key_for(scraper, store_key)
     source = scrapers.source_for(scraper)
+    own = conn or db.connect()
+
+    # GFP-257: does this store even operate here? Asked BEFORE the scrape,
+    # because the alternative is what used to happen -- a store with no
+    # presence in the ZIP returns zero rows, which trips GFP-67's
+    # EmptyScrapeError, so a healthy scraper in the wrong market was
+    # indistinguishable from a broken parser. "Not in this market" is a
+    # different outcome and gets a different answer.
+    #
+    # Only established evidence stops a scrape. UNKNOWN is permissive, so
+    # adding this never removes coverage that existed before it.
+    market = availability.resolve(store_key, zip_code, conn=own)
+    if not market.should_scrape:
+        logs.get_logger(__name__).info(
+            "skipping %s for %s: %s (%s)",
+            store_key, zip_code, market.state, market.method)
+        return {
+            "flyer": None,
+            "stats": {"total": 0},
+            "postal_code": zip_code,
+            "records": {"created": 0, "updated": 0},
+            "skipped": "not_in_market",
+            "availability": market.state,
+            "availability_method": market.method,
+        }
+
     rows, flyer, stats = scraper.scrape(postal_code=postal_code)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     today = now[:10]
-    own = conn or db.connect()
 
     # GFP-87: --dry-run stops HERE -- after the scrape and the stats, before the
     # first destructive statement. That placement is the whole point: run_scrape
