@@ -155,14 +155,20 @@ def _store_label(store_key: str) -> str:
     return store.display_name if store else store_key
 
 
-def _quantity_for(line: bill_module.BillLine, days: int) -> tuple[float | None, str]:
-    """How much of this line to buy over ``days``, and in what unit.
+def _quantity_for(
+    line: bill_module.BillLine, grams_needed: float | None,
+) -> tuple[float | None, str]:
+    """How much of this line to buy for ``grams_needed`` of food, and in what unit.
+
+    ``grams_needed`` is the total this item is called on for across the WHOLE
+    period -- summed over the plan's days by :func:`_aggregate`, not one day's
+    figure multiplied out. Before GFP-169 it was the latter, which is how the
+    list came to disagree with the plan it was supposedly listing.
 
     Returns ``(None, unit)`` when the package weight was never known -- the
     label-claim path. A guessed quantity is worse than an absent one: it would
     send someone to a shop to buy a number nobody computed.
     """
-    grams_needed = line.grams_food * days if line.grams_food is not None else None
     if grams_needed is None or not line.package_grams:
         return None, "pack"
 
@@ -184,14 +190,68 @@ def _cost_for(line: bill_module.BillLine, quantity: float | None) -> float | Non
     return line.shelf_price * quantity
 
 
+def _aggregate(
+    plan: bill_module.WeekPlan,
+) -> list[tuple[bill_module.BillLine, float | None, float]]:
+    """Collapse a multi-day plan into one purchase per distinct item.
+
+    Somebody shops once for the period, so the seven days that name the same
+    chicken are ONE line on the list holding the sum of what those days need.
+
+    Keyed on ``(store, item_name)`` because the same item at two stores is two
+    purchases, and returned in first-appearance order so the cheapest-first
+    ordering the plan already computed survives into
+    :meth:`GroceryList.by_store`.
+
+    ``grams_food`` sums to ``None`` if ANY contributing day lacked it: the
+    label-claim path (GFP-69) has no package weight, and a partial sum would
+    quietly under-count the quantity to buy. Absent stays absent.
+    """
+    order: list[tuple[str, str]] = []
+    lines: dict[tuple[str, str], bill_module.BillLine] = {}
+    food: dict[tuple[str, str], float | None] = {}
+    protein: dict[tuple[str, str], float] = {}
+
+    for day in plan.days:
+        for line in day.lines:
+            key = (line.store, line.item_name)
+            if key not in lines:
+                order.append(key)
+                lines[key] = line
+                food[key] = line.grams_food
+                protein[key] = 0.0
+            elif food[key] is None or line.grams_food is None:
+                food[key] = None
+            else:
+                food[key] += line.grams_food
+            protein[key] += line.grams_protein
+
+    return [(lines[k], food[k], protein[k]) for k in order]
+
+
 def grocery_list_for(
     customer: Customer,
     days: int = DEFAULT_DAYS,
     categories=None,
     today: str | None = None,
     conn: sqlite3.Connection | None = None,
+    selection: bill_module.Selection | None = None,
 ) -> GroceryList | None:
     """Build ``customer``'s shopping list for the next ``days``.
+
+    **Built from the PLAN, not from one day multiplied out (GFP-169).** This
+    used to take ``daily_bill_for`` and scale it by ``days``, which made the
+    list disagree with the week the client page priced beside it -- by 20 to
+    127 percent, with different items in it -- because vary-week has been the
+    default since GFP-142 and a scaled single day cannot vary. The list is the
+    product's one hand-to-a-client artifact; it has to be the plan that was
+    approved, so it is now an aggregation of the same :func:`bill.week_plan_for`
+    days the screen shows.
+
+    ``selection`` is threaded through for the same reason: constraints and the
+    objective decide what the plan contains, and a list built without them is
+    listing a different plan. ``None`` means the default selection, matching
+    every other entry point.
 
     ``None`` when there is no daily target to build from -- the same rule as
     ``bill.daily_bill_for``: a list built on a guessed weight is worse than no
@@ -202,13 +262,15 @@ def grocery_list_for(
     if days < 1:
         raise ValueError("a grocery list covers at least one day")
 
-    plan = bill_module.daily_bill_for(customer, categories=categories, conn=conn)
-    if plan is None:
+    plan = bill_module.week_plan_for(
+        customer, categories=categories, selection=selection, conn=conn, days=days,
+    )
+    if plan is None or not plan.days:
         return None
 
     items: list[GroceryItem] = []
-    for line in plan.lines:
-        quantity, unit = _quantity_for(line, days)
+    for line, grams_food, grams_protein in _aggregate(plan):
+        quantity, unit = _quantity_for(line, grams_food)
         items.append(GroceryItem(
             store=line.store,
             store_label=_store_label(line.store),
@@ -218,7 +280,7 @@ def grocery_list_for(
             quantity_unit=unit,
             estimated_cost=_cost_for(line, quantity),
             shelf_price=line.shelf_price,
-            grams_protein=line.grams_protein * days,
+            grams_protein=grams_protein,
             product_identifier=line.product_identifier,
             product_identifier_ns=line.product_identifier_ns,
             source_url=line.source_url,
@@ -230,7 +292,7 @@ def grocery_list_for(
         client_name=customer.name,
         days=days,
         generated_on=today or date.today().isoformat(),
-        target_grams_per_day=plan.target_grams,
+        target_grams_per_day=plan.days[0].target_grams,
         items=items,
-        shortfall_grams=plan.shortfall_grams * days,
+        shortfall_grams=max(plan.target_grams - plan.covered_grams, 0.0),
     )

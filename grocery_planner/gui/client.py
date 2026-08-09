@@ -254,6 +254,18 @@ class ClientDetailPage(QWidget):
         self.biometrics.setVisible(open_)
         self.biometrics_toggle.setArrowType(Qt.DownArrow if open_ else Qt.RightArrow)
 
+    @staticmethod
+    def _daily_budget(customer=None) -> float | None:
+        """The client's weekly budget as a DAILY figure, or ``None``.
+
+        One helper rather than the same three lines in each caller: the grocery
+        export (GFP-169) has to reach the identical Selection the bill panel
+        priced, and a second hand-rolled division is exactly how two callers
+        drift apart.
+        """
+        weekly = getattr(customer, "weekly_budget", None)
+        return None if not weekly else weekly / DAYS_PER_WEEK
+
     def _push_selection(self, customer=None) -> None:
         """Hand the panel's constraints and objective to the bill.
 
@@ -261,9 +273,7 @@ class ClientDetailPage(QWidget):
         figure. Dividing rather than comparing weekly totals keeps one unit in
         the engine -- see budget.py for the week-level view.
         """
-        target = customer if customer is not None else None
-        weekly = getattr(target, "weekly_budget", None)
-        daily = None if not weekly else weekly / DAYS_PER_WEEK
+        daily = self._daily_budget(customer)
         selection = self.selection_panel.selection(daily_budget=daily)
         self.bill_panel.set_selection(
             self.selection_panel.checked_categories(), selection,
@@ -309,7 +319,18 @@ class ClientDetailPage(QWidget):
             self.target_label.setText("That client is no longer on file.")
             return
 
-        glist = service.grocery_list_for(customer, conn=db.connect())
+        # GFP-169: the SAME categories and Selection the bill panel priced.
+        # Exporting without them listed a different plan from the one on
+        # screen -- the same failure GFP-144 fixed between the bill and the
+        # chart, in the one artifact that actually leaves the building.
+        glist = service.grocery_list_for(
+            customer,
+            categories=self.selection_panel.checked_categories(),
+            selection=self.selection_panel.selection(
+                daily_budget=self._daily_budget(customer),
+            ),
+            conn=db.connect(),
+        )
         if glist is None:
             # Same rule as the rest of the page: no weight, no invented target.
             self.target_label.setText(
