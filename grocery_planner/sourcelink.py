@@ -85,6 +85,26 @@ MAX_DOCUMENT_FREQUENCY = 0.15
 #: store with a handful of listings is compared on its words as they are.
 MIN_CORPUS_FOR_HOUSE_WORDS = 20
 
+#: How many times the catalogue's price may exceed the promo's before the two
+#: are assumed to be denominated DIFFERENTLY rather than discounted.
+#:
+#: Found by running it (2026-08-09). "Boneless Pork Loin Roast" advertised at
+#: $1.99 borrowed a "Swift Natural Boneless Pork Loin, 9 lb" package and priced
+#: 857g of protein at $1.99 -- four times cheaper than anything else in the
+#: database. The ad price was per POUND; the catalogue row was a nine-pound
+#: package. Flipp never states a denomination (sold_by is NULL on every row),
+#: so the promo side cannot say which it is.
+#:
+#: A price gap is the reliable tell, and the live data separates cleanly: the
+#: two bad links sat at 13.0x and 11.3x while every good one was at 3.0x or
+#: below. A promotion is a DISCOUNT -- even an extraordinary one is not 75% off
+#: -- so a larger gap means the two numbers measure different things.
+#:
+#: Refusing costs a link. Accepting understates cost per gram, which is
+#: savings.py rule 4's dangerous direction: it makes an item look cheaper than
+#: it is and sends someone to a shop expecting a price that is not there.
+MAX_PRICE_RATIO = 4.0
+
 #: A borrowed size is real evidence -- the catalogue measured this product --
 #: but it is one inference removed from the row being priced, so it never
 #: claims the certainty of a size read directly off the name.
@@ -221,6 +241,21 @@ def _has_weight_size(item_name: str) -> bool:
     return size is not None and size.base_unit == savings.WEIGHT
 
 
+def _denominated_differently(
+    promo_price: float | None, catalogue_price: float | None,
+) -> bool:
+    """Do these two prices measure different things rather than differ by a sale?
+
+    See :data:`MAX_PRICE_RATIO`. Unknown prices return ``False``: this is a
+    veto on evidence, not a requirement to prove innocence, and refusing every
+    link whose price we cannot see would throw away the unpriced-promo case
+    this feature exists to serve.
+    """
+    if not promo_price or not catalogue_price or promo_price <= 0:
+        return False
+    return catalogue_price / promo_price > MAX_PRICE_RATIO
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -270,11 +305,12 @@ def build_links(
     """
     own = conn or db.connect()
     rows = own.execute(
-        "SELECT DISTINCT d.store, d.item_name, m.food_id "
+        "SELECT d.store, d.item_name, m.food_id, MIN(d.dollar_price) AS price "
         "FROM deals d "
         "LEFT JOIN deal_food_match m "
         "  ON m.store = d.store AND m.item_name = d.item_name "
-        "WHERE d.item_name IS NOT NULL AND d.item_name <> ''"
+        "WHERE d.item_name IS NOT NULL AND d.item_name <> '' "
+        "GROUP BY d.store, d.item_name, m.food_id"
     ).fetchall()
 
     # Split each store's names by the only distinction that matters here:
@@ -282,16 +318,18 @@ def build_links(
     sized: dict[str, list[str]] = {}
     unsized: dict[str, list[tuple[str, int | None]]] = {}
     food_of: dict[tuple[str, str], int | None] = {}
+    price_of: dict[tuple[str, str], float | None] = {}
     for row in rows:
         store, name, food_id = row["store"], row["item_name"], row["food_id"]
         food_of[(store, name)] = food_id
+        price_of[(store, name)] = row["price"]
         if _has_weight_size(name):
             sized.setdefault(store, []).append(name)
         else:
             unsized.setdefault(store, []).append((name, food_id))
 
     linked: list[tuple[str, str, str, int | None, float, str, str]] = []
-    considered = no_food = no_candidate = 0
+    considered = no_food = no_candidate = mismatched_price = 0
     now = _now()
 
     for store, needy in unsized.items():
@@ -323,6 +361,14 @@ def build_links(
             if best is None:
                 no_candidate += 1
                 continue
+            if _denominated_differently(
+                price_of.get((store, name)), price_of.get((store, best))
+            ):
+                # The two prices do not measure the same thing, so the
+                # catalogue's package size does not describe what the promo
+                # price buys. Absent stays absent.
+                mismatched_price += 1
+                continue
             linked.append(
                 (store, name, best, food_id, LINK_CONFIDENCE, LINK_METHOD, now))
 
@@ -341,6 +387,7 @@ def build_links(
         "linked": len(linked),
         "no_food_match": no_food,
         "no_candidate": no_candidate,
+        "price_denomination_mismatch": mismatched_price,
     }
 
 

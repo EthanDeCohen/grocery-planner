@@ -81,6 +81,19 @@ DEFAULT_MAX_PRODUCTS = 400
 #: Seconds between product fetches.
 REQUEST_DELAY = 1.0
 
+#: Slugs that contain a protein word but are not a protein food. Found by
+#: running the thing: the first live pass returned Milk-Bone "Original BEEF
+#: Flavor" dog treats, "STEAK Sauce" and "CHICKEN Gravy", because a keyword
+#: cannot tell an ingredient from a flavour label. Negatives are checked first
+#: and win, since a false positive here costs a request AND pollutes the
+#: catalogue with something no client will ever eat.
+EXCLUDE_SLUG_TERMS = (
+    "dog", "cat-", "-cat-", "puppy", "kitten", "pet-", "treats", "milk-bone",
+    "sauce", "gravy", "seasoning", "marinade", "rub-", "broth", "bouillon",
+    "stock-", "soup", "ramen", "flavored", "flavor-", "scented", "bowl-cleaner",
+    "shampoo", "litter", "chew", "rawhide", "biscuit",
+)
+
 #: Only fetch products whose slug suggests they carry protein worth ranking.
 #: Slug-based because the alternative -- fetching everything to find out -- is
 #: exactly the load this exists to avoid. Over-inclusive on purpose: a false
@@ -155,8 +168,16 @@ def product_id_from_url(url: str) -> str | None:
 
 
 def looks_like_protein(url: str) -> bool:
-    """Is this slug worth spending a request on?"""
+    """Is this slug worth spending a request on?
+
+    Negatives are checked first and win outright. A keyword cannot tell an
+    ingredient from a flavour label -- "Original Beef Flavor" dog treats and
+    "Chicken Gravy" both match "beef" and "chicken" -- and the first live run
+    returned exactly those.
+    """
     slug = url.rsplit("/product/", 1)[-1].lower()
+    if any(term in slug for term in EXCLUDE_SLUG_TERMS):
+        return False
     return any(term in slug for term in PROTEIN_SLUG_TERMS)
 
 
@@ -245,9 +266,19 @@ def _client(timeout: float = 40.0) -> httpx.Client:
 def select_products(
     urls: Iterable[str], max_products: int = DEFAULT_MAX_PRODUCTS,
 ) -> list[str]:
-    """The bounded, protein-relevant slice of a catalogue worth fetching."""
+    """The bounded, protein-relevant slice of a catalogue worth fetching.
+
+    STRIDED, not the first N. The sitemap shards are ordered by product id,
+    which is effectively an age ordering, so taking the head of the list
+    returns whatever the retailer listed first -- in the live run, shelf-stable
+    pantry goods. Striding evenly across the whole filtered pool costs nothing
+    and gives a slice that actually represents the catalogue.
+    """
     picked = [u for u in urls if looks_like_protein(u)]
-    return picked[:max_products] if max_products else picked
+    if not max_products or len(picked) <= max_products:
+        return picked
+    step = len(picked) / max_products
+    return [picked[int(i * step)] for i in range(max_products)]
 
 
 def scrape_store(
@@ -265,11 +296,10 @@ def scrape_store(
         shards = [u for u in index if "products" in u]
         product_urls: list[str] = []
         for shard in shards:
+            # Every shard, always. Four sitemap fetches are trivial beside 400
+            # product fetches, and stopping early would re-introduce exactly
+            # the head bias select_products strides to remove.
             product_urls.extend(parse_sitemap(own.get(shard).text))
-            if max_products and len(select_products(product_urls, max_products)) >= max_products:
-                # Enough candidates already; leave the remaining shards alone
-                # rather than download them to throw away.
-                break
 
         wanted = select_products(product_urls, max_products)
         rows: list[dict[str, Any]] = []

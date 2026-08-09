@@ -179,3 +179,29 @@ def test_a_contradiction_is_never_linked(conn):
     assert sourcelink.candidates_for(
         "Boneless Pork Loin", ["Niman Ranch Bone-in Center Cut Pork Loin Chops, 1 lb"]
     ) is None
+
+
+def test_a_per_pound_promo_never_borrows_a_bulk_package(conn):
+    """FOUND BY RUNNING IT (2026-08-09). "Boneless Pork Loin Roast" advertised
+    at $1.99 borrowed a 9 lb catalogue package and priced 857g of protein at
+    $1.99 -- four times cheaper than anything else in the database. The ad was
+    a per-POUND price; Flipp never states a denomination, so the promo side
+    cannot say so. A 4x+ price gap means the two numbers measure different
+    things, and borrowing the package understates cost per gram, which is the
+    dangerous direction."""
+    _deal(conn, STORE, "Swift Natural Boneless Pork Loin, 9 lb", 22.41, "kroger-api")
+    _deal(conn, STORE, "Boneless Pork Loin Roast", 1.99, "scrape")
+    matching.match_deals(conn=conn)
+    stats = sourcelink.build_links(conn=conn)
+
+    assert sourcelink.get_link(STORE, "Boneless Pork Loin Roast", conn=conn) is None
+    assert stats["price_denomination_mismatch"] >= 1
+    assert savings.cost_per_gram_protein(1.99, "Boneless Pork Loin Roast", STORE, conn=conn) is None
+
+
+def test_an_ordinary_discount_still_links(conn):
+    """A real promotion is a discount, not a change of denomination -- half
+    price must not be mistaken for a per-pound figure."""
+    assert not sourcelink._denominated_differently(4.99, 9.98)   # 2x, a sale
+    assert sourcelink._denominated_differently(1.99, 22.41)      # 11x, per-pound
+    assert not sourcelink._denominated_differently(None, 22.41)  # unknown -> no veto

@@ -169,3 +169,23 @@ def test_giant_is_the_philadelphia_company_not_the_maryland_one():
     """Two different Ahold Delhaize USA companies share the name; only The
     GIANT Company (giantfoodstores.com) is in a GFP-165 market."""
     assert prism.GIANT.host == "giantfoodstores.com"
+
+
+def test_a_flavour_label_is_not_a_protein_food():
+    """Found by running it: the first live pass returned Milk-Bone 'Original
+    Beef Flavor' dog treats, 'Steak Sauce' and 'Chicken Gravy'."""
+    base = "https://foodlion.com/groceries/product/"
+    assert not prism.looks_like_protein(base + "milk-bone-original-beef-flavor-dog-treats-24-oz/1")
+    assert not prism.looks_like_protein(base + "heinz-57-steak-sauce-10-oz-btl/2")
+    assert not prism.looks_like_protein(base + "heinz-homestyle-chicken-gravy-12-oz-jar/3")
+    assert prism.looks_like_protein(base + "boneless-chicken-breast-1-lb/4")
+
+
+def test_the_slice_is_strided_not_the_head_of_the_catalogue():
+    """Shards are ordered by product id, so the head is whatever the retailer
+    listed first -- pantry goods, in the live run."""
+    urls = [f"https://foodlion.com/groceries/product/chicken-{i}-1-lb/{i}" for i in range(100)]
+    picked = prism.select_products(urls, max_products=10)
+    assert len(picked) == 10
+    assert picked != urls[:10], "took the head instead of striding"
+    assert picked[-1] != urls[9]
