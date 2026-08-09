@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import matching
+from . import matching, sourcelink
 from .stores import STORES, Store
 
 SOURCE_CSV = "csv-import"
@@ -158,4 +158,5 @@ def import_dir(conn: sqlite3.Connection, data_dir: Path) -> list[ImportResult]:
             results.append(import_store(conn, store, data_dir))
     if results:
         matching.match_deals(conn=conn)
+        sourcelink.build_links(conn=conn)   # GFP-248
     return results

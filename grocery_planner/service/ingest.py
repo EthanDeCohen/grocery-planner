@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from .. import config, db, importers, logs, matching, records, scrapers
+from .. import config, db, importers, logs, matching, records, scrapers, sourcelink
 from ..scrapers import SCRAPERS
 
 
@@ -382,10 +382,16 @@ def run_scrape(
     # next run while a lost scrape is not.
     try:
         match_summary = matching.match_deals(conn=own)
+        # GFP-248: and then link this store's promo rows to its catalogue
+        # rows, so a sale price inherits the size and protein the ad never
+        # carries. After matching, never before -- a link requires both sides
+        # to have matched the same food, so it reads what match_deals just
+        # wrote.
+        link_summary = sourcelink.build_links(conn=own)
     except sqlite3.Error as exc:
         logs.get_logger(__name__).warning(
             "could not match deals to foods after scraping %s: %s", store, exc)
-        match_summary = None
+        match_summary = link_summary = None
 
     # GFP-42: trim old history AFTER the records are safely committed, and
     # never before. Records are stored rather than recomputed precisely so a
@@ -412,4 +418,5 @@ def run_scrape(
         "records": record_summary,
         "pruned_history_rows": pruned,
         "matches": match_summary,
+        "links": link_summary,
     }

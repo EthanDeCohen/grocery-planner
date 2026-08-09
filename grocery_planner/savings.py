@@ -416,6 +416,26 @@ def cost_per_gram_protein(
         return None
 
     size = parse_size(item_name)
+
+    # GFP-248: a promotional name carries no size, so the sale price -- the one
+    # number a nutritionist opens this app to find -- could never reach a $/g
+    # figure, while the catalogue row for the SAME product had the size at full
+    # price. When this store has a catalogue feed and a link was established
+    # (both names matched the same food AND their words overlap), borrow that
+    # row's size. Absent a link, everything below behaves exactly as before:
+    # this adds a path, it never removes one.
+    borrowed = None
+    if size is None or size.base_unit != WEIGHT:
+        # Imported here, not at module scope: sourcelink imports THIS module
+        # for parse_size/WEIGHT, so a top-level import would be a cycle.
+        from . import sourcelink
+
+        link = sourcelink.get_link(store, item_name, conn=conn)
+        if link is not None:
+            candidate = parse_size(link.linked_item_name)
+            if candidate is not None and candidate.base_unit == WEIGHT:
+                size, borrowed = candidate, link
+
     # Only a weight-based size converts to grams; `each`/`fl oz` cannot (see
     # the module docstring's cost_per_gram_protein paragraph). When there is
     # no weight-based size, fall through to the GFP-69 label-claim path below
@@ -441,13 +461,25 @@ def cost_per_gram_protein(
         if protein_grams <= 0:
             return None
 
+        # GFP-248: a borrowed size is real evidence -- the catalogue measured
+        # this product -- but it is one inference removed from the row being
+        # priced, so the result must not claim the confidence of a size read
+        # directly off the name. Take the weaker of the two, and say in the
+        # method that a borrow happened, so a nutritionist auditing a
+        # surprising number can see where the package weight came from.
+        confidence = match["confidence"]
+        method = match["method"]
+        if borrowed is not None:
+            confidence = min(confidence, borrowed.confidence)
+            method = f"{method}+{borrowed.method}"
+
         return ProteinCost(
             cost_per_gram_protein=price / protein_grams,
             food_id=match["food_id"],
             food_name=food["name"],
             protein_source=food["source"],
-            match_confidence=match["confidence"],
-            match_method=match["method"],
+            match_confidence=confidence,
+            match_method=method,
             size_grams=size_grams,
             protein_grams=protein_grams,
         )
