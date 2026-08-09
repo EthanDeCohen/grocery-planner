@@ -2,32 +2,31 @@
 
 **Status:** answered, 2026-08-08. **Deliverable:** this document. No code.
 
-**One-line recommendation:** **Drop the Ahold Delhaize family from GFP-165.**
-GIANT is walled exactly as Food Lion is, on both policy and technical grounds,
-and the two are provably the same configuration. See
+**One-line recommendation:** **The opposite of what the first pass concluded.**
+PRISM's wall is real but *narrow*: `/groceries/**` is open, unprotected, and
+carries real shelf prices with sizes and protein grams for ~30,000 products.
+**Do not drop the Ahold family; open a ticket to integrate it.** See
 [Recommendation](#recommendation).
+
+> **This document was rewritten after being wrong.** The first version concluded
+> "walled, uniformly — drop the family, close GFP-5". That verdict was reached
+> by testing `/` and reading the `User-agent: *` Disallow list, and it was
+> wrong on both counts. What follows is the corrected finding, with the error
+> kept visible in [Where the first pass went wrong](#where-the-first-pass-went-wrong)
+> because the mistake is instructive.
 
 ---
 
-## Why this was worth running
+## Background
 
-Established 2026-08-08: **Food Lion, Giant Food, GIANT/MARTIN'S, Hannaford and
-Stop & Shop all run on PRISM**, the proprietary platform built by Peapod Digital
-Labs, Ahold Delhaize USA's digital and e-commerce engine.
+**Food Lion, Giant Food, GIANT/MARTIN'S, Hannaford and Stop & Shop all run on
+PRISM**, Peapod Digital Labs' platform (Ahold Delhaize USA's digital engine).
+GFP-76 established that Food Lion's site refused automation, and the epic's
+hypothesis was that GIANT might be unwalled, reopening Food Lion.
 
-GFP-165's original hypothesis was the optimistic one: *if Giant isn't walled,
-GFP-76's DataDome block is per-banner and Food Lion may reopen.* The shared
-platform reversed that prior — one platform much more likely means one
-protection configuration — but the test was cheap and both outcomes were
-valuable:
-
-- **Open** → one integration reaches four banners: Food Lion (NC), GIANT
-  (Philadelphia), Stop & Shop and Hannaford. The largest single-integration
-  prize anywhere in the epic.
-- **Walled** → four chains retire at once, GFP-5 closes for good, and GIANT
-  comes off the Philadelphia plan.
-
-It is the second one.
+The shared-platform fact is confirmed by artefact: all three properties serve a
+**167-line robots.txt differing by exactly one line**, the sitemap hostname.
+Whatever is true of one is true of all of them.
 
 ---
 
@@ -35,112 +34,180 @@ It is the second one.
 
 | # | Question | Answer |
 |---|----------|--------|
-| Q1 | Does robots.txt permit what an integration needs? | **No.** `User-agent: *` disallows `/product-search/` and `/browse-aisles/` — precisely the paths a price integration would read. |
-| Q2 | Is GIANT the same configuration as Food Lion? | **Yes, provably.** All three robots.txt files are 167 lines and differ by *exactly one line*: the sitemap hostname. |
-| Q3 | Is GIANT technically walled like Food Lion? | **Yes.** All three return `403 Forbidden` with `X-DataDome: protected` to an ordinary homepage request. |
-| Q4 | Does the Philadelphia banner differ from the Maryland one? | **No.** The GIANT Company and Giant Food behave identically. |
+| Q1 | Is the whole site DataDome-protected? | **No.** `/` and `/savings/` return 403 with `X-DataDome: protected`. `/groceries/**` returns **200 with no DataDome header at all**. |
+| Q2 | Does robots.txt permit reading products? | **Yes, for us.** The `User-agent: *` group disallows `/product-search/` and `/browse-aisles/` — but **not** `/product/`. |
+| Q3 | Is there a published catalogue? | **Yes.** `robots.txt` advertises a sitemap index of **3 product shards, ~10,000 URLs each, `lastmod` 2026-08-06**. |
+| Q4 | Do product pages carry price, size and protein? | **Yes.** n=14: 14/14 reachable, 14/14 priced, 14/14 size parseable, 7/14 with structured protein grams. |
+| Q5 | Are prices store-specific? | **Unknown, and this is the biggest open question.** An anonymous page shows no store binding at all. Probably a default/national price. |
 
 ---
 
-## Q1 — What robots.txt permits
+## Q1 — The wall is narrow, not blanket
 
-The governing group, identical on all three properties:
-
-```
-User-agent: *
-Disallow: /product-search/
-Disallow: /browse-aisles/
-Disallow: /*returnurl=
-Disallow: /*searchRef=
-```
-
-**This is the finding that decides the ticket, and it is a policy answer, not a
-technical one.** The two disallowed paths are exactly what a price integration
-would need to read. No technical result could override it, and the ticket said
-as much before the probe ran.
-
-Worth noting what the rest of the file does: it grants explicit, generous access
-to ad crawlers and to AI/answer-engine crawlers (GPTBot, ClaudeBot,
-PerplexityBot, Google-Extended). So this is not a blanket anti-bot posture —
-it is a deliberate policy that welcomes crawlers whose traffic they benefit
-from and excludes product-catalogue reading specifically. That is a considered
-"no", not an oversight.
-
-## Q2 — GIANT and Food Lion are the same configuration
-
-Three properties fetched, `User-agent: *` groups compared, then a full diff:
-
-```
-$ diff robots-giantfoodstores.com.txt robots-foodlion.com.txt
-167c167
-< Sitemap: https://giantfoodstores.com/groceries/sitemap.xml
----
-> Sitemap: https://foodlion.com/groceries/sitemap.xml
-```
-
-167 lines each. **One line of difference, and it is the hostname.** Same rules,
-same order, same comments, same section banners.
-
-This is the strongest available evidence that PRISM's configuration is applied
-uniformly across Ahold Delhaize USA's banners, and it kills the per-banner
-hypothesis outright. There was no need to reason about it from the platform
-announcement; the artefacts say it directly.
-
-## Q3 — DataDome, on every banner
-
-One ordinary `GET /` per property, browser user-agent, no evasion of any kind.
-The homepage is *allowed* by robots; the disallowed product paths were not
-touched.
-
-| property | status | evidence |
+| URL | status | DataDome |
 |---|---|---|
-| `giantfoodstores.com` (The GIANT Company, Philadelphia) | **403** | `X-DataDome: protected`, `X-DataDome-CID: AHrlqAAAAAMAG-nAZvG81MwArV4cdQ==` |
-| `giantfood.com` (Giant Food, MD/DC) | **403** | `X-DataDome: protected`, `X-DataDome-CID: AHrlqAAAAAMAEiA0JQjLy7gArV4cdQ==` |
-| `foodlion.com` (the known-blocked control) | **403** | `X-DataDome: protected`, `X-DataDome-CID: AHrlqAAAAAMAkGr_qHLGWfoArV4cdQ==` |
+| `https://www.foodlion.com/` | **403** | `X-DataDome: protected` |
+| `https://foodlion.com/` | **403** | `X-DataDome: protected` |
+| `https://foodlion.com/savings/` | **403** | `X-DataDome: protected` |
+| `https://foodlion.com/groceries/` | **200** | *none* |
+| `https://foodlion.com/groceries/sitemap.xml` | **200** | *none* |
+| `https://giantfoodstores.com/groceries/` | **200** | *none* |
+| `https://giantfoodstores.com/groceries/sitemap.xml` | **200** | *none* |
 
-All three sit behind Cloudflare and all three set a year-long `datadome`
-cookie on refusal. Food Lion was included deliberately as a control, to confirm
-the probe reproduces GFP-76's known result — it does.
+Ordinary requests, browser user-agent, no evasion of any kind. The grocery
+catalogue is simply not behind the bot protection. GFP-76's verdict was correct
+about the paths it tested and over-generalised from them.
 
-## Where the probe stopped, and why
+## Q2 — Which robots.txt group applies, and what it permits
 
-**At the 403.** This ticket was scoped to establish a verdict, not to build an
-evasion, and that line was written into it before any request was made. A
-control that says no is an answer. GFP-76 reached the same conclusion for Food
-Lion and it was the right call then.
+Two groups matter, and the difference between them is the crux:
 
-The robots.txt finding independently settles it regardless: even a technically
-reachable endpoint under `/product-search/` is one the site has asked automated
-clients not to read.
+```
+User-agent: *                          User-agent: GPTBot
+Disallow: /product-search/             User-agent: ChatGPT-User
+Disallow: /browse-aisles/              User-agent: ClaudeBot
+Disallow: /*returnurl=                 User-agent: PerplexityBot
+Disallow: /*searchRef=                 User-agent: Google-Extended
+                                       Allow: /groceries/
+                                       Allow: /savings/
+                                       Allow: /pharmacy/
+                                       Allow: /pages/
+                                       Disallow: /product/        <-- EXTRA
+                                       Disallow: /product-search/
+                                       Disallow: /browse-aisles/
+```
+
+**The AI group is MORE restricted, not less.** It carries every `*` restriction
+*plus* `Disallow: /product/`. Ahold singled out the named AI crawlers to add a
+product-page restriction that generic clients do not have.
+
+So a first-party integration, running under its own user-agent, falls under `*`
+and **`/groceries/product/…` is permitted**. This route works precisely *because*
+we are not an AI crawler. Sending `User-agent: ClaudeBot` would have forfeited
+the access — as well as being a false claim to their servers about who is
+asking.
+
+## Q3 — They publish the catalogue deliberately
+
+`robots.txt` advertises `https://foodlion.com/groceries/sitemap.xml`, which is a
+sitemap index:
+
+```
+/groceries/sitemaps/products-0.xml     lastmod 2026-08-06
+/groceries/sitemaps/products-1.xml     lastmod 2026-08-06
+/groceries/sitemaps/products-2.xml     lastmod 2026-08-06
+/groceries/sitemaps/categories-0.xml   lastmod 2026-08-06
+/groceries/sitemaps/content.xml        lastmod 2026-08-06
+```
+
+Shard 0 alone holds **10,000 product URLs**, all under `/groceries/product/`, so
+roughly **30,000 products**, refreshed two days before this spike ran. This is
+not a door left ajar; it is a catalogue published for crawlers with a
+maintained `lastmod`.
+
+## Q4 — What a product page carries
+
+`schema.org` structured data in a single `application/ld+json` block:
+
+```json
+{"@type": "Offer", "availability": "https://schema.org/InStock",
+ "price": 2.89, "priceCurrency": "USD",
+ "url": ".../swanson-premium-chunk-chicken-breast-in-water-4-5-oz-can/7134"}
+```
+
+And structured nutrition in the page state:
+
+```json
+{"amount": 18, "id": "protein", "name": "Protein", "unit": "g"}
+```
+
+**Sample of 14 protein-keyword products from shard 0** (1.5s between requests):
+
+| column | result |
+|---|---|
+| reachable (HTTP 200) | **14/14** |
+| priced | **14/14** |
+| size parseable from the URL slug | **14/14** |
+| structured protein grams | **7/14** |
+
+Put beside the numbers GFP-197 says decide a source:
+
+| source | priced | machine-readable size | protein |
+|---|---|---|---|
+| Flipp (today's Food Lion route) | ~46% | **4.9%** | via USDA matching only |
+| Kroger API | 100% | 100% | 82% |
+| **Food Lion `/groceries/product/`** | **100%** | **100%** | **50%** (n=14) |
+
+**Read the 7/14 carefully before celebrating.** The sample was the first 14
+keyword matches in shard 0, which is ID-ordered and front-loaded with packaged
+goods — the misses are steak *sauce*, beef-flavour *dog treats*, and *gravy*.
+Those correctly have no protein panel. The figure for real protein foods is
+almost certainly higher, and a proper stratified sample is the first thing
+GFP-197 should do here.
+
+## Q5 — The open question that decides how much this is worth
+
+**An anonymously-fetched page shows no store binding whatsoever** — no
+`storeId`, `selectedStore`, `zipCode` or `postalCode` anywhere in the markup.
+So `$2.89` is most likely a default or national price, not the price at a
+specific store.
+
+That matters because this product is ZIP-scoped by design (GFP-53, GFP-54). A
+national price is still far better than Flipp — it carries size and protein,
+which Flipp does not — but it is not the same claim as "the shelf price at your
+Food Lion". **Establish this before building**, and be honest in the UI about
+which it is.
+
+## Where the first pass went wrong
+
+Worth recording, because it is a repeatable mistake:
+
+1. **Tested `/` and generalised to the site.** The homepage is protected; the
+   catalogue is not. One 403 became "walled".
+2. **Read the Disallow list without reading which group it was in.** I quoted
+   the `*` group's `/product-search/` and treated it as covering `/product/`.
+   Those are different paths, and `/product/` is where the catalogue lives.
+3. **Inverted the AI-group finding.** I noted that AI crawlers were welcomed and
+   read it as evidence of an open posture, when in fact that group is the *most*
+   restricted one in the file.
+
+The corrective in all three cases is the same and is already this project's
+stated method (GFP-197): *establish the verdict cheaply, record the evidence,
+and check what the evidence actually says before generalising from it.*
 
 ---
 
 ## Recommendation
 
-1. **Drop the Ahold Delhaize family from GFP-165's plan**, in writing, so it is
-   not re-proposed: Food Lion, GIANT (Philadelphia), Giant Food, and by strong
-   inference Stop & Shop and Hannaford.
-2. **Close GFP-5 (Food Lion shelf prices) for good.** It was already parked;
-   this removes the last reason to revisit it. GFP-27, which was gated on it,
-   should be re-planned without a Food Lion source.
-3. **Remove GIANT from the Philadelphia chain list.** GFP-203's Philadelphia
-   regionals (ShopRite, Wegmans, Weis) and GFP-199's ACME carry that market now.
-4. **Do not buy this data either.** Measured 2026-08-07 while fixing GFP-121:
-   Food Lion's flyer yields 37 matchable protein items out of 543 distinct names
-   (6.8%) against Harris Teeter's 485 of 1,743 (27.8%). Their ad skews to
-   beverages, baby products and dairy. Even free and unblocked, this family is
-   a thin protein source — which makes a negative result cheap to accept.
+1. **Do not drop the Ahold Delhaize family.** Reverse the earlier recommendation
+   on GFP-200 and GFP-5.
+2. **Open an integration ticket for `/groceries/product/`**, covering Food Lion
+   *and* GIANT — same platform, same structure, so it is one scraper for two
+   banners across two markets (NC and Philadelphia), with Stop & Shop and
+   Hannaford beyond.
+3. **Answer Q5 first.** If prices turn out to be national rather than per-store,
+   that changes what the UI may claim, not whether to build.
+4. **Check the terms of service separately from robots.txt.** They are different
+   instruments, and robots.txt permission is not ToS permission. This is the
+   same unresolved question as GFP-119 for Kroger, and it should be answered for
+   both together rather than twice.
+5. **Crawl politely and cache hard.** ~30,000 products with a daily `lastmod`
+   means a full sweep is a real load. Fetch the sitemap first, diff `lastmod`,
+   and refetch only what changed.
+6. **Keep the DataDome line where it is.** `/`, `/savings/`, `/product-search/`
+   and `/browse-aisles/` are refused or disallowed. Nothing here needs them, and
+   nothing should try.
 
-**The corollary worth stating positively:** the effort that would have gone here
-belongs in the Kroger family instead — Ralphs and Food 4 Less (GFP-198) reached
-through an integration that already exists, against the best-measured source in
-the product (100% priced, 100% machine-readable size, 82% carrying protein
-grams).
+**This does not displace GFP-198.** Kroger remains the better source — genuinely
+per-store, officially licensed, 82% protein — and Ralphs plus Food 4 Less still
+come through an integration that already exists. This is the second-best lead,
+newly viable, not a reason to reorder the epic.
 
 ## What was actually run
 
-Three `curl` fetches of `robots.txt` and three `HEAD` requests to `/`, with a
-browser user-agent, in August 2026. No product paths were requested, no
-protection was circumvented, and nothing was written to any store's systems.
-Raw robots.txt captures are in the session scratchpad; the diff above is the
-whole of the evidence that matters.
+`robots.txt` and `HEAD /` on three properties; path probes on `/`, `/groceries/`,
+`/savings/` and the sitemaps; the sitemap index and product shard 0; and 14
+product pages at 1.5s intervals. Browser user-agent throughout, no
+protection circumvented, no disallowed path requested, nothing written to any
+store's systems. Captures are in the session scratchpad; `fl-sample.json` holds
+the sampled rows.
