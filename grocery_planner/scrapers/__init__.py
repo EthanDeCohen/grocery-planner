@@ -24,9 +24,13 @@ A module may therefore declare:
   ``service/ingest.run_scrape`` scopes its replace to
   ``(store, source, postal_code)``.
 """
-from . import foodlion, harristeeter, kroger, wholefoods
+from . import (
+    foodlion, foodlion_catalog, giant, harristeeter, kroger, wholefoods,
+)
 
-_MODULES = (foodlion, harristeeter, kroger, wholefoods)
+_MODULES = (
+    foodlion, foodlion_catalog, giant, harristeeter, kroger, wholefoods,
+)
 
 SCRAPERS = {getattr(m, "SCRAPER_KEY", m.STORE_KEY): m for m in _MODULES}
 

@@ -98,8 +98,13 @@ def test_all_scrapers_includes_every_registered_store_regardless_of_readiness():
     # it; available_scrapers() must not.
     # GFP-98 adds 'harristeeter-api' (Kroger shelf prices), which like
     # wholefoods is registered but not ready without credentials.
+    # GFP-247: 'foodlion-catalog' and 'giant' are the PRISM product
+    # catalogue -- one scraper, two banners. 'foodlion-catalog' is a SECOND
+    # feed for the same shop as 'foodlion' (ad vs catalogue), the same
+    # shape as harristeeter/harristeeter-api above.
     assert set(service.all_scrapers()) == {
-        "foodlion", "harristeeter", "harristeeter-api", "wholefoods",
+        "foodlion", "foodlion-catalog", "giant", "harristeeter",
+        "harristeeter-api", "wholefoods",
     }
 
 

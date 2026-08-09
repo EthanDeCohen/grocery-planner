@@ -199,7 +199,8 @@ def test_store_registry():
     # physical store as 'harristeeter' (the Flipp weekly ad). Two entries, one
     # shop, on purpose -- see scrapers/__init__.py.
     assert set(SCRAPERS) == {
-        "foodlion", "harristeeter", "harristeeter-api", "wholefoods",
+        "foodlion", "foodlion-catalog", "giant", "harristeeter",
+        "harristeeter-api", "wholefoods",
     }
     # Every registered module exposes the thin store-scraper surface the CLI uses.
     for key, mod in SCRAPERS.items():

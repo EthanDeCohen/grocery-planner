@@ -19,6 +19,9 @@ STORES: list[Store] = [
     Store("foodlion", "Food Lion", "foodlion"),
     Store("wholefoods", "Whole Foods", "wholefoods"),
     Store("harristeeter", "Harris Teeter", "harristeeter"),
+    # GFP-247: the Philadelphia PRISM banner. The GIANT Company
+    # (giantfoodstores.com), not Giant Food of Landover MD.
+    Store("giant", "GIANT", "giant"),
 ]
 
 BY_KEY: dict[str, Store] = {s.key: s for s in STORES}
