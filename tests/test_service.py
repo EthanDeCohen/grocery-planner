@@ -103,8 +103,9 @@ def test_all_scrapers_includes_every_registered_store_regardless_of_readiness():
     # feed for the same shop as 'foodlion' (ad vs catalogue), the same
     # shape as harristeeter/harristeeter-api above.
     assert set(service.all_scrapers()) == {
-        "foodlion", "foodlion-catalog", "giant", "giant-ad", "harristeeter",
-        "harristeeter-api", "wholefoods",
+        "acme", "aldi", "foodlion", "foodlion-catalog", "giant", "giant-ad",
+        "harristeeter", "harristeeter-api", "hmart", "lidl", "lowesfoods",
+        "publix", "sprouts", "target", "wegmans", "weis", "wholefoods",
     }
 
 

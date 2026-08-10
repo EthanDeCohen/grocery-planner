@@ -25,8 +25,8 @@ A module may therefore declare:
   ``(store, source, postal_code)``.
 """
 from . import (
-    foodlion, foodlion_catalog, giant, giant_ad, harristeeter, kroger,
-    wholefoods,
+    flipp_banners, foodlion, foodlion_catalog, giant, giant_ad, harristeeter,
+    kroger, wholefoods,
 )
 
 _MODULES = (
@@ -35,6 +35,11 @@ _MODULES = (
 )
 
 SCRAPERS = {getattr(m, "SCRAPER_KEY", m.STORE_KEY): m for m in _MODULES}
+# GFP-165: the banners found by the 2026-08-09 Flipp survey, registered from a
+# table rather than as eleven near-identical modules. They satisfy the same
+# duck-typed surface -- see flipp_banners for why that is the right shape here
+# and why the three hand-written modules above were left alone.
+SCRAPERS.update(flipp_banners.MODULES)
 
 
 def store_key_for(module, default: str | None = None) -> str:
