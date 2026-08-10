@@ -711,6 +711,43 @@ def _no_flyer_message(
     )
 
 
+#: Below this many flyers in a Flipp response, the list itself is suspect and a
+#: missing merchant proves nothing. Flipp returns dozens for any populated ZIP
+#: -- 61 for downtown Atlanta -- so a short list means the question did not get
+#: asked properly rather than that the chain is absent.
+MIN_FLYERS_FOR_ABSENCE = 10
+
+
+def serves_postal_code(store: "StoreConfig", postal_code: str) -> bool | None:
+    """Does this merchant publish a weekly ad for ``postal_code``? (GFP-257)
+
+    Flipp answers this for free and it is the same request a scrape makes.
+    Demonstrated by accident on 2026-08-09: scraping Food Lion for 30303
+    (downtown Atlanta) raised "Flipp listed 61 flyers; none matched" -- Food
+    Lion does not operate in Atlanta, and the source said so.
+
+    **A missing flyer is weaker evidence than a missing store**, so absence is
+    only reported when the flyer list is healthy. A chain that genuinely
+    operates in a ZIP could publish no ad in a quiet week, and a short or empty
+    list means the question failed rather than that the answer is no. Both of
+    those return ``None`` -- unknown, which availability.py treats permissively.
+
+    This replaces a hand-written ZIP-prefix guess. That guess was measurably
+    wrong: it claimed Food Lion served all of Georgia's 30xxx and 31xxx.
+    """
+    try:
+        with FlippClient() as client:
+            flyers = client.fetch_data(postal_code).get("flyers", [])
+    except Exception:                       # noqa: BLE001 -- unknown, not absent
+        return None
+    if not isinstance(flyers, list) or len(flyers) < MIN_FLYERS_FOR_ABSENCE:
+        return None
+    if weekly_flyer_candidates(flyers, store.merchant_name):
+        return True
+    # A healthy list of somebody else's flyers, and none of ours.
+    return False
+
+
 def scrape_store(
     store: StoreConfig,
     postal_code: str | None = None,

@@ -123,15 +123,49 @@ def test_a_declared_service_area_answers_when_the_source_cannot(conn, only):
     assert outside.state == availability.DOES_NOT_SERVE
 
 
-def test_the_real_banners_are_scoped_to_their_real_footprints(conn):
-    """GIANT is a Philadelphia banner and must not be called for Greensboro."""
-    from grocery_planner.scrapers import foodlion_catalog, giant
+def test_giant_declares_a_footprint_because_it_cannot_be_asked(conn):
+    """GIANT has no Flipp ad configured and its PRISM store locator is
+    DataDome-protected (GFP-246), so a declared area is the only option left."""
+    from grocery_planner.scrapers import giant
 
-    assert availability._in_service_area(foodlion_catalog.SERVICE_AREA, "27401")
-    assert not availability._in_service_area(foodlion_catalog.SERVICE_AREA, "10001")
-    assert availability._in_service_area(giant.SERVICE_AREA, "19103")
-    assert not availability._in_service_area(giant.SERVICE_AREA, "27401")
-    assert not availability._in_service_area(giant.SERVICE_AREA, "90210")
+    assert availability._in_service_area(giant.SERVICE_AREA, "19103")   # Philadelphia
+    assert not availability._in_service_area(giant.SERVICE_AREA, "27401")  # Greensboro
+    assert not availability._in_service_area(giant.SERVICE_AREA, "90210")  # LA
+
+
+def test_the_food_lion_catalogue_asks_instead_of_declaring(conn):
+    """It USED to declare ZIP prefixes, and the list was wrong -- it claimed
+    Food Lion served all of Georgia's 30xxx when Food Lion is not in Atlanta at
+    all. The catalogue and the weekly ad are the same chain, so the ad's own
+    answer is the right one for both."""
+    from grocery_planner.scrapers import foodlion_catalog
+
+    assert not hasattr(foodlion_catalog, "SERVICE_AREA"), (
+        "a hand-written footprint guess came back")
+    assert callable(foodlion_catalog.serves)
+
+
+def test_a_flyer_list_too_short_to_trust_is_unknown_not_absent(monkeypatch):
+    """A missing flyer is weaker evidence than a missing store. A short or
+    empty list means the question failed, not that the chain is absent."""
+    from grocery_planner.scrapers import base
+
+    class _Client:
+        def __init__(self, flyers): self.flyers = flyers
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def fetch_data(self, postal_code): return {"flyers": self.flyers}
+
+    healthy = [{"merchant": "Somebody Else", "name": "Weekly Ad"}] * 40
+    monkeypatch.setattr(base, "FlippClient", lambda: _Client(healthy))
+    assert base.serves_postal_code(base.FOOD_LION, "30303") is False
+
+    monkeypatch.setattr(base, "FlippClient", lambda: _Client(healthy[:3]))
+    assert base.serves_postal_code(base.FOOD_LION, "30303") is None
+
+    def _boom(): raise OSError("flipp unreachable")
+    monkeypatch.setattr(base, "FlippClient", _boom)
+    assert base.serves_postal_code(base.FOOD_LION, "30303") is None
 
 
 # --------------------------------------------------------------------------- #

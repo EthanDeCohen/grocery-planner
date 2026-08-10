@@ -21,3 +21,8 @@ def scrape(
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
     """Scrape the active Harris Teeter ad. Returns ``(deal_rows, flyer_meta, stats)``."""
     return base.scrape_store(STORE, postal_code=postal_code, include_coupons=include_coupons)
+
+
+def serves(postal_code: str) -> bool | None:
+    """Does this store publish a weekly ad here? (GFP-257) See ``base``."""
+    return base.serves_postal_code(STORE, postal_code)
