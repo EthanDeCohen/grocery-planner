@@ -105,7 +105,8 @@ def test_all_scrapers_includes_every_registered_store_regardless_of_readiness():
     assert set(service.all_scrapers()) == {
         "acme", "aldi", "foodlion", "foodlion-catalog", "giant", "giant-ad",
         "harristeeter", "harristeeter-api", "hmart", "lidl", "lowesfoods",
-        "publix", "sprouts", "target", "wegmans", "weis", "wholefoods",
+        "publix", "sprouts", "target", "wegmans", "wegmans-api", "weis",
+        "wholefoods",
     }
 
 

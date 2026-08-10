@@ -26,12 +26,12 @@ A module may therefore declare:
 """
 from . import (
     flipp_banners, foodlion, foodlion_catalog, giant, giant_ad, harristeeter,
-    kroger, wholefoods,
+    kroger, wegmans_api, wholefoods,
 )
 
 _MODULES = (
     foodlion, foodlion_catalog, giant, giant_ad, harristeeter, kroger,
-    wholefoods,
+    wegmans_api, wholefoods,
 )
 
 SCRAPERS = {getattr(m, "SCRAPER_KEY", m.STORE_KEY): m for m in _MODULES}

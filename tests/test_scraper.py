@@ -201,7 +201,8 @@ def test_store_registry():
     assert set(SCRAPERS) == {
         "acme", "aldi", "foodlion", "foodlion-catalog", "giant", "giant-ad",
         "harristeeter", "harristeeter-api", "hmart", "lidl", "lowesfoods",
-        "publix", "sprouts", "target", "wegmans", "weis", "wholefoods",
+        "publix", "sprouts", "target", "wegmans", "wegmans-api", "weis",
+        "wholefoods",
     }
     # Every registered module exposes the thin store-scraper surface the CLI uses.
     for key, mod in SCRAPERS.items():
