@@ -25,11 +25,13 @@ A module may therefore declare:
   ``(store, source, postal_code)``.
 """
 from . import (
-    foodlion, foodlion_catalog, giant, harristeeter, kroger, wholefoods,
+    foodlion, foodlion_catalog, giant, giant_ad, harristeeter, kroger,
+    wholefoods,
 )
 
 _MODULES = (
-    foodlion, foodlion_catalog, giant, harristeeter, kroger, wholefoods,
+    foodlion, foodlion_catalog, giant, giant_ad, harristeeter, kroger,
+    wholefoods,
 )
 
 SCRAPERS = {getattr(m, "SCRAPER_KEY", m.STORE_KEY): m for m in _MODULES}

@@ -128,6 +128,10 @@ class StoreConfig:
 # Registry of scrapable stores. Add a store here + a thin module and it works.
 FOOD_LION = StoreConfig("foodlion", "Food Lion", "MVP", "27401")
 HARRIS_TEETER = StoreConfig("harristeeter", "Harris Teeter", "VIC", "27401")
+# GFP-247/GFP-257: The GIANT Company's weekly ad. Flipp labels it "Giant Food
+# Stores" -- distinct from "Giant Food", which is the Landover MD company.
+# Confirmed present for 19103 on 2026-08-09.
+GIANT = StoreConfig("giant", "Giant Food Stores", "BONUSCARD", "19103")
 
 
 # --------------------------------------------------------------------------- #

@@ -123,14 +123,16 @@ def test_a_declared_service_area_answers_when_the_source_cannot(conn, only):
     assert outside.state == availability.DOES_NOT_SERVE
 
 
-def test_giant_declares_a_footprint_because_it_cannot_be_asked(conn):
-    """GIANT has no Flipp ad configured and its PRISM store locator is
-    DataDome-protected (GFP-246), so a declared area is the only option left."""
-    from grocery_planner.scrapers import giant
+def test_no_scraper_declares_a_hand_written_footprint_any_more(conn):
+    """Both guesses that shipped were measurably wrong -- Food Lion's claimed
+    all of Kentucky (it is in one metro) and all of Georgia (it is not in
+    Atlanta), and GIANT's was never verified at all. Every banner now ASKS
+    Flipp, which answers exactly and for free."""
+    from grocery_planner import scrapers
 
-    assert availability._in_service_area(giant.SERVICE_AREA, "19103")   # Philadelphia
-    assert not availability._in_service_area(giant.SERVICE_AREA, "27401")  # Greensboro
-    assert not availability._in_service_area(giant.SERVICE_AREA, "90210")  # LA
+    declaring = [k for k, m in scrapers.SCRAPERS.items()
+                 if getattr(m, "SERVICE_AREA", None)]
+    assert declaring == [], f"hand-written footprint guesses came back: {declaring}"
 
 
 def test_the_food_lion_catalogue_asks_instead_of_declaring(conn):
