@@ -1,0 +1,30 @@
+# GFP-164: the hosted service, simulated. Server-side only -- nothing here
+# ships to a customer (no containers customer-side, per the deployment note).
+services:
+  renderer:
+    build: ./renderer
+    # No secret, no credential, no client data. This is the half we would hand
+    # to a paid browser service when volume justifies it -- swapping it is a
+    # change to RENDERER_URL below, not a rewrite.
+    shm_size: 1gb
+    ports: ["8081:8081"]
+    environment:
+      RENDER_SETTLE_MS: "5000"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://localhost:8081/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  broker:
+    build: ./broker
+    ports: ["8080:8080"]
+    depends_on:
+      renderer:
+        condition: service_healthy
+    environment:
+      RENDERER_URL: "http://renderer:8081"
+      # The ceiling is on the CREDENTIAL, not the install (GFP-192).
+      KROGER_DAILY_BUDGET: "10000"
+      POOL_TTL_SECONDS: "43200"
