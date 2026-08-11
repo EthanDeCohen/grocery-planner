@@ -71,14 +71,14 @@ postal code. See "Immediate" below — this is the most valuable fact on the pag
 
 **18 scrapers registered. 7 stores produce anything. 5 sources carry 99.8% of
 the value.** Every one of those five publishes structured product data on
-purpose; see `spikes/GFP-197-dead-ends.md` for the 30-odd chains that do not.
+purpose; see `spikes/GFP-197-source-survey.md` for the 30-odd chains that do not.
 
 ---
 
 ## What is left, ranked by return
 
-None of these requires a new store, a vendor, a credential or anyone's
-permission. All four operate on data already held or already reachable.
+None of these requires a new store or a new source. All four operate on
+data already held or already reachable.
 
 | # | work | est. usable rows | market |
 | --- | --- | --- | --- |
@@ -155,7 +155,7 @@ now      1,377 usable
 
 Philadelphia moves from one contributing store to three. Greensboro's Food Lion
 roughly triples. **No new chain is added, because the survey established there
-are none left to add** — see `spikes/GFP-197-dead-ends.md`.
+are none left to add** — see `spikes/GFP-197-source-survey.md`.
 
 ---
 
