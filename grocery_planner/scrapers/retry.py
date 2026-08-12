@@ -213,3 +213,175 @@ def describe(exc: Exception) -> str:
             "Your existing prices are untouched; try again in a few minutes."
         )
     return str(exc)
+
+
+# --------------------------------------------------------------------------- #
+# Self-pacing
+#
+# Retrying is what you do after a request fails. Pacing is what you do so it
+# doesn't. They are different jobs and this is the second one.
+#
+# WHY THIS EXISTS: the Sprouts measurement
+# ----------------------------------------
+# One host, two paths, policed completely differently -- measured 2026-08-11:
+#
+#   /graphql                  37,500+ requests at ~36/s   0 errors, 0 429s
+#   /store/.../products/<id>  ~2,300 pages at ~8/s        hard 403 on every
+#                                                         subsequent page
+#
+# The storefront and /graphql kept serving throughout, and the product path
+# recovered after a cool-off. So the 403 was a *rate* verdict about one path,
+# not a credential problem and not an outage.
+#
+# THAT BREAKS AN ASSUMPTION THIS MODULE STATES ABOVE. `request()` says a 4xx is
+# never retried because "a 403 is a credential problem and will be a credential
+# problem in four seconds' time". True of Kroger, whose 403 means a bad token.
+# False of a WAF, whose 403 means "slow down". Both readings are right for their
+# own source, so the distinction is made explicit rather than silently changed:
+# `request()` keeps its rule, and a caller that KNOWS its 403 is a throttle
+# opts in by pacing the path with a Budget.
+#
+# The strategy is AIMD, the same shape TCP uses: multiplicative slow-down on a
+# throttle signal, gradual additive recovery on sustained success. It is chosen
+# because it converges on a sustainable rate WITHOUT anyone having to guess the
+# server's real limit -- which is good, because the real limit is undocumented,
+# is clearly not a simple req/s figure (2,300 requests got through before the
+# wall), and can change without notice.
+# --------------------------------------------------------------------------- #
+
+#: Status codes that mean "you are going too fast", when a caller has told us
+#: that is what they mean for this path. 403 is here ONLY for callers that opt
+#: in -- see the note above.
+THROTTLE_STATUS = frozenset({403, 429})
+
+
+@dataclass(frozen=True)
+class Budget:
+    """A pacing policy for one path class.
+
+    Per *path class*, not per host, because the Sprouts measurement shows one
+    host can police two paths by completely different rules. A single
+    host-wide budget would have to be as slow as the strictest path, throwing
+    away the 36 req/s the GraphQL endpoint genuinely allows.
+    """
+
+    name: str
+    #: Fastest we will ever go, even after a long clean run. A floor, not a target.
+    min_interval: float
+    #: Slowest we will go before giving up on the path entirely.
+    max_interval: float
+    #: Multiply the interval by this on a throttle signal. >1 slows down.
+    backoff: float = 4.0
+    #: Multiply by this after `recovery_after` clean requests. <1 speeds up.
+    recovery: float = 0.8
+    #: Clean requests before easing off. Deliberately >1: recovering as fast as
+    #: we back off would oscillate straight back into the wall.
+    recovery_after: int = 25
+    #: Consecutive throttle signals before the cool-off timer fires.
+    streak_limit: int = 3
+    #: How long to sit out once the streak limit is hit. The "timer".
+    cooldown_seconds: float = 300.0
+
+
+#: Measured against shop.sprouts.com. GraphQL tolerated 36 req/s; this asks for
+#: about a third of that, because a shipped scraper has no reason to take the
+#: fastest rate a host will bear -- only a rate it will bear indefinitely.
+GRAPHQL_BUDGET = Budget(
+    name="graphql", min_interval=0.08, max_interval=2.0, cooldown_seconds=120.0
+)
+#: The path that actually hit the wall. ~2,300 requests at 8/s tripped it, so
+#: the floor here is deliberately an order of magnitude slower.
+PRODUCT_PAGE_BUDGET = Budget(
+    name="product-page", min_interval=0.5, max_interval=30.0, cooldown_seconds=600.0
+)
+
+
+class Paced:
+    """Self-rate-limiter for one path class. Slows itself down on 403/429.
+
+    Not thread-safe by design: one instance belongs to one scrape loop, and
+    sharing it across threads would need a lock whose contention would itself
+    become the rate limit. A concurrent caller should hold one per worker and
+    divide the budget.
+    """
+
+    def __init__(self, budget: Budget, sleep: Callable[[float], None] | None = None,
+                 clock: Callable[[], float] | None = None):
+        # Resolved at CALL time, not at def time. A default argument of
+        # `time.sleep` is bound once when this module is imported, which makes
+        # the pacer impossible to neutralise from outside -- and the test suite
+        # then pays the production pacing in real seconds. conftest.py patches
+        # `retry.time.sleep`, and that only works because of this late binding.
+        self.budget = budget
+        self.interval = budget.min_interval
+        self._sleep = sleep if sleep is not None else (lambda s: time.sleep(s))
+        self._clock = clock if clock is not None else (lambda: time.monotonic())
+        self._next_slot = 0.0
+        self._clean_run = 0
+        self._throttle_streak = 0
+        #: Counters worth surfacing in a scrape's stats -- a run that was
+        #: quietly halved in speed should be legible afterwards.
+        self.throttled = 0
+        self.cooldowns = 0
+        self.slept = 0.0
+
+    def wait(self) -> None:
+        """Block until this path's next slot is due."""
+        now = self._clock()
+        delay = self._next_slot - now
+        if delay > 0:
+            self._sleep(delay)
+            self.slept += delay
+            now = self._next_slot
+        self._next_slot = now + self.interval
+
+    def record_success(self) -> None:
+        """A clean response. Ease off, but slowly."""
+        self._throttle_streak = 0
+        self._clean_run += 1
+        if self._clean_run >= self.budget.recovery_after:
+            self._clean_run = 0
+            self.interval = max(
+                self.budget.min_interval, self.interval * self.budget.recovery
+            )
+
+    def record_throttled(self) -> bool:
+        """A throttle signal. Slow down hard; report whether to cool off.
+
+        Returns ``True`` when the streak limit is reached, meaning the caller
+        should stop hitting this path and let :meth:`cool_off` run its timer.
+        """
+        self.throttled += 1
+        self._clean_run = 0
+        self._throttle_streak += 1
+        self.interval = min(self.budget.max_interval, self.interval * self.budget.backoff)
+        log.warning(
+            "%s: throttled (%d in a row); interval now %.2fs",
+            self.budget.name, self._throttle_streak, self.interval,
+        )
+        return self._throttle_streak >= self.budget.streak_limit
+
+    def cool_off(self) -> None:
+        """Sit out the timer, then resume at the slowest rate rather than the
+        fastest -- coming back at full speed is how a cool-off turns into a loop.
+        """
+        self.cooldowns += 1
+        self._throttle_streak = 0
+        self.interval = self.budget.max_interval
+        log.warning(
+            "%s: cooling off for %.0fs after repeated throttling",
+            self.budget.name, self.budget.cooldown_seconds,
+        )
+        self._sleep(self.budget.cooldown_seconds)
+        self.slept += self.budget.cooldown_seconds
+        self._next_slot = self._clock() + self.interval
+
+    def stats(self) -> dict[str, float | int]:
+        """Pacing facts for a scrape's stats blob. See the no-silent-caps rule:
+        a run that was throttled into crawling must say so."""
+        return {
+            f"{self.budget.name}_throttled": self.throttled,
+            f"{self.budget.name}_cooldowns": self.cooldowns,
+            f"{self.budget.name}_interval": round(self.interval, 3),
+            f"{self.budget.name}_slept_seconds": round(self.slept, 1),
+        }
