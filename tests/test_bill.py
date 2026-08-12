@@ -381,3 +381,76 @@ def test_result_does_not_depend_on_which_store_the_deal_came_from(conn, store):
     protein_grams = size_grams * 0.25
     expected_cost = 80.0 * (5.00 / protein_grams)
     assert result.total_cost == pytest.approx(expected_cost, rel=1e-9)
+
+
+# --------------------------------------------------------------------------- #
+# GFP-271: a preference-less client must not be handed a day of stock.
+#
+# THE REPRO, from the live database on 2026-08-12. Asked for 180 g/day at the
+# lowest cost, the optimiser returned ONE line:
+#
+#     lidl   $1.41   180.0 g   beef cooking stock 3G Protein, 32 oz
+#
+# Stock. The whole recommended day. `protein_kind` has disqualified broth and
+# gravy all along -- which is exactly why the cheapest-meat strip never showed
+# them -- but `bill._eligible` returned `ranked` untouched whenever the client
+# had expressed no preferences, so it never asked.
+# --------------------------------------------------------------------------- #
+def test_stock_is_never_recommended_even_with_no_preferences(conn):
+    beef_id = _insert_food(conn, "Test Beef", "beef", 20.0)
+    # Stock is made the CHEAPEST option on purpose. A test where the real food
+    # is also the cheapest would pass without the fix and prove nothing.
+    _insert_priced_deal(conn, "lidl", "beef cooking stock 3G Protein, 32 oz", 0.50, beef_id)
+    _insert_priced_deal(conn, "lidl", "Beef Roast 8 oz", 6.00, beef_id)
+    conn.commit()
+
+    customer = _make_customer(conn, weight_kg=50.0, save=True)
+    assert preferences.list_preferences(customer.id, conn=conn) == []
+
+    result = bill.daily_bill(customer.id, conn=conn)
+
+    assert result is not None
+    names = [line.item_name for line in result.lines]
+    assert "beef cooking stock 3G Protein, 32 oz" not in names
+    assert names == ["Beef Roast 8 oz"]
+
+
+@pytest.mark.parametrize("item_name", [
+    "Swanson Beef Cooking Stock, 32 oz",
+    "Chicken Broth, Low Sodium, 48 oz",
+    "Knorr Beef Bouillon Cubes",
+    "Turkey Gravy, 12 oz",
+])
+def test_the_whole_not_a_protein_buy_family_is_excluded(conn, item_name):
+    beef_id = _insert_food(conn, "Test Beef", "beef", 20.0)
+    _insert_priced_deal(conn, "lidl", item_name, 0.50, beef_id)
+    _insert_priced_deal(conn, "lidl", "Beef Roast 8 oz", 6.00, beef_id)
+    conn.commit()
+
+    customer = _make_customer(conn, weight_kg=50.0, save=True)
+    result = bill.daily_bill(customer.id, conn=conn)
+
+    assert result is not None
+    assert item_name not in [line.item_name for line in result.lines]
+
+
+def test_a_low_confidence_guess_does_not_outrank_a_measured_density(conn):
+    """The floor itself, independent of the stock disqualifier.
+
+    Asserts the RELATIONSHIP -- a sub-floor row is not recommended -- rather
+    than the constant, so tuning MIN_MATCH_CONFIDENCE cannot silently void it.
+    """
+    beef_id = _insert_food(conn, "Test Beef", "beef", 20.0)
+    _insert_priced_deal(conn, "lidl", "Mystery Protein Bar", 0.50, beef_id)
+    conn.execute(
+        "UPDATE deal_food_match SET confidence = ? WHERE item_name = ?",
+        (bill.MIN_MATCH_CONFIDENCE - 0.5, "Mystery Protein Bar"),
+    )
+    _insert_priced_deal(conn, "lidl", "Beef Roast 8 oz", 6.00, beef_id)
+    conn.commit()
+
+    customer = _make_customer(conn, weight_kg=50.0, save=True)
+    result = bill.daily_bill(customer.id, conn=conn)
+
+    assert result is not None
+    assert "Mystery Protein Bar" not in [line.item_name for line in result.lines]
