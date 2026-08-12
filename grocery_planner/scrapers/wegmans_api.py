@@ -52,13 +52,16 @@ operation, not a release.
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from importlib import resources
 from typing import Any, Iterable
 
 import httpx
 
+from .. import db, matching
 from . import base
 
 STORE_KEY = "wegmans"
@@ -80,6 +83,21 @@ DEFAULT_MAX_PRODUCTS = 600
 
 #: Package data: SKUs discovered from the protein departments.
 SKU_RESOURCE = "wegmans_skus.json"
+
+
+@dataclass(frozen=True)
+class FoodFact:
+    """The retailer's own protein figure for one exact product.
+
+    Stored as a DENSITY -- grams per 100g -- rather than per serving, because a
+    per-serving figure is meaningless without the serving, and the whole point
+    of this source is that it states both.
+    """
+
+    sku: str
+    item_name: str
+    category: str
+    protein_per_100g: float
 
 
 @dataclass(frozen=True)
@@ -197,6 +215,54 @@ def protein_per_100g(product: dict[str, Any]) -> float | None:
     return None
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def upsert_food_fact(conn: sqlite3.Connection, fact: FoodFact) -> None:
+    """Record the retailer's own protein figure so the engine can just use it.
+
+    THE SAME MECHANISM KROGER AND WHOLE FOODS ALREADY USE, deliberately rather
+    than a second one. Writing a ``foods`` row, its protein density, and a
+    ``deal_food_match`` at confidence 1.0 means ``cost_per_gram_protein``
+    reaches this figure through the chain it already walks -- no new code path,
+    no new column, and one model of where protein comes from.
+
+    ``match_source=MANUAL`` is the load-bearing part: the figure came off the
+    retailer's own label for this exact product, so the keyword auto-matcher
+    must never overwrite it with a guess about a similarly-named food.
+    ``method`` keeps the real provenance auditable.
+    """
+    now = _now_iso()
+    conn.execute(
+        "INSERT INTO foods(name, category, source, source_ref, slug, updated_at) "
+        "VALUES (?, ?, 'wegmans', ?, ?, ?) "
+        "ON CONFLICT(source, source_ref) DO UPDATE SET "
+        "name=excluded.name, category=excluded.category, slug=excluded.slug, "
+        "updated_at=excluded.updated_at",
+        (fact.item_name, fact.category, fact.sku, "wegmans-" + fact.sku, now),
+    )
+    food_id = conn.execute(
+        "SELECT id FROM foods WHERE source='wegmans' AND source_ref=?", (fact.sku,)
+    ).fetchone()["id"]
+    conn.execute(
+        "INSERT INTO food_nutrients(food_id, nutrient, amount_per_100g, unit) "
+        "VALUES (?, 'protein', ?, 'g') "
+        "ON CONFLICT(food_id, nutrient) DO UPDATE SET "
+        "amount_per_100g=excluded.amount_per_100g, unit=excluded.unit",
+        (food_id, fact.protein_per_100g),
+    )
+    conn.execute(
+        "INSERT INTO deal_food_match"
+        "(store, item_name, food_id, confidence, method, match_source, updated_at) "
+        "VALUES (?, ?, ?, 1.0, 'wegmans_api_direct', ?, ?) "
+        "ON CONFLICT(store, item_name) DO UPDATE SET "
+        "food_id=excluded.food_id, confidence=1.0, method='wegmans_api_direct', "
+        "match_source=excluded.match_source, updated_at=excluded.updated_at",
+        (STORE_KEY, fact.item_name, food_id, matching.MANUAL, now),
+    )
+
+
 def _display_name(product: dict[str, Any]) -> str:
     """A name a nutritionist can read, with the size in it.
 
@@ -217,20 +283,27 @@ def _display_name(product: dict[str, Any]) -> str:
     return f"{name}, {pack}" if pack and pack.lower() not in name.lower() else name
 
 
-def to_row(product: dict[str, Any], store: Store) -> dict[str, Any] | None:
-    """One API product into a ``deals`` row, or ``None`` if it carries no price."""
+def to_row(
+    product: dict[str, Any], store: Store,
+) -> tuple[dict[str, Any] | None, FoodFact | None]:
+    """One API product into a ``deals`` row and the protein fact it states.
+
+    ``(None, None)`` when there is no usable price. ``(row, None)`` when there
+    is a price but no usable nutrition panel -- absent stays absent, and a row
+    without protein is still a real shelf price worth having.
+    """
     from .. import importers
 
     price_block = product.get("price_inStore") or product.get("price_delivery") or {}
     try:
         price = float(price_block.get("amount"))
     except (TypeError, ValueError):
-        return None
+        return None, None
     if price <= 0:
-        return None
+        return None, None
     name = _display_name(product)
     if not name:
-        return None
+        return None, None
 
     unit_price = str(price_block.get("unitPrice") or "")
     uom = unit_price.rsplit("/", 1)[-1].strip(". ") if "/" in unit_price else None
@@ -255,7 +328,15 @@ def to_row(product: dict[str, Any], store: Store) -> dict[str, Any] | None:
                + (f"Protein {protein:.1f}g/100g." if protein is not None else
                   "No usable nutrition panel.")),
     )
-    return row
+    fact = None
+    if protein is not None and product.get("skuId"):
+        crumbs = product.get("breadcrumbs") or []
+        category = next(
+            (str(b.get("text")) for b in reversed(crumbs[:-1])
+             if isinstance(b, dict) and b.get("text")), "Meat")
+        fact = FoodFact(sku=str(product["skuId"]), item_name=name,
+                        category=category, protein_per_100g=protein)
+    return row, fact
 
 
 def scrape(
@@ -264,8 +345,14 @@ def scrape(
     max_products: int = DEFAULT_MAX_PRODUCTS,
     delay: float = REQUEST_DELAY,
     skus: Iterable[str] | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
-    """Fetch the protein catalogue priced at the store serving ``postal_code``."""
+    """Fetch the protein catalogue priced at the store serving ``postal_code``.
+
+    Also records each product's stated protein density (see
+    :func:`upsert_food_fact`), which is what lets the optimiser price these
+    rows without matching a name to a USDA food.
+    """
     zip_code = postal_code or DEFAULT_POSTAL_CODE
     own = _client()
     try:
@@ -276,6 +363,7 @@ def scrape(
                 "Wegmans operates in NY, PA, VA, NJ, MD, MA, NC, DE, DC and CT.")
         wanted = list(skus if skus is not None else load_skus())[:max_products or None]
         rows: list[dict[str, Any]] = []
+        facts: dict[str, FoodFact] = {}
         failed = no_price = 0
         for i, sku in enumerate(wanted):
             if delay and i:
@@ -289,17 +377,33 @@ def scrape(
             except (httpx.HTTPError, ValueError):
                 failed += 1
                 continue
-            row = to_row(product, store)
+            row, fact = to_row(product, store)
             if row is None:
                 no_price += 1
                 continue
             rows.append(row)
+            if fact is not None:
+                facts[fact.sku] = fact
     finally:
         own.close()
+
+    # Written after the fetch loop, so a mid-run failure leaves no partial
+    # facts; and through the caller's connection when there is one, so the
+    # facts land in the same transaction as the deals they describe.
+    target = conn or db.connect()
+    try:
+        for fact in facts.values():
+            upsert_food_fact(target, fact)
+        if conn is None:
+            target.commit()
+    finally:
+        if conn is None:
+            target.close()
 
     meta = {"id": store.number, "store": store.name,
             "city": store.city, "state": store.state}
     stats = {"total": len(rows), "considered": len(wanted),
              "failed": failed, "no_price": no_price,
+             "protein_facts": len(facts),
              "store_number": store.number}
     return rows, meta, stats
