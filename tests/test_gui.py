@@ -218,12 +218,17 @@ def scrape_dialog(window):
     return window.open_scrape()
 
 
-def test_scrape_dialog_offers_only_stores_with_a_scraper(scrape_dialog):
+def test_scrape_dialog_offers_only_stores_that_are_ready_and_local(scrape_dialog):
+    """GFP-257: readiness alone used to be the filter, and it offered a
+    Greensboro user ACME Markets -- a Northeast chain. Location is the second
+    half of the question and both halves have to be asked."""
     from grocery_planner import service
 
     offered = [scrape_dialog.store_box.itemData(i)
                for i in range(scrape_dialog.store_box.count())]
-    assert offered == list(service.available_scrapers())
+    assert offered == list(service.scrapers_for_postal_code().keys)
+    # Still a subset of the ready ones -- location narrows, it never adds.
+    assert set(offered) <= set(service.available_scrapers())
     assert None not in offered              # no "All stores" row to mis-click
     assert scrape_dialog.scrape_btn.isEnabled()
 

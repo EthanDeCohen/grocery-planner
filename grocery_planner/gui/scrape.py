@@ -147,8 +147,14 @@ class ScrapeDialog(QDialog):
         row = QHBoxLayout()
         row.addWidget(QLabel("Store:"))
         self.store_box = QComboBox()
-        # Only stores with a registered scraper: the rest arrive by CSV import.
-        for key in service.available_scrapers():
+        # Stores that have a registered scraper AND a branch serving this ZIP
+        # (GFP-257). Readiness alone used to be the only filter, which is how
+        # a Greensboro user was offered ACME Markets -- a Northeast chain with
+        # no store within several hundred miles. `run_scrape` already refused
+        # those, so the only thing the old list bought was a wasted click and a
+        # confusing result. The rest arrive by CSV import.
+        self.plan = service.scrapers_for_postal_code()
+        for key in self.plan.keys:
             self.store_box.addItem(_display(key), key)
         row.addWidget(self.store_box, 1)
 
@@ -186,6 +192,15 @@ class ScrapeDialog(QDialog):
         self.message = QLabel("")
         self.message.setWordWrap(True)
         layout.addWidget(self.message)
+
+        # What the ZIP filter removed, said out loud. A dialog that silently
+        # drops seven of nineteen stores is indistinguishable from one that
+        # never supported them, and the user cannot tell a deliberate filter
+        # from a missing feature -- the no-silent-caps rule again.
+        self.scope = QLabel(self.plan.summary)
+        self.scope.setWordWrap(True)
+        self.scope.setVisible(bool(self.plan.summary))
+        layout.addWidget(self.scope)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.rejected.connect(self.reject)
@@ -230,8 +245,20 @@ class ScrapeDialog(QDialog):
         self.scrape_all_btn.setEnabled(bool(idle))
 
     def _scrapable(self) -> list[str]:
-        """Stores ready to scrape, asked fresh — readiness can change (GFP-4)."""
-        return list(service.available_scrapers())
+        """Stores ready to scrape AND serving this ZIP, asked fresh.
+
+        Fresh because both halves move: readiness can change mid-session
+        (GFP-4, a session gets minted) and so can the ZIP (the user edits it in
+        settings). "Scrape all" has to go through the same filter as the combo
+        box or the button quietly means something different from the list above
+        it -- which is how it would still have run ACME for a Greensboro user
+        even after the dropdown stopped offering it (GFP-257).
+        """
+        self.plan = service.scrapers_for_postal_code()
+        if hasattr(self, "scope"):
+            self.scope.setText(self.plan.summary)
+            self.scope.setVisible(bool(self.plan.summary))
+        return list(self.plan.keys)
 
     # ----------------------------------------------------------------- #
     def _row_for(self, store_key: str) -> ScrapeRow:

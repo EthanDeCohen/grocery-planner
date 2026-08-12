@@ -216,7 +216,10 @@ def test_scrape_all_starts_every_ready_store(dialog, monkeypatch):
     dialog.on_scrape_all()
 
     from grocery_planner import service
-    assert set(dialog._rows) == set(service.available_scrapers())
+    # GFP-257: "every ready store" became "every ready store that serves this
+    # ZIP". Scrape all must agree with the dropdown above it, or the button
+    # quietly means something different from the list.
+    assert set(dialog._rows) == set(service.scrapers_for_postal_code().keys)
 
 
 def test_scrape_all_skips_stores_already_running_rather_than_failing(dialog):
@@ -229,8 +232,13 @@ def test_scrape_all_skips_stores_already_running_rather_than_failing(dialog):
 
 
 def test_scrape_all_is_not_hardcoded_to_a_store_count(dialog):
-    """GFP-32's spirit: available_scrapers() stays the source of truth."""
+    """GFP-32's spirit: the resolver stays the source of truth, not a count.
+
+    GFP-257 moved that source from `available_scrapers()` (ready) to
+    `scrapers_for_postal_code()` (ready AND serving this ZIP). The rule is
+    unchanged -- nothing here may assume how many stores there are.
+    """
     from grocery_planner import service
 
     offered = [dialog.store_box.itemData(i) for i in range(dialog.store_box.count())]
-    assert offered == list(service.available_scrapers())
+    assert offered == list(service.scrapers_for_postal_code().keys)
