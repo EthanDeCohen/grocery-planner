@@ -130,6 +130,22 @@ MEAT_KINDS: frozenset[str] = frozenset(KINDS)
 #: Shrimp" is shrimp. A disqualifier that fires on how a cut was prepared throws
 #: away the very rows this feature exists to rank, so the bar is "the product IS
 #: this thing", never "the word appears".
+#: Forms whose protein figure must NEVER drive a purchase (GFP-271). A stock
+#: cube carries a protein number and costs almost nothing, so on a
+#: cheapest-per-gram ranking it beats every real food — but nobody eats 180 g of
+#: protein as bouillon. These are not merely "not meat": they are not a protein
+#: BUY at all, whatever a client's preferences are.
+#:
+#: Kept as its own tuple, and spliced into :data:`DISQUALIFIERS` below, so the
+#: two can never drift apart. The distinction matters because the two lists are
+#: NOT interchangeable: ``DISQUALIFIERS`` also rejects plant-based analogues,
+#: which are perfectly good protein for a vegan client and must stay buyable.
+#: Filtering a bill by ``DISQUALIFIERS`` would quietly delete their entire diet.
+NOT_A_PROTEIN_BUY: tuple[str, ...] = (
+    r"\b(broth|stock|bouillon|consomm\w*)\b",  # "Chicken Broth" is not a protein buy
+    r"\b(seasonings?|marinades?|gravy)\b",
+)
+
 DISQUALIFIERS: tuple[str, ...] = (
     r"beefsteak tomato",                       # produce wearing a beef name
     # Plant-based analogues carry meat words deliberately. They are protein, but
@@ -137,12 +153,26 @@ DISQUALIFIERS: tuple[str, ...] = (
     # a straightforwardly wrong answer to "what meat is cheapest".
     r"\b(plant[\s-]?based|meatless|vegan|veggie|impossible)\b",
     r"\bbeyond\s+(meat|burgers?|beef|sausages?|chicken|steak)\b",
-    r"\b(broth|stock|bouillon|consomm\w*)\b",  # "Chicken Broth" is not a protein buy
-    r"\b(seasonings?|marinades?|gravy)\b",
+    *NOT_A_PROTEIN_BUY,
     r"\b(ramen|noodles?|soups?)\b",            # "Beef Flavored Ramen"
     r"\b(chips?|crisps?|crackers?)\b",
     r"\btallow\b",                             # "Beef Tallow Fries" is fries
     r"\b(dog|cat|pet)\s+(food|treats?|chews?)\b",
+    # GFP-274: A LEGUME IS NEVER A CUT OF MEAT, however its name is flavoured.
+    #
+    # The rules above defend against meat words used as a BRAND ("Chicken of the
+    # Sea") or a FORM ("Beef Flavored Ramen"). This is the third shape: a meat
+    # word used as a flavour MODIFIER on a non-meat head noun. Measured live:
+    # "Hanover Brown Sugar & Bacon Baked Beans, 16 oz" matched `bacon` and was
+    # served as GIANT's cheapest PORK. "Pork and Beans" is the same trap.
+    #
+    # Numeric guards can never catch this. Beans carry real protein at a real
+    # price, so the density is entirely plausible -- the row is wrong in KIND,
+    # not in magnitude, and `plausible_density()` has no opinion about kind.
+    #
+    # Safe as an absolute veto because no cut of meat is named for a legume, so
+    # this cannot throw away a real meat row the way `rub` and `popcorn` did.
+    r"\b(beans?|lentils?|chickpeas?|garbanzos?|hummus|falafel)\b",
 )
 
 #: Bakery forms, which are only decisive when nothing STRONGER contradicts them.
@@ -180,6 +210,7 @@ CATEGORY_KINDS: dict[str, str] = {
 _MEAT_CATEGORIES: frozenset[str] = frozenset({"meat", "seafood"})
 
 _DISQUALIFIER_RE = re.compile("|".join(DISQUALIFIERS), re.IGNORECASE)
+_NOT_A_PROTEIN_BUY_RE = re.compile("|".join(NOT_A_PROTEIN_BUY), re.IGNORECASE)
 _WEAK_FORM_RE = re.compile("|".join(WEAK_FORM_DISQUALIFIERS), re.IGNORECASE)
 _KIND_RES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
     (kind, re.compile("|".join(patterns), re.IGNORECASE)) for kind, patterns in KIND_RULES
@@ -197,6 +228,23 @@ def is_disqualified(name: str | None) -> bool:
     no stronger signal, which :func:`kind_from_name` handles.
     """
     return bool(name) and _DISQUALIFIER_RE.search(name) is not None
+
+
+def is_not_a_protein_buy(name: str | None) -> bool:
+    """True when this row's protein figure must never drive a purchase (GFP-271).
+
+    Narrower than :func:`is_disqualified` on purpose, and the narrowness is the
+    whole point. ``is_disqualified`` answers "is this a cut of meat?", so it also
+    rejects plant-based analogues -- correct for a meat ranking, catastrophic as
+    a bill filter, because a vegan client's entire diet is analogues.
+
+    This answers a different question: "could anyone sanely buy this AS protein?"
+    Stock, bouillon, gravy and seasoning all carry a protein number and cost
+    almost nothing, which is exactly the combination that wins a cheapest-per-
+    gram ranking. The optimiser returned one line of beef cooking stock as a
+    client's entire 180 g day; this is the predicate that stops it.
+    """
+    return bool(name) and _NOT_A_PROTEIN_BUY_RE.search(name) is not None
 
 
 def kind_from_name(name: str | None) -> str | None:

@@ -136,6 +136,31 @@ def cheapest_protein_by_store(
     best: dict[str, CheapestProtein] = {}
 
     for row in rows:
+        # GFP-274: THE DEAL'S OWN NAME OVERRIDES ITS MATCHED FOOD'S KIND.
+        #
+        # `f.protein_kind` above is the kind of the food this deal MATCHED to,
+        # not of the deal itself, and matching is fuzzy by design. Measured live
+        # on 2026-08-12:
+        #
+        #   "Hanover Brown Sugar & Bacon Baked Beans, 16 oz"
+        #       -> food 'Bacon, raw' (pork), confidence 0.9, method cut_keyword
+        #   "beef cooking stock 3G Protein, 32 oz"
+        #       -> food 'Beef sirloin steak, raw' (beef), confidence 0.3
+        #
+        # Both matched foods really are pork and beef, so the SQL filter above
+        # is working correctly on the data it has. The tin of beans still
+        # arrived as GIANT's cheapest pork.
+        #
+        # Note the beans matched at confidence 0.9, so no confidence floor --
+        # not GFP-271's and not any plausible one -- would ever have caught it.
+        # The only evidence that the row is not meat is its own name, which
+        # `protein_kind` already reads correctly; nothing was asking it.
+        #
+        # Skipped before `cost_per_gram_protein` rather than after, because that
+        # call is the expensive half of this function.
+        if meat_only and pk.is_disqualified(row["item_name"]):
+            continue
+
         key = (row["store"], row["item_name"])
         if key not in resolved:
             resolved[key] = savings.cost_per_gram_protein(
