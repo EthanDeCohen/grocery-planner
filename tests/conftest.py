@@ -1,6 +1,7 @@
 """Shared pytest fixtures: isolated DBs and generated sample CSV data."""
 from __future__ import annotations
 
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -85,3 +86,61 @@ def sample_data(tmp_path) -> Path:
         (folder / "prices.csv").write_text(
             PRICES_HEADER + "\n" + "\n".join(files["prices"]) + "\n", encoding="utf-8")
     return root
+
+
+# --------------------------------------------------------------------------- #
+# GFP-263/GFP-267: the suite pays no production pacing, and reaches no network.
+#
+# Both autouse, because the failure they prevent is one nobody notices:
+#
+# 1. `retry.Paced` sleeps for real. The scrapers pace themselves deliberately
+#    (0.5 s between product pages) and tests that drive a scrape inherited it,
+#    so the suite spent whole seconds per test doing nothing -- three tests
+#    alone cost 9 s, and the full run went from ~256 s to over 600 s. Pacing is
+#    production behaviour; in a test it is dead time.
+#
+# 2. Nothing in the suite may touch a live host. Every scraper test today
+#    injects a fake transport, but "today" is the operative word: one live call
+#    added later would hammer a real retailer on every CI run and every local
+#    `pytest`, and the symptom would be the 403 wall the pacer exists to avoid
+#    -- appearing in someone's test run, far from the code that caused it.
+#    A test that needs the network must say so with @pytest.mark.live.
+# --------------------------------------------------------------------------- #
+@pytest.fixture(autouse=True)
+def _pacing_is_instant_in_tests(monkeypatch):
+    """Keep the pacer's arithmetic, drop its wall-clock cost.
+
+    Patches the module rather than every construction site, which works only
+    because `Paced` resolves `time.sleep` at call time. Tests that pass their
+    own fake clock (test_pacing.py) are unaffected -- they never reach this.
+    """
+    from grocery_planner.scrapers import retry as _retry
+
+    monkeypatch.setattr(_retry.time, "sleep", lambda _seconds: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_network_in_tests(request, monkeypatch):
+    """Fail loudly on any real HTTP call, rather than quietly making one."""
+    if request.node.get_closest_marker("live"):
+        return
+
+    import httpx
+
+    def _blocked(*_args, **_kwargs):
+        raise RuntimeError(
+            "This test attempted a real HTTP request. Tests must inject a "
+            "transport or fixture instead; mark it @pytest.mark.live if a live "
+            "call is genuinely the point. See conftest.py."
+        )
+
+    # Blocked at the TRANSPORT, not at the client. Tests legitimately build a
+    # real httpx.Client around httpx.MockTransport -- that is the recommended
+    # way to test an httpx caller offline, and patching Client.request/send
+    # would break every one of them while proving nothing. Only the transport
+    # that opens an actual socket is stubbed out.
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", _blocked, raising=False)
+    monkeypatch.setattr(
+        httpx.AsyncHTTPTransport, "handle_async_request", _blocked, raising=False
+    )
+    monkeypatch.setattr(urllib.request, "urlopen", _blocked, raising=False)

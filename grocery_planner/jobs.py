@@ -129,6 +129,7 @@ def run_tracked_scrape(
     postal_code: str | None = None,
     conn: sqlite3.Connection | None = None,
     force: bool = False,
+    limit: int | None = None,
 ) -> dict[str, Any]:
     """Run a scrape with a ``scraping_jobs`` row around it.
 
@@ -152,12 +153,13 @@ def run_tracked_scrape(
     # coming OS timer (GFP-102) both arrive here with nobody watching. The
     # scraping_jobs row records THAT a run failed; the log records enough to
     # work out why afterwards.
-    log.info("scrape started: store=%s postal_code=%s force=%s job=%s",
-             store_key, postal_code or "(configured)", force, job_id)
+    log.info("scrape started: store=%s postal_code=%s force=%s limit=%s job=%s",
+             store_key, postal_code or "(configured)", force,
+             limit if limit is not None else "(none)", job_id)
     try:
         checkpoint(own, job_id, "fetching flyer")
         result = service.run_scrape(
-            store_key, postal_code=postal_code, conn=own, force=force
+            store_key, postal_code=postal_code, conn=own, force=force, limit=limit
         )
     except Exception as exc:
         # exception() rather than error(): a traceback is the whole point of a

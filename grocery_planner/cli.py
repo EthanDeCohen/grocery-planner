@@ -145,6 +145,15 @@ def scrape(
             "flipp.com) and not upstream (Flipp) breakage."
         ),
     ),
+    limit: int = typer.Option(
+        None, "--limit", "-n", min=1,
+        help=(
+            "Fetch at most N products. Only for catalogue scrapers that crawl "
+            "product pages (aldi-storefront, lidl-catalogue, sprouts-storefront, "
+            "traderjoes); a bounded run is how you sample a source that is "
+            "rate-policed. The bound is reported in the run's stats."
+        ),
+    ),
 ) -> None:
     """Scrape fresh deals for a store and store them in the DB."""
     scraper = SCRAPERS.get(store)
@@ -168,8 +177,22 @@ def scrape(
         )
         raise typer.Exit(2)
 
+    # Checked HERE, not inside run_scrape, for the same reason the readiness
+    # check above is: a --limit the scraper cannot honour is a typo, and a typo
+    # must not open a scraping_jobs row and then mark it failed. jobs.last_success
+    # reads those rows, and a fake failure is worse than no row at all.
+    if limit is not None and not service.supports_limit(scraper):
+        typer.secho(
+            f"{scraper.MERCHANT} does not take a --limit; it fetches whatever "
+            f"its source publishes. Scrapers that do: "
+            f"{', '.join(service.scrapers_supporting_limit())}.",
+            fg=typer.colors.YELLOW, err=True,
+        )
+        raise typer.Exit(2)
+
     zip_code = postal_code or scraper.DEFAULT_POSTAL_CODE
-    typer.echo(f"Scraping {scraper.MERCHANT} weekly ad for {zip_code} ...")
+    bound = f" (at most {limit} products)" if limit is not None else ""
+    typer.echo(f"Scraping {scraper.MERCHANT} weekly ad for {zip_code}{bound} ...")
     try:
         # GFP-86/GFP-105: the TRACKED path, not service.run_scrape directly.
         # Two things followed from the CLI bypassing it: nothing was logged, and
@@ -183,12 +206,15 @@ def scrape(
             # so recording it would make jobs.last_success claim a refresh that
             # never landed -- and GFP-105 would then skip a real one.
             result = service.run_scrape(
-                store, postal_code=postal_code, force=force, dry_run=True
+                store, postal_code=postal_code, force=force, dry_run=True, limit=limit
             )
         else:
             result = jobs.run_tracked_scrape(
-                store, postal_code=postal_code, force=force
+                store, postal_code=postal_code, force=force, limit=limit
             )
+    except service.UnsupportedLimitError as exc:
+        typer.secho(str(exc), fg=typer.colors.YELLOW, err=True)
+        raise typer.Exit(2)
     except service.ScrapeGuardError as exc:
         # GFP-71: without --force, a guard tripping here used to be a dead
         # end -- nothing user-facing could pass force=True to run_scrape(),

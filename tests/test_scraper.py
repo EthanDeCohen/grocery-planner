@@ -198,11 +198,29 @@ def test_store_registry():
     # GFP-98: 'harristeeter-api' is the Kroger shelf-price API for the SAME
     # physical store as 'harristeeter' (the Flipp weekly ad). Two entries, one
     # shop, on purpose -- see scrapers/__init__.py.
+    # GFP-265: 'sprouts-storefront' is the same pattern again. 'sprouts' is the
+    # Flipp weekly-ad banner; the Instacart storefront client is a second feed
+    # for the same shop and had been SILENTLY SHADOWED by it, because
+    # `SCRAPERS.update(flipp_banners.MODULES)` is a last-write-wins update and
+    # the hand-written module was using the banner's key. Both are registered
+    # now, and so is 'aldi-storefront' -- the second tenant of the same
+    # Instacart platform client, colliding with the Flipp 'aldi' banner in
+    # exactly the same way. 'traderjoes' is the one new store with NO
+    # collision, which is why it carries no SCRAPER_KEY of its own.
+    # GFP-270: 'walmart' is a NEW shop -- the first source that reaches a
+    # chain GFP-197 filed as unreachable, through the Parse.bot vendor
+    # client. 'publix-catalog' is NOT a new shop: it is a second feed for
+    # the 'publix' Flipp banner, the same two-feeds-one-store shape as
+    # harristeeter/harristeeter-api, and it carries its own SCRAPER_KEY for
+    # the same reason sprouts-storefront does -- the banner registers last
+    # and would otherwise shadow it.
     assert set(SCRAPERS) == {
-        "acme", "aldi", "foodlion", "foodlion-catalog", "giant", "giant-ad",
-        "harristeeter", "harristeeter-api", "hmart", "lidl", "lowesfoods",
-        "publix", "sprouts", "target", "wegmans", "wegmans-api", "weis",
-        "wholefoods",
+        "acme", "aldi", "aldi-storefront", "foodlion", "foodlion-catalog",
+        "giant", "giant-ad", "harristeeter", "harristeeter-api", "hmart",
+        "lidl", "lidl-catalogue", "lowesfoods", "publix", "sprouts",
+        "sprouts-storefront",
+        "target", "traderjoes", "wegmans", "wegmans-api", "weis", "wholefoods",
+        "publix-catalog", "walmart",
     }
     # Every registered module exposes the thin store-scraper surface the CLI uses.
     for key, mod in SCRAPERS.items():

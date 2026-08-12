@@ -92,6 +92,53 @@ COUNT = "each"
 # this is the last multiplication in the chain and should not compound the
 # table's own rounding.
 GRAMS_PER_OZ = 28.349523125
+OUNCES_PER_LB = 16.0
+# DERIVED, never written out. The literal 453.59237 previously appeared in
+# three unrelated places (service/shopping.py, scrapers/kroger.py's unit table,
+# and by hand in per-pound arithmetic), which is three chances for one of them
+# to be edited and the others not. Deriving it means the pound and the ounce
+# can never disagree about what a gram is.
+GRAMS_PER_LB = GRAMS_PER_OZ * OUNCES_PER_LB  # 453.59237
+
+
+def pounds_to_grams(pounds: float | None) -> float | None:
+    """Grams in ``pounds``. ``None`` in, ``None`` out (this module's rule 1)."""
+    return None if pounds is None else pounds * GRAMS_PER_LB
+
+
+def grams_to_pounds(grams: float | None) -> float | None:
+    """The inverse of :func:`pounds_to_grams`, for display back in pounds."""
+    return None if grams is None else grams / GRAMS_PER_LB
+
+
+def price_per_gram_from_per_pound(price_per_pound: float | None) -> float | None:
+    """Dollars per gram, given a dollars-per-pound shelf price.
+
+    The customer-facing conversion. Fresh meat -- the highest-protein aisle in
+    every store -- is priced per pound, while everything this app compares is
+    denominated per gram, so this is the join between the two and the single
+    place the arithmetic should live.
+
+    A non-positive price returns ``None`` rather than 0.0: a free pound of
+    chicken is a data error, and letting it through would sort straight to the
+    top of every cheapest-protein list.
+    """
+    if price_per_pound is None or price_per_pound <= 0:
+        return None
+    return price_per_pound / GRAMS_PER_LB
+
+
+def price_per_100g_from_per_pound(price_per_pound: float | None) -> float | None:
+    """Dollars per 100 g, given a dollars-per-pound price.
+
+    Exists because 100 g is the unit the nutrition side is denominated in
+    (``food_nutrients.amount_per_100g``) and the unit shelf labels outside the
+    US use, so it is the more legible of the two for display. Derived from
+    :func:`price_per_gram_from_per_pound` rather than re-divided, so the two
+    can never round apart.
+    """
+    per_gram = price_per_gram_from_per_pound(price_per_pound)
+    return None if per_gram is None else per_gram * 100.0
 
 # unit token -> (base, multiplier into that base)
 _UNITS: dict[str, tuple[str, float]] = {
