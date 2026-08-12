@@ -62,3 +62,11 @@ secrets.*
 # Agent worktrees (isolation: "worktree") live inside the repo; they are
 # working copies, never content. Committing one embeds a git repo in a git repo.
 .claude/worktrees/
+
+# GFP-278: scratch sample dumps. A scraper run piped to a JSON file is a normal
+# way to inspect a source, and `lidl_sample_rows.json` (92 KB, referenced by no
+# code and no test) sat in the repo root for a day waiting for a `git add -A` to
+# commit it. Ignored rather than forbidden -- writing them is fine, keeping them
+# in history is not.
+*_sample_rows.json
+*_sample.json
