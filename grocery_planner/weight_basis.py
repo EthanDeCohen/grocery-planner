@@ -57,6 +57,22 @@ DELI = "deli"
 PREPACKAGED = "prepackaged"
 #: By weight, but which of the two is not established.
 UNKNOWN = "unknown"
+#: The shelf figure IS a rate -- "$4.99/lb" -- not the price of anything.
+#:
+#: GFP-270. Distinct from the three above, and the distinction is not
+#: cosmetic. Those all describe a PACKAGE whose weight varies while the figure
+#: shown is still a price you could put in a basket: a $7.41 tray is $7.41.
+#: Walmart and Publix quote a **rate** instead -- Publix boneless chicken
+#: breast is "$4.99/lb" and Walmart's is "$2.23/lb" -- and a rate cannot be
+#: summed, compared against a budget, or paid. It is one multiplication short
+#: of being a price, and the missing factor (what you actually pick up) is not
+#: in the data.
+#:
+#: This is the GFP-98 trap in its purest form: multiplying a per-pound figure
+#: by servings-per-package understated whole pork loin ~7x. A row that says
+#: "$4.99" where every neighbour means "for this package" is the single
+#: easiest way to make the cheapest-looking item the most wrong one.
+RATE = "rate"
 
 #: The category that identifies the deli counter. Measured at 100% precision
 #: over 49 products; it is the false NEGATIVES that need the name check below.
@@ -141,10 +157,21 @@ def _category_names(categories: object) -> set[str]:
 #: The marker shown beside a figure. A dagger rather than three asterisks for
 #: the unknown case so it does not read as "even more of the same thing" -- it
 #: is a different statement, not a stronger one.
+#: One glyph per state, and **no glyph a prefix of another** -- see
+#: :func:`_assert_unambiguous`. That invariant is why ``**`` is gone: it made
+#: an item ending "Chicken**" impossible to read unambiguously, since it is
+#: equally "prepackaged" or "deli marked twice", and in any Markdown-rendered
+#: surface it silently turns the name bold instead of marking it.
+#:
+#: The sequence is the classic typographic footnote order (* † ‡ §), so the
+#: four read as one family rather than two competing ones. ‡ stays on RATE
+#: because that is the state a shopper most needs to notice: † says "this
+#: price may move a little", ‡ says "this is not a price at all yet".
 MARKERS: dict[str, str] = {
     DELI: "*",
-    PREPACKAGED: "**",
+    PREPACKAGED: "§",
     UNKNOWN: "†",
+    RATE: "‡",
 }
 
 #: What each marker means, in a shopper's terms rather than the schema's.
@@ -158,7 +185,34 @@ FOOTNOTES: dict[str, str] = {
         "Estimate only — this may be deli or pre-packaged; checkout price may "
         "vary."
     ),
+    RATE: (
+        "Price is per pound, not per package — what you pay depends on the "
+        "weight you pick up."
+    ),
 }
+
+
+def _assert_unambiguous() -> None:
+    """No marker may be a prefix of another. Checked at import, not in a test.
+
+    A test would catch it in CI; this catches it in the editor, and the cost of
+    getting it wrong is silent rather than loud -- a legend that cannot be read
+    back to a single state does not raise anything, it just misinforms someone
+    holding a shopping list.
+    """
+    glyphs = list(MARKERS.values())
+    if len(set(glyphs)) != len(glyphs):
+        raise AssertionError(f"duplicate by-weight markers: {glyphs}")
+    for one in glyphs:
+        for other in glyphs:
+            if one != other and other.startswith(one):
+                raise AssertionError(
+                    f"marker {one!r} is a prefix of {other!r}; an item ending "
+                    f"{other!r} could be read either way"
+                )
+
+
+_assert_unambiguous()
 
 
 def basis_for(sold_by: str | None, stored: str | None) -> str | None:
@@ -201,6 +255,6 @@ def footnotes_for(bases) -> list[tuple[str, str]]:
     present = {b for b in bases if b in MARKERS}
     return [
         (MARKERS[state], FOOTNOTES[state])
-        for state in (DELI, PREPACKAGED, UNKNOWN)
+        for state in (DELI, PREPACKAGED, UNKNOWN, RATE)
         if state in present
     ]

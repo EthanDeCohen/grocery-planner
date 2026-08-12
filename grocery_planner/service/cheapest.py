@@ -52,6 +52,12 @@ class CheapestProtein:
     sold_by: str | None = None
     price_per_unit: float | None = None
     price_per_unit_uom: str | None = None
+    #: GFP-270's retail-format state, carried for the SAME reason `sold_by` is:
+    #: the display layer must be able to tell a per-pound RATE (‡ -- not a price
+    #: yet) from a random-weight package (** -- a real price that may shift).
+    #: Without it every by-weight row here falls to UNKNOWN (†), which
+    #: understates how provisional a Publix rate figure actually is.
+    weight_basis: str | None = None
     # GFP-118: this panel answers "where is protein cheapest right now", so it
     # is the first thing a nutritionist reads -- and it was the one place that
     # could not be clicked through, while the grocery list could. The deal row
@@ -112,7 +118,8 @@ def cheapest_protein_by_store(
     # and so is excluded by the meat filter above, but must not be excluded from
     # the unfiltered call.
     rows = own.execute(
-        "SELECT d.store, d.item_name, d.sold_by, d.price_per_unit, d.price_per_unit_uom, "
+        "SELECT d.store, d.item_name, d.sold_by, d.weight_basis, d.price_per_unit, "
+        "d.price_per_unit_uom, "
         "d.source_url, d.product_identifier, "
         "COALESCE(d.dollar_price, d.sale_price, d.regular_price) AS price, "
         "f.protein_kind AS kind "
@@ -150,6 +157,7 @@ def cheapest_protein_by_store(
                 price=row["price"],
                 protein_grams=cost.protein_grams,
                 sold_by=row["sold_by"],
+                weight_basis=row["weight_basis"],
                 price_per_unit=row["price_per_unit"],
                 price_per_unit_uom=row["price_per_unit_uom"],
                 source_url=row["source_url"],

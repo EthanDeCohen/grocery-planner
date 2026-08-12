@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import bill, db, nutrition, preferences
+from .. import weight_basis
 from ..stores import BY_KEY
 from .widgets import placeholder
 
@@ -437,8 +438,15 @@ f"{_money(weekly.headroom)} left of {_money(weekly.budget)}"
         box.setSpacing(1)
 
         food = f"  ·  {line.grams_food:.0f} g food" if line.grams_food else ""
+        # GFP-152/GFP-270: the by-weight marker travels with the item name
+        # wherever the item is listed. This panel is a client's actual plan, so
+        # a ‡ here is the difference between "$2.39 buys today's protein" and
+        # "$2.39 buys a pound of it".
+        mark = weight_basis.marker(
+            weight_basis.basis_for(line.sold_by, line.weight_basis)
+        )
         headline = QLabel(
-            f"{line.item_name}  —  {line.grams_protein:.0f} g protein{food}"
+            f"{line.item_name}{mark}  —  {line.grams_protein:.0f} g protein{food}"
             f"  ·  {_money(line.cost)}/day"
         )
         headline.setWordWrap(True)

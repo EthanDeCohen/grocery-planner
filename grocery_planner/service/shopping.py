@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from .. import bill as bill_module
+from .. import savings
 from ..customers import Customer
 from ..stores import BY_KEY
 
@@ -61,7 +62,10 @@ DEFAULT_DAYS = 7
 SOLD_BY_WEIGHT = "WEIGHT"
 
 #: Grams per pound, for turning a needed weight into a purchasable one.
-GRAMS_PER_POUND = 453.59237
+#: Re-exported from :mod:`grocery_planner.savings` rather than restated: that
+#: module owns the weight grammar and derives the pound from its own ounce, so
+#: a literal here would be a second source of truth that could silently drift.
+GRAMS_PER_POUND = savings.GRAMS_PER_LB
 
 
 @dataclass(frozen=True)
@@ -86,6 +90,11 @@ class GroceryItem:
     product_identifier_ns: str | None
     source_url: str | None
     sold_by: str | None
+    #: GFP-270. Carried beside `sold_by` so the printed list can distinguish a
+    #: per-pound RATE (‡) from a random-weight package (**). This is the list a
+    #: shopper carries into the shop, so "is $2.39 the price or the rate?" is
+    #: the single most consequential thing on the page.
+    weight_basis: str | None
     deal_id: int | None
 
     @property
@@ -285,6 +294,7 @@ def grocery_list_for(
             product_identifier_ns=line.product_identifier_ns,
             source_url=line.source_url,
             sold_by=line.sold_by,
+            weight_basis=line.weight_basis,
             deal_id=line.deal_id,
         ))
 
