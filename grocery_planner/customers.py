@@ -79,9 +79,58 @@ _VALID_UNITS = {KG, LB}
 #: behalf.
 DEFAULT_PROTEIN_FACTOR = 0.8
 
-#: The band the nutritionist prescribed. Hard limits, per GFP-133 -- the slider
-#: spans exactly this and the text box refuses anything outside it.
-MIN_PROTEIN_FACTOR = 0.8
+#: The federal recommendation, and where it came from (GFP-282).
+#:
+#: Cited as constants rather than written into prose so the band below can be
+#: DERIVED from them and a test can assert the relationship.
+#:
+#: The old 0.8 floor was NOT unsourced -- it is the nutritionist's own
+#: prescription, quoted above DEFAULT_PROTEIN_FACTOR. The defect GFP-282 fixes
+#: is narrower than "a number nobody could explain": her clinical band was being
+#: enforced as the ONLY admissible range, so when federal guidance moved below
+#: it, the published recommendation became unreachable in a tool a professional
+#: uses. Her figure survives as the DEFAULT; it stops being the limit.
+#:
+#: Source: 2025-2030 Dietary Guidelines for Americans, HHS + USDA, published
+#: 2026-01-07 -- the edition that replaced MyPlate's plate with the inverted
+#: pyramid and raised protein from 0.36 g/lb. Re-check on the next edition;
+#: these are revised roughly every five years.
+USDA_GUIDELINES_EDITION = "2025-2030 Dietary Guidelines for Americans (2026-01-07)"
+USDA_PROTEIN_FACTOR_MIN = 0.54
+USDA_PROTEIN_FACTOR_MAX = 0.73
+
+#: THE NUTRITIONIST'S PRESCRIBED BAND -- her clinical range, unchanged.
+#:
+#: "0.8 or 1 g of protein per pound of desired body weight. So if you want to
+#: weigh 150 you will eat 120-150 g a day." These are the ends shown to her as
+#: guidance, and 120-150 is her own worked example.
+#:
+#: GFP-282 SPLIT THIS FROM THE ADMISSIBLE RANGE BELOW, and the split is the
+#: point. GFP-133 stored one pair of constants doing two jobs: what the input
+#: will ACCEPT, and what the app DISPLAYS as the prescribed band. Widening the
+#: first to admit the federal figure silently widened the second too, so her
+#: worked example would have been rendered as "81-150 g/day" -- a range she
+#: never prescribed, attributed to her. Caught by her own acceptance test.
+PRESCRIBED_MIN_FACTOR = 0.8
+PRESCRIBED_MAX_FACTOR = 1.0
+
+#: The ADMISSIBLE range: what the slider spans and the text box will accept.
+#: Hard limits, per GFP-133.
+#:
+#: GFP-282: the floor was 0.8, which put the WHOLE federal range out of reach --
+#: 0.8 is above 0.73, so the two did not overlap at a single point and a
+#: nutritionist could not prescribe at the published recommendation. Not a
+#: warning: refused.
+#:
+#: The floor is now the federal floor itself, by derivation rather than by a
+#: copied number, so the two cannot drift apart. 0.54 exactly and not a rounded
+#: 0.5, because a constant equal to a published figure can be checked against
+#: its source where a rounded one quietly becomes folklore.
+#:
+#: The ceiling stays 1.0 -- the athletic/clinical end is unchanged, so every
+#: already-saved client factor remains inside the band and no migration is
+#: forced. Widening a band only ever admits values; it invalidates nothing.
+MIN_PROTEIN_FACTOR = USDA_PROTEIN_FACTOR_MIN
 MAX_PROTEIN_FACTOR = 1.0
 
 # --------------------------------------------------------------------------- #

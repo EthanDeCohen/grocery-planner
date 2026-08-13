@@ -93,6 +93,8 @@ from ..customers import (
     LB,
     MAX_PROTEIN_FACTOR,
     MIN_PROTEIN_FACTOR,
+    PRESCRIBED_MAX_FACTOR,
+    PRESCRIBED_MIN_FACTOR,
     Customer,
     CustomerRepository,
     from_kg,
@@ -582,9 +584,14 @@ class BiometricsPanel(QWidget):
                 "desired": "goal weight",
                 "current": "current weight (no goal weight set)",
             }.get(target.weight_basis, "")
+            # GFP-282: label these with the PRESCRIBED ends, because the grams
+            # beside them are computed from the prescribed ends. Labelling them
+            # with the admissible floor (0.54) while the figure came from 0.8
+            # would put a factor and a gram count side by side that do not
+            # correspond -- the most confusing possible way to be wrong.
             self.factor_ends.setText(
-                f"{MIN_PROTEIN_FACTOR} = {target.daily_low_grams:.0f} g/day"
-                f"   ·   {MAX_PROTEIN_FACTOR} = {target.daily_high_grams:.0f} g/day"
+                f"{PRESCRIBED_MIN_FACTOR} = {target.daily_low_grams:.0f} g/day"
+                f"   ·   {PRESCRIBED_MAX_FACTOR} = {target.daily_high_grams:.0f} g/day"
                 + (f"   ·   from {basis}" if basis else "")
             )
         else:
