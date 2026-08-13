@@ -56,6 +56,25 @@ OTHER = "other"
 #: NULL means "never looked", which is what keeps re-runs cheap.
 UNKNOWN = "unknown"
 
+#: Words that name a CUT of beef and no species at all. An unqualified
+#: "Porterhouse" is beef; nothing else is sold under that name.
+#:
+#: Public, and the single source of this vocabulary (GFP-280). ``matching``
+#: imports it to decide which cut a beef item is, and this module builds its
+#: species rule from it, so the two cannot disagree about what counts as a beef
+#: cut. They previously did: this list is the longer one, and it lived in
+#: ``matching``.
+BEEF_CUT_WORDS: tuple[str, ...] = (
+    "ground round", "sirloin", "ribeye", "rib eye", "chuck roast", "chuck",
+    "brisket", "t-bone", "porterhouse", "new york strip", "london broil",
+    "filet mignon", "top round", "bottom round", "flank steak",
+    "skirt steak", "prime rib", "steak", "steaks",
+)
+
+_BEEF_CUT_PATTERNS: tuple[str, ...] = tuple(
+    rf"\b{re.escape(word)}\b" for word in BEEF_CUT_WORDS
+)
+
 #: Every specific kind, most specific FIRST. Order is load-bearing — see the
 #: module docstring's table: fish must beat chicken ("Chicken of the Sea"), and
 #: turkey must beat pork ("Turkey Bacon").
@@ -99,10 +118,14 @@ KIND_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     #
     # `burger` is safe here only because the plant-based disqualifier above runs
     # first ("Beyond Burger") and the bakery one catches "Hamburger Buns".
-    ("beef", (
-        r"\bsteaks?\b", r"\bbrisket\b", r"\bribeye\b",
-        r"\bsirloin\b", r"\bchuck\b",
-    )),
+    #
+    # GFP-280: built from :data:`BEEF_CUT_WORDS` rather than spelled out here,
+    # because `matching` needs the same list to decide which cut a beef item is
+    # and had accumulated a longer one -- t-bone, porterhouse, london broil,
+    # filet mignon, prime rib. Two lists of beef cuts, and the shorter one
+    # deciding species, is how "T-Bone Steak" would have become unclassifiable
+    # the moment species was routed through this module.
+    ("beef", _BEEF_CUT_PATTERNS),
     # The cured-pork words last: `sausage` and `bacon` are only pork once the
     # birds above have had their chance at the name.
     ("pork", (

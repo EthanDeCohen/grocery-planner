@@ -151,12 +151,11 @@ _LEAN_PCT = re.compile(r"(\d{1,3})\s*%\s*lean", re.IGNORECASE)
 # Beef cuts that identify the species even when the word "beef" itself is
 # absent -- e.g. "85% Lean Fresh Ground Round" never says "beef", but
 # "round" is a beef cut.
-_BEEF_CUT_WORDS = (
-    "ground round", "sirloin", "ribeye", "rib eye", "chuck roast", "chuck",
-    "brisket", "t-bone", "porterhouse", "new york strip", "london broil",
-    "filet mignon", "top round", "bottom round", "flank steak",
-    "skirt steak", "prime rib",
-)
+# GFP-280: ONE list of beef cuts, owned by protein_kind, imported here.
+# This module's copy used to be the longer of two and the species decision used
+# the shorter one, so routing species through protein_kind without unifying them
+# would have made "T-Bone Steak" unclassifiable.
+_BEEF_CUT_WORDS = protein_kind.BEEF_CUT_WORDS
 
 
 def _match_beef(text: str) -> MatchResult | None:
@@ -308,7 +307,39 @@ def _match_whey(text: str) -> MatchResult | None:
     return None
 
 
-_MATCHERS = (_match_beef, _match_pork, _match_chicken, _match_fish, _match_tofu, _match_whey)
+# GFP-280: SPECIES IS DECIDED ONCE, BY protein_kind. These choose only the CUT,
+# and are called only when the species is already settled -- so there is no
+# longer a priority order between them, which is what removes the bug.
+#
+# The old fixed order (beef, pork, chicken, fish, ...) meant the first matcher
+# whose trigger word appeared won outright. Measured 2026-08-12:
+#   "Villari Prime Boneless Pork Ribeye" hit _match_beef on "ribeye" and never
+#   reached _match_pork; "Chicken of the Sea ... Salmon" hit _match_chicken.
+_CUT_MATCHER_FOR_KIND = {
+    "beef": _match_beef,
+    "pork": _match_pork,
+    "chicken": _match_chicken,
+    "fish": _match_fish,
+    # `_match_fish` owns shrimp too -- the curated catalog has a `shrimp` food
+    # (kind: shellfish), so shellfish is NOT one of the species below. Assuming
+    # it was cost one test, which is exactly the guard GFP-285 asks for.
+    "shellfish": _match_fish,
+}
+
+#: Kinds protein_kind can name that the CURATED catalog has no food for. There
+#: is no `turkey-breast` slug -- every turkey food is retailer-specific
+#: (kroger-*, wholefoods-*), which a source_ref cannot point at.
+#:
+#: Declining is the honest answer and is the entire fix: "Butterball Turkey
+#: Bacon" previously matched `bacon` at 0.9 confidence and was served as PORK.
+#: Unmatched is strictly better than confidently wrong, especially for a client
+#: whose restriction is religious or medical (GFP-135).
+_KINDS_WITHOUT_A_CURATED_FOOD = frozenset({"turkey", "lamb"})
+
+#: Matchers for things that are not an animal species at all, so
+#: `kind_from_name` returns None for them. They must still get their turn --
+#: dispatching on species alone would silently drop tofu and whey entirely.
+_NON_ANIMAL_MATCHERS = (_match_tofu, _match_whey)
 
 
 def match_item(item_name: str | None) -> MatchResult | None:
@@ -337,7 +368,18 @@ def match_item(item_name: str | None) -> MatchResult | None:
     # perfectly good thing to buy. Same vocabulary, different question.
     if protein_kind.is_disqualified(text):
         return None
-    for matcher in _MATCHERS:
+
+    # Species first, from the one module that owns that question.
+    kind = protein_kind.kind_from_name(text)
+    if kind is not None:
+        cut_matcher = _CUT_MATCHER_FOR_KIND.get(kind)
+        if cut_matcher is None:
+            return None           # named species, nothing curated to point at
+        return cut_matcher(text)  # cut only; species is already settled
+
+    # No animal species named. Tofu and whey answer a different question and
+    # still get their turn.
+    for matcher in _NON_ANIMAL_MATCHERS:
         result = matcher(text)
         if result is not None:
             return result

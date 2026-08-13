@@ -404,3 +404,49 @@ def test_real_meat_still_matches_after_the_veto():
         "Pork Loin Chops, Family Pack",
     ):
         assert matching.match_item(name) is not None, name
+
+
+# --------------------------------------------------------------------------- #
+# GFP-280 / GFP-285: every species protein_kind can name must be ACCOUNTED FOR.
+#
+# This test exists because its absence cost a real regression. Routing species
+# through protein_kind, I assumed shellfish had no curated food and listed it as
+# unmatchable -- but `shrimp` exists and `_match_fish` handles it, so every
+# shrimp deal silently stopped matching. One test caught it; nothing else would
+# have, because declining looks identical to "we never had that data".
+# --------------------------------------------------------------------------- #
+def test_every_protein_kind_is_either_matchable_or_declared_unmatchable():
+    """A new kind cannot be added without deciding what it matches to.
+
+    Asserts a RELATIONSHIP between two modules (GFP-179): add "duck" to
+    protein_kind's KIND_RULES and this fails until someone either points it at a
+    curated food or states, deliberately, that there is not one. Silence stops
+    being an option, which is the property that was missing.
+    """
+    accounted = set(matching._CUT_MATCHER_FOR_KIND) | matching._KINDS_WITHOUT_A_CURATED_FOOD
+    unaccounted = set(pk.KINDS) - accounted
+    assert not unaccounted, (
+        f"protein_kind can return {sorted(unaccounted)}, and matching neither "
+        "maps them to a cut matcher nor declares them unmatchable"
+    )
+
+
+def test_the_unmatchable_kinds_really_have_no_curated_food(conn):
+    """The other direction: nothing is declared unmatchable while a food exists.
+
+    Without this, `_KINDS_WITHOUT_A_CURATED_FOOD` becomes a place to silence an
+    awkward species rather than a record of a genuine catalog gap -- which is
+    the mistake this pair of tests was written after making.
+    """
+    # DERIVED from the name, not read from foods.protein_kind. That column is
+    # NULL until `classify_all` runs, and it does not run in the test fixture --
+    # so reading it made this test pass against an empty set, i.e. pass while
+    # asserting nothing. It was written that way first and did NOT catch the
+    # shellfish regression above, which is the whole reason it now computes.
+    rows = conn.execute("SELECT name, category FROM foods").fetchall()
+    have_a_food = {pk.classify(r["name"], r["category"]) for r in rows}
+    wrongly_declared = matching._KINDS_WITHOUT_A_CURATED_FOOD & have_a_food
+    assert not wrongly_declared, (
+        f"{sorted(wrongly_declared)} are declared unmatchable but the catalog "
+        "has a food for them -- those deals are declining for no reason"
+    )
