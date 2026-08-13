@@ -1,5 +1,49 @@
 # Coverage: what the optimiser can actually price
 
+> ## Update — 2026-08-12, later the same day: the quality floor is FIXED
+>
+> Everything below this box was measured **before** GFP-271, GFP-274 and
+> GFP-279 landed, and the "quality floor" section still describes the beef-stock
+> failure in the present tense. It is no longer live. Re-measured after the fix:
+>
+> ```
+> 8,842 priced rows -> 2,795 usable with no floor
+>                   -> 2,331 usable at the 0.9 floor   (-464)
+> ```
+>
+> **The floor costs 464 rows, not the 539 predicted below.** The prediction was
+> made by counting rows under 0.9; the measured figure is lower because GFP-279
+> retracted 49 bad matches outright, so some rows the floor would have dropped
+> were already gone for a better reason.
+>
+> Three defects fixed, all found by screenshotting the app and comparing it with
+> `gp cheapest` on the same database:
+>
+> * **GFP-271** — `bill.py` passed `min_confidence=None` at all three ranking
+>   call sites, and `_eligible` skipped its check entirely for a client with no
+>   preferences. A 0.3 guess outranked a 1.0 measurement.
+> * **GFP-274** — the strip rendered the kind of the food a deal *matched to*,
+>   not of the deal. A tin of beans was GIANT's cheapest pork.
+> * **GFP-279** — the root cause of both: `matching._EXCLUDE` and
+>   `protein_kind.DISQUALIFIERS` were two hand-maintained vocabularies for "not
+>   a cut of meat" and had drifted. `_EXCLUDE` had `broth` but not `stock`.
+>   There is now one vocabulary, and `match_deals` **retracts** matches the
+>   rules no longer allow — it previously only ever inserted, so tightening a
+>   rule fixed the future and left the past as wrong as it was. 49 retracted.
+>
+> The cheapest-protein strip, before and after:
+>
+> ```
+> Lidl    was: beef  $0.0078  beef cooking stock 3G Protein, 32 oz
+>         now: chicken $0.0084  boneless skinless chicken breast, family pack
+> GIANT   was: pork  $0.0310  Hanover Brown Sugar & Bacon Baked Beans, 16 oz
+>         now: beef  $0.0356  Bubba Burger Grass-fed 1/4 lb Beef Patties
+> ```
+>
+> **Not re-measured:** the per-source table and per-market splits below. Those
+> need a fresh pass and are still pre-fix figures — treat their totals as
+> indicative and their *shapes* as sound.
+
 **Measured 2026-08-12 from the live database.** Refresh this after any scrape or
 enrichment change — the numbers move and stale ones are worse than none.
 
