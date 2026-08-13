@@ -347,3 +347,60 @@ def test_matching_survives_a_usda_sync(tmp_path):
     assert row is not None, "match was lost when the food gained a USDA source"
     assert row["source"] == "usda"
     conn.close()
+
+
+# --------------------------------------------------------------------------- #
+# GFP-279: the matcher and protein_kind must share ONE vocabulary.
+#
+# Before this, `matching._EXCLUDE` and `protein_kind.DISQUALIFIERS` were two
+# hand-maintained lists of "not a cut of meat", and they had drifted. _EXCLUDE
+# had `broth` but not `stock`, so measured live on 2026-08-12:
+#
+#   "Hanover Brown Sugar & Bacon Baked Beans, 16 oz" -> 'Bacon, raw'  conf 0.9
+#   "beef cooking stock 3G Protein, 32 oz"           -> beef sirloin  conf 0.3
+#
+# The beans row inherited BACON's protein density at 0.9 confidence. Confidence
+# was never the issue -- the matcher was very sure and wrong about the kind.
+# --------------------------------------------------------------------------- #
+from grocery_planner import protein_kind as pk           # noqa: E402
+
+
+@pytest.mark.parametrize("name", [
+    # The two rows measured live.
+    "Hanover Brown Sugar & Bacon Baked Beans, 16 oz",
+    "beef cooking stock 3G Protein, 32 oz",
+    # One per disqualifier family, so a family losing its veto is caught.
+    "Swanson Chicken Broth, 48 oz",              # broth
+    "Knorr Beef Bouillon Cubes",                 # bouillon
+    "Campbell's Beef Consomme, 10.5 oz",         # consomme
+    "Heinz Turkey Gravy, 12 oz",                 # gravy
+    "Montreal Steak Seasoning, 3 oz",            # seasoning
+    "Bush's Best Pork and Beans, 28 oz",         # legume
+    "Beyond Burger Plant-Based Patties, 8 oz",   # analogue
+    "Beef Flavored Ramen Noodles, 3 oz",         # form
+    "Beefsteak Tomato, 2 lb",                    # produce wearing a beef name
+])
+def test_the_matcher_honours_every_protein_kind_disqualifier(name):
+    """The RELATIONSHIP, not a spelling (GFP-179).
+
+    Asserting the precondition first is what makes this a relationship test: it
+    says "protein_kind rejects this, THEREFORE the matcher must". Add a word to
+    DISQUALIFIERS and the matcher inherits the veto with no second edit; remove
+    the matcher's call to it and every case here fails at once.
+    """
+    assert pk.is_disqualified(name) is True
+    assert matching.match_item(name) is None
+
+
+def test_real_meat_still_matches_after_the_veto():
+    """The other half of the guard: a veto that eats real rows is worse.
+
+    This is the `rub`/`popcorn` lesson -- a first attempt at disqualifiers threw
+    away "Dry-Rub Seasoned Chicken Thighs" and "Popcorn Shrimp".
+    """
+    for name in (
+        "Boneless Skinless Chicken Breast, 3 lb",
+        "Ground Beef 80/20, 1 lb",
+        "Pork Loin Chops, Family Pack",
+    ):
+        assert matching.match_item(name) is not None, name
