@@ -20,7 +20,15 @@ from grocery_planner import savings
 from grocery_planner.scrapers import (
     aldi, flipp_banners, instacart_storefront as ist, sprouts,
 )
-from tests.test_instacart_storefront import Recorder, client_for
+# NOT `from tests.test_instacart_storefront import ...`. `tests/` has no
+# __init__.py, so it is not a package and `tests.x` is never importable -- it
+# only appeared to work under `python -m pytest`, which puts the working
+# directory on sys.path. CI runs bare `pytest`, which does not, and this was
+# the single line that broke the first CI run of this branch (GFP-265).
+#
+# Plain module name instead: pytest inserts the test file's own directory on
+# sys.path for a non-package test dir, so this resolves under both invocations.
+from test_instacart_storefront import Recorder, client_for
 
 NOW = datetime(2026, 8, 11, tzinfo=timezone.utc)
 
