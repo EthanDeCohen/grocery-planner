@@ -239,22 +239,6 @@ TENANT = _platform.Tenant(
 )
 
 
-class AldiClient(_platform.StorefrontClient):
-    """The platform client, bound to the ALDI tenant. Adds no behaviour."""
-
-    def __init__(
-        self,
-        client: httpx.Client | None = None,
-        timeout: float = 30.0,
-        graphql_pace=None,
-        page_pace=None,
-    ):
-        super().__init__(
-            TENANT, client=client, timeout=timeout,
-            graphql_pace=graphql_pace, page_pace=page_pace,
-        )
-
-
 def readiness() -> tuple[bool, str]:
     """Ready -- guest session, no credential of any kind.
 
@@ -282,7 +266,7 @@ def nutrition_available() -> tuple[bool, str]:
     )
 
 
-def verify_pinned_hashes(client: AldiClient | None = None) -> tuple[bool, str]:
+def verify_pinned_hashes(client: _platform.StorefrontClient | None = None) -> tuple[bool, str]:
     """``(False, why)`` -- there is no canary to verify against. See the headline."""
     return _platform.verify_pinned_hashes(TENANT, client)
 
@@ -309,7 +293,7 @@ def scrape(
     postal_code: str | None = None,
     limit: int | None = None,
     conn: sqlite3.Connection | None = None,
-    client: AldiClient | None = None,
+    client: _platform.StorefrontClient | None = None,
     now: datetime | None = None,
     slugs: Iterable[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:

@@ -155,28 +155,6 @@ _NON_MEAT_PROTEIN_TERMS: tuple[str, ...] = (
 )
 
 
-class PublixStorefrontClient(_platform.StorefrontClient):
-    """The platform client, bound to the Publix tenant.
-
-    A subclass rather than a factory so ``isinstance`` checks work and so that
-    if Publix ever needs behaviour of its own, there is somewhere obvious for it
-    to go. It adds none today, and if it ever does, that is the signal Publix
-    has stopped being an ordinary tenant of this platform.
-    """
-
-    def __init__(
-        self,
-        client: httpx.Client | None = None,
-        timeout: float = 30.0,
-        graphql_pace=None,
-        page_pace=None,
-    ):
-        super().__init__(
-            TENANT, client=client, timeout=timeout,
-            graphql_pace=graphql_pace, page_pace=page_pace,
-        )
-
-
 def name_from_slug(slug: str) -> str:
     """The product name a slug carries, for offline classification.
 
@@ -250,7 +228,7 @@ def serves(postal_code: str) -> bool | None:
 
 
 def verify_pinned_hashes(
-    client: PublixStorefrontClient | None = None,
+    client: _platform.StorefrontClient | None = None,
 ) -> tuple[bool, str]:
     """Prove the pinned nutrition query still runs. ``(ok, message)``.
 
@@ -269,7 +247,7 @@ def scrape(
     postal_code: str | None = None,
     limit: int | None = None,
     conn: sqlite3.Connection | None = None,
-    client: PublixStorefrontClient | None = None,
+    client: _platform.StorefrontClient | None = None,
     now: datetime | None = None,
     slugs: Iterable[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
@@ -284,7 +262,7 @@ def scrape(
     reproduction of one product should do.
     """
     owned_client = client is None
-    active = client or PublixStorefrontClient()
+    active = client or _platform.StorefrontClient(TENANT)
     try:
         if slugs is None:
             if owned_client:
