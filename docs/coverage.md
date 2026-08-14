@@ -491,12 +491,18 @@ prices**, not the per-pound rates that force the ‡ marker, and the sitemaps wo
 let protein candidates be filtered offline with no search endpoint at all — 595
 chicken URLs in sitemap 1 alone.
 
-**They cannot be joined.** `productitems` accepts only a uuid; a sitemap
-`baseProductId` returns HTTP 400. That mapping exists only on the product detail
-page or in search, and both sit behind the same Akamai layer — a `bm-verify`
-interstitial on one, an identical 428-byte 403 on the other regardless of
-parameters or a valid `Store` cookie. **Finding a uuid source is the whole
-problem**; everything else already works.
+**They cannot be joined, and not for the reason it first appears.** `Id` is not a
+product identifier — it identifies a curated **carousel**. One call returns five
+products sharing that same `id`, each with its own `itemCode` and
+`baseProductId`. There is no product uuid to go hunting for.
+
+That is what settles it. Even with every carousel enumerated, the reachable set
+is whatever Publix is *promoting* — the seed carousel returns a 50-piece wing
+platter, a charcuterie board and a shrimp platter, $24–70 catering items. A
+cost-per-gram-protein ranking built on promoted stock is worse than one built on
+nothing: as the quality-floor section below puts it, a bad input does not scatter
+through a ranking, it colonises the top of it. The sitemap has the catalogue and
+no prices; this endpoint has prices and no catalogue.
 
 Two things follow. The decision on this page is **unchanged and better
 supported**: unschedule the metered feed, because the free replacement does not

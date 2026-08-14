@@ -94,11 +94,18 @@ SCRAPER_KEY = "publix-catalog"
 #: double dagger above -- and `sitemap_products1..7.xml` publishes ~70k products
 #: for crawlers, slug and `baseProductId` in each URL.
 #:
-#: They cannot be joined. `productitems` accepts only a uuid; a sitemap
-#: `baseProductId` gets HTTP 400. The mapping between them lives on the product
-#: detail page, which serves an Akamai `bm-verify` interstitial, or in search,
-#: which is 403 behind the same bot-detection layer. Both bridges are shut by
-#: the same control, so finding a uuid source is the whole problem.
+#: They cannot be joined, and the reason is not the one it first looks like.
+#: `Id` is NOT a product identifier -- it identifies a curated CAROUSEL. One
+#: call returns five products sharing that single `id`, each with its own
+#: `itemCode` and `baseProductId`. There is no product uuid to go looking for.
+#:
+#: So the reachable surface is whatever Publix is merchandising, not the
+#: catalogue: the seed carousel returns a 50-piece wing platter, a charcuterie
+#: board and a shrimp platter, $24-70 catering items. Feeding a cost-per-gram
+#: optimiser on promoted items is worse than feeding it nothing -- a biased
+#: sample does not scatter through a ranking, it colonises the top of it, which
+#: is the only part that gets read. The sitemap has the real catalogue and no
+#: price; this endpoint has prices and no catalogue.
 #:
 #: So this module stays the only way to read Publix at all, and the case for
 #: unscheduling it is stronger than when it was written: the free replacement
