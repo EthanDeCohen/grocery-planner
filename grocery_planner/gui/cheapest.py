@@ -26,7 +26,7 @@ import html
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
-from .. import service, weight_basis
+from .. import exclusions, service, weight_basis
 
 #: Height is bounded by the store count, but a runaway registry should not be
 #: able to eat the window. Beyond this the strip scrolls rather than growing.
@@ -110,12 +110,33 @@ class CheapestMeatStrip(QWidget):
         )
         layout.addWidget(self.body)
 
+        # Why a store the user expects is absent (GFP-300). Set once: the list
+        # is a decision, not data, so it cannot change between refreshes. Shown
+        # whatever the ranking says -- an empty week is exactly when someone
+        # wonders where Costco went.
+        self.excluded = QLabel("")
+        self.excluded.setWordWrap(True)
+        self.excluded.setToolTip(exclusions.why_the_markup_is_not_quantified())
+        smaller = self.excluded.font()
+        smaller.setPointSizeF(max(6.0, smaller.pointSizeF() - 1))
+        self.excluded.setFont(smaller)
+        self.excluded.setEnabled(False)   # muted: a footnote, not a finding
+        self.excluded.setVisible(bool(exclusions.EXCLUDED))
+        layout.addWidget(self.excluded)
+
         self.items: list[service.CheapestProtein] = []
         self.reload()
 
     # ----------------------------------------------------------------- #
     def reload(self) -> None:
         self.items = service.cheapest_protein_by_store()
+
+        # Counted from what was just ranked, not queried separately -- two
+        # derivations of "how many stores" would eventually disagree, and the
+        # line would then be confidently wrong.
+        self.excluded.setText(
+            exclusions.summary(compared=len({item.store for item in self.items}))
+        )
 
         if self.items:
             self.title.setVisible(True)
