@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Harris Teeter weekly-ad + digital-coupon scraper.
 
 Thin store module (mirrors ``foodlion``): supplies the

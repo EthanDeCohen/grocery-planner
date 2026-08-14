@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """PySide6 desktop UI — the nutritionist front end (GFP-20).
 
 Requires the optional ``gui`` extra (``pip install -e ".[gui]"``). Launch with

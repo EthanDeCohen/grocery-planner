@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Background refresh scheduling (GFP-7) — the replacement for Excel's "refresh".
 
 A schedule is a row in the ``schedules`` table: one store, one cadence, either
@@ -84,9 +86,9 @@ def set_schedule(
     """Create or replace a store's cadence. Validates before it writes."""
     # GFP-287: schedulable, not merely available. A source can be ready and
     # correct to run on demand while being a bad idea to run every week, because
-    # a metered vendor bills per call -- publix-catalog costs 9.1 credits per
-    # usable row against Walmart's 0.14, and was the only reason the Parse.bot
-    # bill did not fit the free tier.
+    # a metered vendor bills per call. Built for publix-catalog, which cost 9.1
+    # credits per usable row against Walmart's 0.14; GFP-304 deleted that
+    # scraper, so nothing opts out today -- see service.schedulable_scrapers.
     #
     # Guarded HERE rather than only removing the row, because a schedule is a
     # standing instruction to spend money: deleting one without closing the door

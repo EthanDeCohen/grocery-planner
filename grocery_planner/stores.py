@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Registry of tracked stores: display name <-> data folder <-> key.
 
 Mirrors the README store mapping. The scrapers and CSV importer both key off
@@ -43,9 +45,10 @@ STORES: list[Store] = [
     # would have no row to hang Trader Joe's deals on and the store would be
     # invisible in the UI while its scraper ran perfectly.
     Store("traderjoes", "Trader Joe's", "traderjoes"),
-    # GFP-270. Walmart is a new shop; Publix is NOT -- `publix-catalog` is a
+    # GFP-270. Walmart is a new shop; Publix is NOT -- its extra feed is a
     # second SOURCE for the banner already listed above, the same relationship
-    # `sprouts-storefront` has to `sprouts`. Without this row Walmart's deals
+    # `sprouts-storefront` has to `sprouts`. (That feed was `publix-catalog`
+    # until GFP-304 replaced it with `publix-storefront`.) Without this row Walmart's deals
     # would render under the raw key ("walmart") in the cheapest strip and the
     # store table, which is how a store ends up looking like a bug.
     Store("walmart", "Walmart", "walmart"),

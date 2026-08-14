@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Global settings, in one JSON file the user can edit (GFP-85).
 
 The concrete problem this starts with: **27401 is hard-coded in four places** --

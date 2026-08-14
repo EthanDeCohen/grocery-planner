@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Biometrics panel (GFP-51): the left column of the client detail page.
 
 GFP-37 laid the detail page out as three columns -- biometrics (here), the

@@ -245,57 +245,87 @@ def test_build_scheduler_adds_one_job_per_enabled_schedule(conn):
 # --------------------------------------------------------------------------- #
 # GFP-287: a source can be READY and still be refused a recurring cadence.
 #
-# publix-catalog works. It costs 9.1 Parse.bot credits per usable row against
-# Walmart's 0.14 -- 65x worse -- and a weekly cadence for it was ~433 credits a
-# month against a 200-credit free tier: 77% of the bill for 5% of the rows.
+# A schedule is a standing instruction to SPEND MONEY, so the guard lives in the
+# scheduler rather than only in a deleted row: removing the row without closing
+# the door leaves it one UI click from returning, with nothing on record saying
+# why it should not.
 #
-# The guard lives in the scheduler rather than only in a deleted row, because a
-# schedule is a standing instruction to SPEND MONEY. Removing the row without
-# closing the door leaves it one UI click from returning, with nothing on record
-# saying why it should not.
+# THE ORIGINAL SUBJECT IS GONE. This mechanism was built for `publix-catalog`,
+# which cost 9.1 Parse.bot credits per usable row against Walmart's 0.14 -- 65x
+# worse, and 77% of the bill for 5% of the rows. GFP-304 deleted that module
+# outright once the free Instacart storefront replaced it, so today **no
+# registered scraper sets SCHEDULABLE = False**.
+#
+# The mechanism is kept and tested against a STUB rather than retired with its
+# first user, because the condition that produced it -- a metered source whose
+# cadence quietly spends money -- is a property of vendor-billed feeds, not of
+# Publix. Walmart is one Parse.bot price rise away from needing this. Testing it
+# against a stub is also strictly better than testing it against one real
+# module: it asserts the rule, not a spelling.
 # --------------------------------------------------------------------------- #
-def test_an_expensive_source_cannot_be_given_a_recurring_cadence(env_db):
+@pytest.fixture
+def metered_source(monkeypatch):
+    """A registered, ready, deliberately unschedulable scraper."""
+    from grocery_planner.scrapers import SCRAPERS
+
+    class _Metered:
+        SCRAPER_KEY = "stub-metered"
+        STORE_KEY = "stub"
+        MERCHANT = "Stub Metered Source"
+        DEFAULT_POSTAL_CODE = "27401"
+        SCHEDULABLE = False
+
+        @staticmethod
+        def readiness():
+            return True, ""
+
+        @staticmethod
+        def scrape(postal_code=None, **kw):    # pragma: no cover - never called
+            raise AssertionError("the stub must never actually scrape")
+
+    monkeypatch.setitem(SCRAPERS, "stub-metered", _Metered)
+    return _Metered
+
+
+def test_an_expensive_source_cannot_be_given_a_recurring_cadence(env_db, metered_source):
     from grocery_planner import db
 
     with pytest.raises(service.UnknownStoreError):
-        scheduler.set_schedule(db.connect(), "publix-catalog", "interval", "7d")
+        scheduler.set_schedule(db.connect(), "stub-metered", "interval", "7d")
 
 
-def test_the_expensive_source_is_still_runnable_on_demand(monkeypatch):
+def test_the_expensive_source_is_still_runnable_on_demand(metered_source):
     """Refusing a cadence is not the same as removing the source.
 
-    Running it once, deliberately, is a decision someone is making with their
-    eyes open. `available_scrapers` is what the GUI's Run-scrape dialog offers,
-    and publix-catalog must stay in it.
-
-    READINESS IS FORCED HERE ON PURPOSE. publix-catalog is only *ready* when a
-    Parse.bot API key is configured, so asserting on available_scrapers() as it
-    happens to be would test whether this machine has a key -- it passed locally
-    and failed on CI for exactly that reason, the same environment split GFP-270
-    hit in test_stores_shows_scraper_readiness.
-
-    Pinning readiness to True asserts the thing that actually matters and holds
-    everywhere: publix-catalog is withheld from the schedule because it is
-    EXPENSIVE, not because it is unconfigured. Those are different reasons and
-    only one of them is this ticket's.
+    Running it once, deliberately, is a decision made with eyes open, and
+    `available_scrapers` is what the GUI's Run-scrape dialog offers. The stub is
+    READY, so this asserts the thing that actually matters: it is withheld from
+    the schedule because it is EXPENSIVE, not because it is unconfigured. Those
+    are different reasons and only one of them is this ticket's.
     """
-    from grocery_planner.scrapers import publix
-
-    monkeypatch.setattr(publix, "readiness", lambda: (True, ""))
-    assert "publix-catalog" in service.available_scrapers()
-    assert "publix-catalog" not in service.schedulable_scrapers()
+    assert "stub-metered" in service.available_scrapers()
+    assert "stub-metered" not in service.schedulable_scrapers()
 
 
-def test_the_expensive_source_is_still_registered():
-    """Unscheduling must not have quietly deregistered it.
+def test_the_expensive_source_is_still_registered(metered_source):
+    """Unscheduling must not quietly deregister it."""
+    assert "stub-metered" in service.all_scrapers()
 
-    all_scrapers() is the registry, independent of credentials, so this holds
-    with or without a Parse.bot key.
+
+def test_nothing_shipped_currently_opts_out(metered_source):
+    """A record of the fact, so its return is a deliberate act.
+
+    With publix-catalog deleted (GFP-304) no real scraper sets
+    SCHEDULABLE = False. If that changes, this test fails and whoever added the
+    opt-out has to say so here.
     """
-    from grocery_planner.scrapers import publix
+    from grocery_planner.scrapers import SCRAPERS
 
-    assert "publix-catalog" in service.all_scrapers()
-    assert publix.SCHEDULABLE is False
+    opted_out = sorted(
+        key for key, mod in SCRAPERS.items()
+        if key != "stub-metered" and getattr(mod, "SCHEDULABLE", True) is False
+    )
+    assert opted_out == [], f"a real scraper now opts out of scheduling: {opted_out}"
 
 
 def test_the_free_publix_banner_is_unaffected():

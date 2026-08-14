@@ -1,243 +1,36 @@
-"""Whole Foods Market storefront scraper (GFP-4).
+# ######### decohen-partners ##########
+# Protein Ledger
+"""Whole Foods, from its own storefront search (GFP-4).
 
-Whole Foods is a different shape of source than Food Lion/Harris Teeter: those
-are Flipp flyer aggregators (``scrapers/base.py``); Whole Foods is the retailer's
-own storefront, driven by search, not a weekly ad. Its payload is dramatically
-better for this product's purpose (see ``docs/spikes/GFP-70-whole-foods.md``,
-merged on main): 100% of results carry a real shelf price, and roughly 40%
-carry everything needed to compute cost-per-gram-of-protein *directly* --
-price, a machine-readable size, and full nutrition facts including protein
-grams -- with no USDA matching step at all. That is a ~300x improvement over
-the 2-of-1,573 deals (0.13%) the Flipp-sourced pipeline can currently price
-per gram of protein.
+In:  a ZIP, plus a session cookie you minted by hand (see below).
+Out: deal rows with real shelf prices; ~40% also carry full nutrition, so they
+     price per gram of protein with no USDA matching step.
 
-Architecture -- decided by GFP-70, not reopened here
-------------------------------------------------------
-The spike found a fresh ``httpx`` client cannot get past Whole Foods' session
-bootstrap on its own: a JS-computed ``x-amzn-csrf`` header gates the calls
-that mint the real cookies, and that header is not derivable from any
-response the page ever sends a plain client. Reverse-engineering it is not a
-sane bet against a private endpoint that could change on the next deploy. But
-the spike's key finding is that the browser is needed only ONCE, to mint a
-session -- cookies minted that way then serve unlimited further ``httpx``-only
-searches, confirmed against a query neither the browser nor httpx had run
-before.
+THE ONE MANUAL STEP. A fresh httpx client can't get past Whole Foods' session
+bootstrap -- a JS-computed header gates it. But the browser is only needed
+ONCE: cookies minted that way then serve unlimited httpx searches. So minting
+is a human job, never something this code does at runtime.
 
-So: minting is an out-of-band, human, one-time-ish step (see "Minting the
-session cookie" below), never something this product does at runtime.
-Playwright/Chromium do NOT ship with grocery-planner (not in pyproject.toml)
--- the Mac build is CLI-only (PyInstaller cannot cross-compile) and could
-never run a browser anyway. This module is pure ``httpx``, exactly like
-``scrapers/base.py``'s Flipp client, reading one already-minted cookie value
-out of a small JSON config file.
+Paste the ``wfm_store_d8`` cookie value (DevTools -> Application -> Cookies)
+into ``<data-dir>/wholefoods_session.json`` as ``{"wfm_store_d8": "..."}``.
+``gplan db-path`` shows the folder. That one cookie is necessary and sufficient;
+its encoding varies (base64, URL-encoded, bare JSON) so paste it raw and let
+:func:`_decode_store_cookie` sort it out. Nominal life ~365 days.
 
-The one cookie that matters: ``wfm_store_d8``
------------------------------------------------
-The spike verified, across six controlled cookie subsets plus a zero-cookie
-control, that ``wfm_store_d8`` ALONE is necessary and sufficient for search
-from a plain httpx client. The Amazon-domain ``session-id``/``session-token``/
-``ubid-main`` cookies are not needed. Nominal cookie expiry observed: 365 days.
+Things worth knowing before editing:
 
-``wfm_store_d8``'s value is itself an encoded JSON blob carrying (among
-other things) the pinned store's ``id`` (authoritative) and a ``deliveryZip``
-field. **The encoding is not stable** -- the GFP-70 spike recorded a
-URL-encoded value, and by 2026-08-02 the live cookie was base64 instead
-(GFP-93), so :func:`_decode_store_cookie` accepts base64, URL-encoded and
-bare JSON and you should paste the raw Value without worrying about which
-one you got. The spike found the blob's ``name``/``state``/``geometry`` fields are
-STALE placeholders that never update -- never trust those for store identity,
-only ``id`` (this module doesn't need store identity beyond the ZIP check
-below, so it never reads them at all).
-
-Config file format
---------------------
-A small JSON file lives at ``<user-data-dir>/wholefoods_session.json``
-(``grocery_planner/paths.py::data_dir()`` -- the same folder
-``grocery_planner.sqlite3`` lives in; run ``gplan db-path`` and look
-alongside it)::
-
-    {
-      "wfm_store_d8": "<paste the cookie's raw Value here, exactly as shown>",
-      "minted_at": "2026-08-01"
-    }
-
-``wfm_store_d8`` is the only key this module reads. ``minted_at`` is optional
-and purely for a human's own bookkeeping (the nominal 365-day expiry above) --
-this module does not act on it; the payload-shape check below is what
-actually detects a dead cookie.
-
-Minting the session cookie (out-of-band, human, one-time-ish step)
-----------------------------------------------------------------------
-1. Open https://www.wholefoodsmarket.com/ in a normal, real browser (Chrome,
-   Edge, Firefox -- any modern browser; this is a one-off manual step, not
-   something grocery-planner automates).
-2. Let the site's own store-locator flow pin a store to the ZIP you want this
-   scraper to use (e.g. type that ZIP into the "choose your store" prompt the
-   site shows on first load). This is what determines the ZIP baked into the
-   cookie -- see "ZIP handling" below.
-3. Open DevTools -> Application (Chrome) / Storage (Firefox) -> Cookies ->
-   https://www.wholefoodsmarket.com.
-4. Find the cookie named ``wfm_store_d8``. Copy its raw *Value* column exactly
-   as shown -- it is URL-encoded JSON; do NOT decode it by hand, this module
-   decodes it itself.
-5. Paste that value into ``wholefoods_session.json`` as shown above, next to
-   the database (``gplan db-path`` shows the folder).
-6. Re-run whenever the scraper reports the cookie is dead (see "Failing
-   loudly on a dead cookie" below) -- nominal lifetime is ~365 days per the
-   spike, but that is the cookie's own advertised expiry, not a guarantee
-   about server-side session state, which the spike did not measure.
-
-ZIP handling (GFP-53)
-------------------------
-The cookie's decoded blob carries a ``deliveryZip`` field. Every call to
-:func:`scrape` computes the ZIP it is about to use exactly the way
-``service/ingest.py::run_scrape`` does (``postal_code`` argument, else
-``DEFAULT_POSTAL_CODE``) and refuses outright (:class:`ZipMismatchError`) if
-that disagrees with the cookie's own ``deliveryZip``. Silently scraping under
-the wrong ZIP would attribute one location's prices to another -- exactly the
-harm GFP-53 exists to prevent. There is no "just use the cookie's ZIP
-instead" fallback: the point is that the ZIP the caller *asked for* and the
-ZIP the session was actually minted for must agree, not that either one wins
-by default.
-
-Failing loudly on a dead cookie (do not confuse with "no results")
-------------------------------------------------------------------------
-The spike documented the exact signature of an invalid/expired session: the
-response's ``pageProps`` comes back as a "loading" shell --
-``pageProps.pageType == "loading"`` with ``productsInfo`` (and
-``searchResults``) both ``null`` -- rather than an HTTP error. :func:`scrape`
-checks every page of results for this shape and raises
-:class:`SessionExpiredError` with a message that says exactly that ("cookie
-expired, re-mint required"), never lets it fall through as "this store has
-nothing right now". A *genuine* zero-product search result is a different,
-valid shape (``productsInfo`` present but empty) and is allowed to reach
-``service/ingest.py``'s GFP-67 replace-guards (:class:`EmptyScrapeError` /
-:class:`ImplausibleCollapseError`), which already handle "a scrape returned
-suspiciously few/no rows" generically for every store -- this module
-deliberately does not duplicate that check.
-
-Auto-discovering ``buildId``
--------------------------------
-Whole Foods' storefront is a Next.js app; every page embeds a ``"buildId":
-"..."`` token that Next.js's data-fetching endpoints require, and it rotates
-on every site deploy. This module never hard-codes it: the first request of
-every :func:`scrape` call is a plain HTML search page fetch, which yields the
-current ``buildId`` (regexed out of the HTML) *and* (if the session is alive)
-that first query's own results in the same request, read out of the page's
-``__NEXT_DATA__`` script tag. Every subsequent query in the same run reuses
-that ``buildId`` against the lighter ``_next/data/.../search.json`` JSON
-endpoint. This is what makes the scraper self-healing across deploys: no
-version pin ever goes stale.
-
-Extracted per product
-------------------------
-- ``name``, ``asin``.
-- ``offerDetails.price.priceAmount`` (the real shelf price) and
-  ``offerDetails.unitPrice`` (pre-computed per-unit price; ``baseUnit``
-  varies -- ``each``/``pound``/``ounce``).
-- A size string from ``variationsList`` -- specifically the
-  ``variationNodeList`` entry whose own ``asin`` matches this product's, since
-  the list otherwise mixes in sibling package sizes. Butcher-counter items
-  sold by weight (ground chicken, bone-in cuts, ...) legitimately have no
-  ``variationsList`` at all; that is not an error, just a different (and
-  arguably more honest) product shape.
-- ``nutritionFacts.servingSize``, ``servingsPerContainer``, and the protein
-  gram figure out of ``macronutrients`` (the entry whose ``name`` is
-  "Protein").
-
-Where the nutrition data lands, and why
--------------------------------------------
-Whole Foods hands over protein grams *directly*, per exact product (via its
-``asin``) -- there is no USDA-matching problem to solve here at all, unlike
-the free-text Flipp ad copy ``grocery_planner/matching.py`` has to guess at.
-Rather than inventing a parallel "Whole Foods nutrition" table, this module
-reuses exactly what GFP-23/GFP-25 already built for this purpose:
-
-- ``foods`` + ``food_nutrients`` (``grocery_planner/nutrition.py``) already
-  model "a food and its protein-per-100g" -- precisely the fact a serving's
-  protein grams + serving size compute directly
-  (``protein_g / serving_grams * 100``, a scale-invariant density, which is
-  the *correct* way to fold in ``servingsPerContainer`` -- see the callout
-  below -- rather than treating a per-serving figure as if it were
-  per-package). Each Whole Foods product becomes one ``foods`` row: ``source=
-  'wholefoods'``, ``source_ref=<asin>`` (``UNIQUE(source, source_ref)`` makes
-  re-scraping the same product idempotent), ``slug='wholefoods-<asin>'`` (the
-  GFP-68 stable-identity convention), ``category`` set from the search query
-  that found it (one of the existing six: beef/pork/chicken/fish/tofu/whey --
-  see ``DEFAULT_QUERIES`` below -- so it plugs directly into the existing
-  client protein-category preferences, GFP-30, with no new vocabulary).
-- ``deal_food_match`` (GFP-25) links the deal to that food. Since Whole
-  Foods' own catalog data already tells us with certainty which food a row
-  is -- no keyword guessing required -- this module writes that link with
-  ``confidence=1.0``, ``method='wholefoods_direct'``. It deliberately sets
-  ``match_source='manual'`` (not because a human reviewed it -- ``method``
-  keeps that auditable/distinguishable from a real human correction) purely
-  so ``grocery_planner/matching.py``'s keyword-rule auto-matcher (which scans
-  every store's deals indiscriminately) can never downgrade a Whole-Foods-
-  certain match to one of its own lower-confidence keyword guesses on a
-  later ``gplan match`` run -- the same protection ``match_source='manual'``
-  already gives a nutritionist's manual correction.
-
-This means ``grocery_planner/savings.py``'s existing, store-agnostic
-``cost_per_gram_protein`` chain (price -> ``parse_size(item_name)`` -> grams
--> ``deal_food_match`` -> ``food_nutrients``) resolves automatically for any
-Whole Foods product whose package weight is known (see "Package weight and
-GFP-73" below) with ZERO new code in that module -- exactly the "reuse what
-exists" the ticket asked for.
-
-Package weight, item naming, and GFP-73 (servingsPerContainer)
---------------------------------------------------------------------
-``savings.cost_per_gram_protein`` needs a *package* weight in grams; a raw
-per-serving protein figure divided straight into a per-package price is
-exactly the GFP-73 bug (a multi-serving item's real cost-per-gram-of-protein
-is far higher than that naive division suggests). This module resolves a
-package weight two ways, in priority order:
-
-1. **A real printed size** (``variationsList``'s ``dimensionValue``, e.g.
-   "1.5 Pound (Pack of 1)") -- the strongest source, an actual label weight.
-   When this is available, it is appended to ``item_name`` (e.g. "Bell &
-   Evans Boneless Skinless Chicken Breast, 1.5 Pound (Pack of 1)") so
-   ``savings.parse_size`` -- the exact same size-parsing this app already
-   uses for every other store -- picks it up with no special-casing.
-2. **``servingSize`` x ``servingsPerContainer``** (GFP-73's callout) as a
-   fallback for butcher-counter items with no ``variationsList`` at all. This
-   IS the correct way to use ``servingsPerContainer`` -- multiplying it back
-   out to a package weight, never treating the per-serving protein figure as
-   if it already described the whole package. This estimate is deliberately
-   NOT appended into ``item_name``: it is a computed estimate, not a number
-   Whole Foods printed on a label, and ``savings.py``'s rule 1 ("a size we
-   cannot read is ``None``, never a guess") means this module should not
-   manufacture what looks like a real printed size for the shared parser to
-   trust. The ``foods``/``food_nutrients``/``deal_food_match`` rows still
-   land normally for these products (so the protein density fact is not
-   lost) -- only the generic per-name-parsed cost-per-gram-protein path is
-   left unresolved for them, which is visible/auditable via
-   ``notes`` (``package_weight_source=serving_estimate``), not silent.
-
-If neither source yields a weight-based size, the food/nutrition rows still
-land (a nutritionist gets the fact either way); only the automatic
-cost-per-gram-of-protein chain doesn't fire for that specific row.
-
-Scope of search: which categories, and why
------------------------------------------------
-Whole Foods has no "weekly ad" to fetch wholesale the way Flipp does --
-everything is search-driven. :data:`DEFAULT_QUERIES` runs one search per the
-same six categories the rest of this app's protein-matching already
-recognizes (GFP-23/GFP-30: beef, pork, chicken, fish, tofu, whey), a modest,
-paced set of requests (see "Being a polite client" below), not an attempt to
-mirror the entire storefront.
-
-Being a polite client
--------------------------
-Whole Foods' search endpoints are an unauthenticated, undocumented part of a
-real retailer's storefront, not a public API with a rate-limit contract. This
-module: identifies itself with the same plain, honest User-Agent the Flipp
-client already uses (``scrapers/base.py::USER_AGENT``) rather than
-impersonating a browser; issues one HTTP request per bootstrap + one per
-remaining query (roughly a dozen total for the default query list, well
-inside what the spike's own manual probing already did without incident);
-and reuses one ``httpx.Client`` (and the one bootstrapped ``buildId``) across
-every query in a run rather than reconnecting per request.
+* The cookie carries the ZIP it was minted for. If it disagrees with the ZIP
+  being scraped we refuse (:class:`ZipMismatchError`) rather than quietly
+  attributing one city's prices to another (GFP-53).
+* A dead cookie does NOT return an HTTP error. It returns a "loading" shell --
+  ``pageType == "loading"``, ``productsInfo`` null -- which looks exactly like
+  "this store has nothing". We raise :class:`SessionExpiredError` instead. A
+  genuine empty result is a different shape and is left to the usual
+  replace-guards.
+* ``buildId`` rotates on every site deploy, so it's read out of the first HTML
+  response each run rather than pinned. That's what keeps this self-healing.
+* Nutrition lands in foods/food_nutrients with ``match_source=MANUAL``, which
+  stops the keyword matcher overwriting a figure read off the actual label.
 """
 from __future__ import annotations
 

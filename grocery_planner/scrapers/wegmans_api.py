@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Wegmans' own JSON API: the best source found outside Kroger (GFP-165).
 
 Discovered 2026-08-10 by pointing the renderer container at a product page and

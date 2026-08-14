@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Customer domain (GFP-28): the client record.
 
 Every table before this one -- ``deals``, ``prices``, ``foods``, ... -- is

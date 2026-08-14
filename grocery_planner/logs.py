@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Application logging (GFP-86): a record of what happened while nobody watched.
 
 There was no logging anywhere in this codebase. That is tolerable for a tool

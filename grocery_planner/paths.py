@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Resolve per-OS locations for the local database and user data.
 
 Uses platformdirs so the DB/settings live in the proper user-data folder and

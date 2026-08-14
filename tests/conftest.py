@@ -184,19 +184,19 @@ def _no_network_in_tests(request, monkeypatch):
 #            'traderjoes' is the one with NO collision, which is why it carries
 #            no SCRAPER_KEY of its own.
 # * GFP-270  'walmart' is a genuinely NEW shop, the first source reaching a
-#            chain GFP-197 filed as unreachable. 'publix-catalog' is not new --
-#            it is a second feed for the 'publix' banner, and needs its own
-#            SCRAPER_KEY for the same last-write-wins reason. Neither is ready
-#            without a Parse.bot key.
-# * GFP-293  'publix-storefront' is a THIRD feed for one shop: the Flipp banner,
-#            the Parse.bot catalogue, and the Instacart white-label. Publix
-#            holds the record. It is the only one of the three needing no
-#            credential, so it is the only one also in available_scrapers().
+#            chain GFP-197 filed as unreachable. It is not ready without a
+#            Parse.bot key. ('publix-catalog' was its sibling until GFP-304
+#            deleted it -- superseded by the free Instacart storefront.)
+# * GFP-293  'publix-storefront' is the Instacart white-label at
+#            delivery.publix.com. It briefly made Publix a THREE-feed store
+#            alongside the Flipp banner and the Parse.bot catalogue; GFP-304
+#            then deleted the Parse.bot one, because this reaches the same shop
+#            for free and returns better data. Back to two feeds, both free.
 # --------------------------------------------------------------------------- #
 KNOWN_SCRAPER_KEYS = {
     "acme", "aldi", "aldi-storefront", "foodlion", "foodlion-catalog",
     "giant", "giant-ad", "harristeeter", "harristeeter-api", "hmart",
-    "lidl", "lidl-catalogue", "lowesfoods", "publix", "publix-catalog",
-    "publix-storefront", "sprouts", "sprouts-storefront", "target",
+    "lidl", "lidl-catalogue", "lowesfoods", "publix", "publix-storefront",
+    "sprouts", "sprouts-storefront", "target",
     "traderjoes", "walmart", "wegmans", "wegmans-api", "weis", "wholefoods",
 }

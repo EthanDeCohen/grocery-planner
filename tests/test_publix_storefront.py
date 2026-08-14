@@ -11,24 +11,27 @@ from __future__ import annotations
 import pytest
 
 from grocery_planner import service
-from grocery_planner.scrapers import SCRAPERS, publix, publix_storefront as ps
+from grocery_planner.scrapers import SCRAPERS, publix_storefront as ps
 
 
 # --------------------------------------------------------------------------- #
 # Three feeds, one shop -- the collision that already cost a debugging session
 # --------------------------------------------------------------------------- #
-def test_all_three_publix_feeds_are_reachable():
-    """`publix` is the Flipp banner, `publix-catalog` Parse.bot, this one third.
+def test_both_publix_feeds_are_reachable():
+    """`publix` is the Flipp weekly ad, `publix-storefront` the Instacart one.
 
-    The registry is last-write-wins and the Flipp banners are registered LAST,
-    so a module whose key collides with a banner is silently shadowed and
-    unreachable from the CLI -- which is exactly what happened to sprouts.
+    There were three until GFP-304 deleted the Parse.bot `publix-catalog`, which
+    this feed superseded -- same shop, free, better data.
+
+    The registry is last-write-wins and the Flipp banners register LAST, so a
+    module whose key collides with a banner is silently shadowed and unreachable
+    from the CLI. That is what happened to sprouts, and it is why the second
+    feed carries its own SCRAPER_KEY.
     """
-    keys = {"publix", "publix-catalog", "publix-storefront"}
-    assert keys <= set(service.all_scrapers())
+    assert {"publix", "publix-storefront"} <= set(SCRAPERS)
+    assert "publix-catalog" not in SCRAPERS, "the Parse.bot feed is gone (GFP-304)"
     assert SCRAPERS["publix-storefront"] is ps
-    assert SCRAPERS["publix-catalog"] is publix
-    # The banner must NOT have been displaced by either second source.
+    # The banner must NOT have been displaced by the second source.
     assert SCRAPERS["publix"] is not ps
 
 
@@ -39,9 +42,10 @@ def test_the_feeds_write_to_one_store_under_different_sources():
     store_key is the point -- the deals belong to the same Publix -- and unequal
     source is what keeps them from overwriting each other on every run.
     """
-    assert ps.STORE_KEY == publix.STORE_KEY == "publix"
-    assert ps.SOURCE != publix.SOURCE
-    assert ps.SCRAPER_KEY != publix.SCRAPER_KEY
+    banner = SCRAPERS["publix"]
+    assert ps.STORE_KEY == banner.STORE_KEY == "publix"
+    assert ps.SOURCE != getattr(banner, "SOURCE", "scrape")
+    assert ps.SCRAPER_KEY != getattr(banner, "SCRAPER_KEY", "publix")
 
 
 def test_storefront_needs_no_credential():

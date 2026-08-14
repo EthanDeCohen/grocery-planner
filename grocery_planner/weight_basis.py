@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Is a by-weight price a deli counter price or a pre-packaged one? (GFP-152)
 
 A ``soldBy=WEIGHT`` figure is not a price anybody pays. It depends either on

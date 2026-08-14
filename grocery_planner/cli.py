@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Typer CLI entry point for grocery-planner (`gp`).
 
 Local-first commands over the SQLite store:

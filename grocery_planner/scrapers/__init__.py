@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Store scrapers. ``base`` owns the shared Flipp/Wishabi client (GFP-6); each
 Flipp-sourced store module supplies its
 :class:`~grocery_planner.scrapers.base.StoreConfig`. ``wholefoods`` (GFP-4) is
@@ -48,13 +50,13 @@ A module may therefore declare:
 """
 from . import (
     aldi, flipp_banners, foodlion, foodlion_catalog, giant, giant_ad,
-    harristeeter, kroger, lidl_catalogue, publix, publix_storefront, sprouts,
+    harristeeter, kroger, lidl_catalogue, publix_storefront, sprouts,
     traderjoes, walmart, wegmans_api, wholefoods,
 )
 
 _MODULES = (
     aldi, foodlion, foodlion_catalog, giant, giant_ad, harristeeter, kroger,
-    lidl_catalogue, publix, publix_storefront, sprouts, traderjoes, walmart,
+    lidl_catalogue, publix_storefront, sprouts, traderjoes, walmart,
     wegmans_api, wholefoods,
 )
 

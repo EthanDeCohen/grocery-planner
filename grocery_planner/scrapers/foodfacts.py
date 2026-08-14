@@ -1,37 +1,13 @@
-"""One way to record a retailer's own protein figure (GFP-302).
+# ######### decohen-partners ##########
+# Protein Ledger
+"""Save a retailer's own protein number into the database.
 
-Every source that reads nutrition off a retailer's label lands it the same way:
-a ``foods`` row, its protein density in ``food_nutrients``, and a
-``deal_food_match`` at confidence 1.0. Before this module that write existed
-**six times** -- kroger, traderjoes, wholefoods, wegmans_api,
-instacart_storefront, and sprouts (which already delegated).
+In:  a FoodFact (product id, name, protein per 100g) from any scraper.
+Out: three rows -- the food, its protein density, and a match linking the
+     store's deal name to that food.
 
-Six copies of one write is six places to drift, and a drift here is not
-cosmetic: this is the path that decides which protein density an item is priced
-with, which is what the optimiser ranks on and what GFP-281's harness scores.
-
-WHY match_source=MANUAL IS LOAD-BEARING
----------------------------------------
-The figure came off the retailer's own label for this exact product. ``MANUAL``
-is what stops ``matching.match_deals``'s keyword auto-matcher from later
-overwriting a measurement with a guess about a similarly-named food. ``method``
-keeps the real provenance auditable -- it is the retailer, not a human.
-
-That rationale used to be repeated, near-identically, in every one of the six
-copies. It is stated once here.
-
-THE ONE ASYMMETRY, RECORDED RATHER THAN SMOOTHED OVER
------------------------------------------------------
-``name`` and ``item_name`` are different things:
-
-* ``name`` -- the retailer's own product title, for ``foods.name``.
-* ``item_name`` -- the ``deals`` row name, which ``deal_food_match`` keys on and
-  which may carry a size the scraper folded in (``f"{name}, {size_text}"``).
-
-Four sources carry both and fall back (``name=description or item_name``).
-``wegmans_api`` has no separate title in its feed at all, so it passes
-``name=item_name`` and always takes that fallback. Verified equivalent before
-consolidating, per GFP-302's own instruction to check rather than assume.
+Every scraper that reads nutrition off a label used to do this itself. There
+were six near-identical copies; GFP-302 made it one.
 """
 from __future__ import annotations
 
@@ -43,61 +19,43 @@ from .. import matching
 
 
 def now_iso() -> str:
-    """UTC, second precision. Was ``_now_iso`` in six modules."""
+    """UTC timestamp, to the second."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 @dataclass(frozen=True)
 class FoodFact:
-    """A retailer's own protein figure for one exact product.
+    """One product's protein figure, as the retailer published it."""
 
-    Stored as a DENSITY -- grams per 100g -- rather than per serving, because a
-    per-serving figure is meaningless without the serving, and the whole point
-    of these sources is that they state both.
-
-    ``source_ref`` is the retailer's own product id. It was called
-    ``product_id`` in kroger and instacart, ``sku`` in traderjoes and wegmans,
-    and ``asin`` in wholefoods -- four names for one concept, which is most of
-    why the write could not be shared before.
-    """
-
+    #: The retailer's own product id. Called product_id / sku / asin depending
+    #: on who you ask, which is half the reason this was six functions.
     source_ref: str
+    #: The retailer's product title, for the foods table.
     name: str
     category: str
+    #: Grams per 100g, not per serving -- a serving figure is useless without
+    #: the serving size.
     protein_per_100g: float
+    #: The name as it appears in `deals`. May differ from `name` (a scraper
+    #: often appends the size). This is what the match keys on.
     item_name: str
 
 
 def upsert_food_fact(
     conn: sqlite3.Connection, source: str, store: str, method: str, fact: FoodFact
 ) -> None:
-    """Record ``fact`` so ``cost_per_gram_protein`` can just use it.
+    """Write the food, its protein density, and the match. Safe to re-run.
 
-    THE VENDOR IS NOT ALWAYS THE BANNER, WHICH IS WHY THESE ARE TWO ARGUMENTS.
-
-    * ``source`` -- ``foods.source`` and the slug prefix. The API the figure
-      came from.
-    * ``store`` -- ``deal_food_match.store``, which must equal ``deals.store``
-      or the match joins to nothing.
-    * ``method`` -- the provenance on the match (``kroger_api_direct``,
-      ``wholefoods_direct``, ...).
-
-    For three of the four callers these coincide. **Kroger is the exception**:
-    it writes ``source='kroger'`` (the API) against ``store='harristeeter'``
-    (the banner it serves). Collapsing them to one argument would have written
-    ``store='kroger'``, which matches no ``deals`` row -- so Harris Teeter would
-    have silently lost all 537 of its retailer-direct matches while every test
-    that only checks kroger's own rows still passed. Measured 2026-08-14.
-
-    All three are passed rather than derived: a scraper knows its own
-    provenance, and inferring it here would put a naming rule in the one place
-    that must not care about naming.
-
-    No new column and no new code path -- the figure reaches the engine through
-    the chain it already walks, which is why this shape was chosen when kroger
-    and wholefoods first did it.
+    source = where the number came from (the API).
+    store  = the banner it's sold under. NOT always the same thing: Kroger's API
+             supplies Harris Teeter, so source='kroger' but store='harristeeter'.
+             Get this wrong and the match points at a store with no deals.
+    method = how we know (kroger_api_direct, wholefoods_direct, ...).
     """
     now = now_iso()
+
+    # Keyed on (source, source_ref) so '123' at Kroger and '123' at Trader Joe's
+    # stay two different foods.
     conn.execute(
         "INSERT INTO foods(name, category, source, source_ref, slug, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?) "
@@ -111,6 +69,7 @@ def upsert_food_fact(
         "SELECT id FROM foods WHERE source=? AND source_ref=?",
         (source, fact.source_ref),
     ).fetchone()["id"]
+
     conn.execute(
         "INSERT INTO food_nutrients(food_id, nutrient, amount_per_100g, unit) "
         "VALUES (?, 'protein', ?, 'g') "
@@ -118,6 +77,9 @@ def upsert_food_fact(
         "amount_per_100g=excluded.amount_per_100g, unit=excluded.unit",
         (food_id, fact.protein_per_100g),
     )
+
+    # MANUAL matters: it stops the keyword matcher overwriting a number we read
+    # off the actual label with a guess about a similarly-named product.
     conn.execute(
         "INSERT INTO deal_food_match"
         "(store, item_name, food_id, confidence, method, match_source, updated_at) "

@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Deal-to-food matching (GFP-25): the missing link between ``deals.item_name``
 (free-text weekly-ad copy) and the ``foods`` catalog (GFP-23's protein-per-100g
 data). Nothing else in the app connects them, so until this module runs,

@@ -1,253 +1,38 @@
-"""Instacart Storefront Pro -- the platform client behind Sprouts and ALDI.
+# ######### decohen-partners ##########
+# Protein Ledger
+"""The Instacart storefront platform -- one client, several banners (GFP-265).
 
-GFP-265. ``sprouts.py`` (GFP-262) was written as a Sprouts scraper but its own
-module docstring already said the truth: ``shop.sprouts.com`` is not Sprouts'
-code, it is an **Instacart Storefront Pro** tenant, and "re-aiming it at another
-banner is a slug change, not a rewrite". This module is that sentence cashed in.
-Everything tenant-independent lives here; ``sprouts.py`` and ``aldi.py`` are
-:class:`Tenant` records over it.
+In:  a Tenant record (base_url, retailer/shop/zone ids, pinned hashes) and a ZIP.
+Out: deal rows with shelf prices, plus nutrition where the retailer publishes it.
 
-The claim was tested, not assumed. Measured 2026-08-11 against
-``https://www.aldi.us``:
+Sprouts, ALDI and Publix are all white-labels of the same Instacart deploy, so
+adding a banner is a configuration change: fill in a Tenant, don't write a
+scraper. Tenants are DATA, not subclasses -- if one ever needs real behaviour,
+that's the signal it isn't the same platform after all.
 
-* the storefront returns **200 to plain httpx** -- no browser, no headless
-  browser, no cookie to hand-mint. It sets the same ``__Host-instacart_sid``
-  guest cookie ``shop.sprouts.com`` does.
-* :func:`discover_persisted_queries`, **unmodified**, found **59** operation
-  hashes in ALDI's storefront HTML.
-* those hashes are not merely the same *shape* as Sprouts' -- for
-  ``SimpleShopCollection`` the hash is byte-identical
-  (``d438f50c...74501a``) on both tenants. Apollo hashes the query *document*,
-  and the document ships in the shared platform bundle, so a hash is a property
-  of the **Instacart deploy**, not of the banner. That is why the pinned
-  ``ProductNutritionalInfo`` hash transfers between tenants (see PINNING below).
+THE PINNED HASH. Queries are "persisted": the client sends a SHA-256 of the
+query text and the server looks it up, so we need the right hash or nothing
+works. Most can be read off the page. ``ProductNutritionalInfo`` -- the one
+carrying protein -- cannot: it's fetched after hydration and the bundles ship
+the query stripped of its body, so the hash can be neither read nor recomputed.
+It was captured from a real browser and is pinned per tenant.
 
-WHY THERE IS NO BROWSER HERE, AND WHY THAT IS NOT NEGOTIABLE
-------------------------------------------------------------
-A DOM-scraping approach was proposed for ALDI -- drive Chromium, scroll the
-category pages, read ``inner_text()``, match product names against a hard-coded
-brand list (``kirkwood``, ``clancy``, ``parkview``...), regex the prices out of
-the text. It was not built, for two reasons that are worth writing down because
-they will be proposed again:
+Each tenant keeps its own copy of that literal even though the values match
+today. Sharing one constant would mean that fixing a rotation for one banner
+breaks every banner that hadn't rotated -- the repair becomes the outage. Keep
+the duplication (decided 2026-08-14; measurements on GFP-307).
 
-1. **A browser does not ship.** Established by the GFP-4 Whole Foods spike: the
-   distributed desktop app cannot carry a browser binary. A Playwright scraper
-   could never leave a dev machine, so it is not a slower version of this -- it
-   is a thing that never reaches a customer. (Project rule, GFP-265: any browser
-   this project launches runs headless, always, precisely because a headed one
-   cannot run in CI, in GFP-102's unattended scheduled scrape, or on a customer
-   machine. Here the rule is satisfied vacuously -- there is no browser.)
-2. **It throws away data the platform already hands over.** The DOM has a
-   rendered price string; the platform has numeric ``protein``,
-   ``servingSize``, ``servingsPerContainer`` and schema.org ``price``/``size``.
-   And a brand allow-list silently drops every product whose brand is not on
-   the list -- a coverage cap that never appears in ``stats``, which is the
-   exact failure mode the no-silent-caps rule exists to prevent.
+Two traps worth knowing:
 
-ACCESS SHAPE: persisted queries only
-------------------------------------
-Everything data-bearing is a GraphQL **GET** against ``/graphql``::
+* ``/graphql`` tolerates a high rate; product HTML does not. That asymmetry is
+  why nutrition is fetched in bulk first and only the products with a protein
+  figure are then priced from HTML, paced, with a 403 breaker.
+* A rejected hash comes back as **HTTP 400**, not a GraphQL error, so 4xx here
+  is treated as a stale pin and named as one (GFP-307). Before that it
+  surfaced as a bare transport error and read like a network blip.
 
-    /graphql?operationName=X
-            &variables={...}
-            &extensions={"persistedQuery":{"version":1,"sha256Hash":"..."}}
-
-Arbitrary queries are refused -- a plain ``{"query":"{__typename}"}`` POST
-returns ``PersistedQueryNotSupported``, and so does introspection. Only the
-server's allow-list of hashes will run. Auth is a guest session that mints
-itself on the first GET of the storefront.
-
-THE ROT TRAP: the hashes rotate, and only *some* are discoverable
------------------------------------------------------------------
-``sha256Hash`` values rotate per Instacart deploy -- the same failure mode as
-the Whole Foods ``buildId`` (GFP-4). Every page embeds a performance-timing blob
-naming each operation it fired *together with the hash it used*, so
-:meth:`StorefrontClient.discover` harvests those on every run. The blob is
-**doubly URL-encoded**; one ``unquote`` pass leaves the braces still escaped and
-the regex silently matches nothing, which is a quiet way to end up on stale
-pins. Hence the two passes in :func:`discover_persisted_queries`.
-
-**But the most important operation is not in any blob.**
-``ProductNutritionalInfo`` -- the one that carries protein -- is fetched
-client-side after hydration, so its hash appears in no HTML the server sends.
-Nor can it be recovered from the JS: the bundles ship the query document
-*stripped of its selection set*::
-
-    {kind:"Document",definitions:[{kind:"OperationDefinition",
-     operation:"query",name:{kind:"Name",value:"ProductNutritionalInfo"}}]}
-
-Apollo's persisted-query link hashes the full document at runtime, and the full
-document is not in the eagerly-loaded chunks, so the hash can be neither read
-nor recomputed. It was captured by watching the network in a real browser, and
-it is **pinned** per tenant in :attr:`Tenant.pinned_hashes`.
-
-PINNING: per tenant by construction, shared by measurement
------------------------------------------------------------
-The pin lives on the :class:`Tenant`, not on this module, so two banners on
-different Instacart deploys can hold different values without either one having
-to know about the other. As measured on 2026-08-11 they do **not** differ:
-Sprouts' pinned ``ProductNutritionalInfo`` hash was replayed against ALDI and
-was **accepted** -- HTTP 200, no ``PERSISTED_QUERY_NOT_FOUND``, and a
-well-formed ``ItemsProductNutritionalInfo`` envelope. That is consistent with
-the ``SimpleShopCollection`` hash matching byte-for-byte, and with hashes being
-a property of the deploy rather than the banner.
-
-The value is nonetheless written out in full in each tenant module rather than
-imported from a shared constant. Sharing the *literal* would encode "these are
-always equal" as a fact, and it is only an observation: the banners can be moved
-onto different deploy trains at any time.
-
-The cost of a shared constant is not the outage -- it is the REPAIR. When one
-tenant rotates, whoever fixes it edits the shared value, and the two tenants
-that had *not* rotated start sending a hash their own deploy does not know. The
-fix for one becomes the outage for the others, and nothing in the code can say
-"Sprouts moved, ALDI did not". A duplicated literal keeps the blast radius at
-one tenant and the repair at one file. Confirmed as the intended trade by the
-user, 2026-08-14: keep the duplication.
-
-MEASURED, and correcting what this note used to claim (GFP-307). It said the
-symptom was "silently losing all protein data". It is not silent: a rejected
-hash comes back **HTTP 400** and now raises :class:`QueryNotAllowedError`, which
-aborts the scrape and names the pin. Verified by feeding Sprouts a corrupted
-hash -- the correct one returned a real panel, the corrupted one 400'd.
-
-The canary remains the early warning, because a 400 mid-scrape is still found
-later than a one-request health check. Note it can only be run where a tenant
-HAS a canary: ALDI legitimately has none (it publishes no panels at all), so
-"each tenant's own pin answers its own canary" holds for the tenants that can
-support one, and is honestly reported as unverifiable for those that cannot.
-
-THE THROTTLE TRAP: /graphql is generous, product HTML is not
-------------------------------------------------------------
-These two paths are policed completely differently, and the difference decides
-the design of every tenant's ``scrape``:
-
-===================  ==========================  ==========================
-path                 observed behaviour          verdict
-===================  ==========================  ==========================
-``/graphql``         37,500+ requests at ~36/s,  bulk-safe
-                     zero errors, zero 429s
-``/store/.../        ~2,300 pages, then a hard   bounded working set only
-products/<slug>``    **403** on every subsequent
-                     product page (the storefront
-                     and /graphql kept serving)
-===================  ==========================  ==========================
-
-Measured on Sprouts. It is assumed to hold on every tenant until measured
-otherwise, because assuming the generous direction is the mistake that gets an
-IP blocked. Two consequences:
-
-**The work is split by which path can carry it.** Nutrition -- the expensive,
-per-product part -- goes through GraphQL. The page fetch is used *only* for
-price, and *only* for products that already resolved a protein figure. A scrape
-that gets nutrition but no price is degraded, not failed.
-
-**Each path paces itself.** :class:`StorefrontClient` holds one
-:class:`~grocery_planner.scrapers.retry.Paced` per path class
-(:data:`~grocery_planner.scrapers.retry.GRAPHQL_BUDGET` and
-:data:`~grocery_planner.scrapers.retry.PRODUCT_PAGE_BUDGET`). The pacing
-counters land in ``stats`` so a run that was throttled into crawling says so.
-
-THE SERVICE-TYPE TRAP -- found by generalising, and it was a live bug
----------------------------------------------------------------------
-``SimpleShopCollection`` returns bare shop ids in an **unspecified order** and
-with no indication of what each one is. The GFP-262 code took the first one.
-Measured 2026-08-11 for postal code 27401:
-
-===========  ================  ==========================================
-tenant       ids, in order     service types
-===========  ================  ==========================================
-sprouts      515202, 5201,     **instore**, delivery, pickup
-             5202
-aldi         6823, 22443,      delivery, pickup, **instore**
-             515201
-===========  ================  ==========================================
-
-All three of a tenant's shops are the **same physical store** -- for ALDI all
-three carry ``retailerLocationId`` 124437, "ALDI - SBY 140 - Greensboro",
-2965 Battleground Ave. They differ only in ``serviceType``. So "take the first"
-was not a rule, it was a coincidence that happened to be right for the one
-tenant it was written against and is wrong for the next one. Taking a delivery
-shop would price a delivery basket -- a different number from the shelf price
-this project exists to compare.
-
-:meth:`StorefrontClient.shop_context` therefore asks ``ShopCollectionScoped``,
-which *does* return ``serviceType``, and prefers :data:`PREFERRED_SERVICE_TYPE`.
-``SimpleShopCollection`` is kept as a fallback for the case where the scoped
-operation is not in a tenant's discovered set, and when that fallback is used
-the resulting :class:`ShopContext` says so in :attr:`ShopContext.service_type`
-(``None`` -- unknown, never guessed) so a caller can tell a verified in-store
-shop from an assumed one.
-
-Price and size come from schema.org
------------------------------------
-Product pages server-render a ``application/ld+json`` block about 12 KB in,
-carrying ``name``, ``brand``, ``size``, ``offers.price`` and ``availability``.
-Reading only the first :data:`HEAD_BYTES` of the response gets all of it for
-~1/15th of the bandwidth of the full page.
-
-Caveat, measured on ALDI and documented rather than papered over: the product
-page renders under whatever shop the *session* defaults to, and it ignores a
-``shop_id`` query parameter -- ALDI's page reported shop 6823 (delivery) for
-every value tried, and returned the same $3.22 each time. So the JSON-LD price
-is the storefront's canonical price for that banner and is **not** re-priced per
-service type. It is the same number a shopper sees on the site, which is what
-this project compares; it is not independently verified against a physical
-shelf tag, and no code here claims it is.
-
-THE WEIGHT TRAP -- the same one as GFP-98
------------------------------------------
-Fresh meat renders ``size: "per lb"`` with ``"$11.19 each (est.)"`` and "About
-1.x lb", while ``servingsPerContainer`` describes the whole package. Multiplying
-the two mixes denominators and understates cost several-fold, on precisely the
-highest-protein items. :func:`protein_per_100g` therefore refuses to multiply
-when :func:`size_is_weight` is true, and falls back to the density route
-(serving grams) which is denominated correctly either way. This is the same rule
-kroger.py applies to ``soldBy=WEIGHT``.
-
-THE 'Varied' TRAP
------------------
-``servingsPerContainer`` is a **string** and is frequently non-numeric --
-``"Varied"`` and ``""`` together account for ~15% of Sprouts panels. It must
-never be coerced with a bare ``float()``; :func:`servings_per_container` returns
-``None`` for anything that is not a plain number.
-
-THE THREE SERVING-SIZE SHAPES
------------------------------
-See :data:`_FLUID`. Matching only the parenthesised-metric shape costs ~5x the
-coverage of the density route (measured: 2,110 panels vs 10,825 of 15,163).
-
-THE 'per lb' PRICING-UNIT TRAP
-------------------------------
-Kroger's ``size`` for a WEIGHT item literally reads ``"1 lb"``, already a
-pricing unit. This platform writes the same fact as ``"per lb"``, which
-``savings.parse_size`` does not understand -- it returns ``None``, so the size
-would be silently lost on exactly the fresh-meat rows where price and size must
-agree. :func:`pricing_unit_size` normalises the dialect here rather than
-teaching the shared grammar a new form.
-
-THE MISSING-SIZE TRAP -- see :func:`display_item_name`
-------------------------------------------------------
-Copying kroger.py's "fold the size in only for WEIGHT items" rule left every
-UNIT row without a size in ``item_name``, which is the only place the ranking
-looks. 32 of 155 real rows were rankable and ``gplan cheapest`` said "Nothing to
-rank yet" while the rows sat there priced and with protein.
-
-THE IMPOSSIBLE-DENSITY TRAP -- see :func:`plausible_density`
--------------------------------------------------------------
-The whole-package route produced 677.3 and 306.7 g protein per 100 g on a real
-run, because ``size`` was the per-unit weight while ``servingsPerContainer``
-counted the multi-pack. Rejected rather than clamped, and counted in
-``stats['density_rejected_implausible']``.
-
-BOTH OF THOSE WERE INVISIBLE TO UNIT TESTS
--------------------------------------------
-Neither bug raised, and every module was individually correct. They were found
-by loading real rows and running the app, and both are the same species as the
-service-type trap above: code that is right for the source it was written
-against and silently wrong for the next one. The lesson recorded here for
-whoever adds the third tenant -- **scrape a few hundred real rows and run
-``gplan cheapest`` against them before believing the tests.**
+Shop lookup asks the source for the shop serving a ZIP rather than assuming --
+"the first shop in the list" holds for Sprouts and fails for ALDI.
 """
 from __future__ import annotations
 

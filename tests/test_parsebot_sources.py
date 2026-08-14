@@ -25,7 +25,7 @@ import httpx
 import pytest
 
 from grocery_planner import savings, weight_basis
-from grocery_planner.scrapers import parsebot, publix, walmart
+from grocery_planner.scrapers import SCRAPERS, parsebot, walmart
 
 NOW = datetime(2026, 8, 12, tzinfo=timezone.utc)
 KEY = "pmx_test_key_not_a_real_one"
@@ -57,18 +57,9 @@ WALMART_PRODUCTS = [
     },
 ]
 
-PUBLIX_PRODUCTS = [
-    {"name": "Publix Chicken Thighs 4 Lbs. or More, USDA Grade A",
-     "brand": "Publix", "package_size": None, "price": "$2.39/lb",
-     "item_id": "96001", "product_url": "https://www.publix.com/pd/x/RIO-PCI-1"},
-    {"name": "Publix Boneless Skinless Chicken Breast, USDA Grade A, "
-             "97% Fat Free Less Than 4 Lbs.",
-     "brand": "Publix", "package_size": None, "price": "$5.39/lb",
-     "item_id": "96215", "product_url": "https://www.publix.com/pd/x/RIO-PCI-2"},
-    {"name": "GreenWise Boneless Skinless Chicken Breast",
-     "brand": "GreenWise", "package_size": None, "price": None,
-     "item_id": "2746", "product_url": "https://www.publix.com/pd/x/RIO-PCI-3"},
-]
+# PUBLIX_PRODUCTS lived here until GFP-304 deleted the Parse.bot Publix
+# scraper. The Walmart payload below already exercises every shape it did,
+# including the rate-only row with no package price.
 
 
 def client_for(products, key="products", extra=None):
@@ -111,32 +102,38 @@ def test_a_per_pound_price_is_never_stored_against_a_package_weight(name):
 
 
 def test_the_understated_figure_is_actually_corrected(conn):
-    """End to end, in money: $2.39/lb chicken thighs must not price 4 lb."""
-    rows, _meta, _stats = publix.scrape(
-        postal_code="27401", client=client_for(PUBLIX_PRODUCTS), now=NOW,
-        queries=["chicken thighs"],
+    """End to end, in money: a $4.48/lb rate must not price a whole package.
+
+    This was driven through Publix, whose feed quoted every price as a rate
+    string. GFP-304 deleted that module; Walmart's rate-only row -- "Fresh
+    Ground Beef 80/20", no package price anywhere -- exercises the same grammar,
+    which lives in walmart.py and always did.
+    """
+    rows, _meta, _stats = walmart.scrape(
+        postal_code="27401", client=client_for(WALMART_PRODUCTS), now=NOW,
+        queries=["ground beef"],
     )
-    thighs = next(r for r in rows if "Thigh" in r["item_name"])
-    size = savings.parse_size(thighs["item_name"])
-    assert thighs["dollar_price"] == pytest.approx(2.39)
+    beef = next(r for r in rows if "Ground Beef" in r["item_name"])
+    size = savings.parse_size(beef["item_name"])
+    assert beef["dollar_price"] == pytest.approx(4.48)
     assert size.quantity == pytest.approx(1.0)
-    # The bug's signature: price / 4 lb instead of price / 1 lb.
-    per_pound = thighs["dollar_price"] / size.quantity
-    assert per_pound == pytest.approx(2.39), "a rate was read as a package price"
+    # The bug's signature: price divided by a package weight instead of 1 lb.
+    assert beef["dollar_price"] / size.quantity == pytest.approx(4.48), (
+        "a rate was read as a package price"
+    )
 
 
 # --------------------------------------------------------------------------- #
 # The marker
 # --------------------------------------------------------------------------- #
-def test_publix_rate_rows_carry_the_double_dagger():
-    rows, _meta, _stats = publix.scrape(
-        postal_code="27401", client=client_for(PUBLIX_PRODUCTS), now=NOW,
-        queries=["chicken thighs"],
+def test_rate_rows_carry_the_double_dagger():
+    rows, _meta, _stats = walmart.scrape(
+        postal_code="27401", client=client_for(WALMART_PRODUCTS), now=NOW,
+        queries=["ground beef"],
     )
-    priced = [r for r in rows if r["dollar_price"]]
-    assert priced, "expected the two rate rows to survive"
-    for row in priced:
-        assert row["weight_basis"] == weight_basis.RATE
+    rated = [r for r in rows if r["weight_basis"] == weight_basis.RATE]
+    assert rated, "expected the rate-only row to survive"
+    for row in rated:
         basis = weight_basis.basis_for(row["sold_by"], row["weight_basis"])
         assert weight_basis.marker(basis) == "‡"
 
@@ -224,26 +221,32 @@ def test_rate_grammar(text, expected):
 # --------------------------------------------------------------------------- #
 # Registry and vendor plumbing
 # --------------------------------------------------------------------------- #
-def test_publix_catalogue_does_not_shadow_the_publix_flipp_banner():
-    """The collision that silently shadowed sprouts and cost a debugging
-    session: the banner registers last and wins the key."""
-    from grocery_planner.scrapers import SCRAPERS
-    assert publix.SCRAPER_KEY == "publix-catalog"
-    assert SCRAPERS["publix-catalog"] is publix
-    assert SCRAPERS["publix"] is not publix
-    assert publix.STORE_KEY == SCRAPERS["publix"].STORE_KEY == "publix"
-    assert publix.SOURCE != getattr(SCRAPERS["publix"], "SOURCE", "scrape")
+def test_the_publix_storefront_does_not_shadow_the_publix_flipp_banner():
+    """The collision that cost a live debugging session, still guarded.
+
+    `SCRAPERS.update(flipp_banners.MODULES)` is last-write-wins, so a second
+    feed reusing the banner's key is silently unreachable. This was asserted
+    about `publix-catalog` until GFP-304 deleted it; the hazard now belongs to
+    the Instacart storefront that replaced it.
+    """
+    from grocery_planner.scrapers import publix_storefront as ps
+
+    assert ps.SCRAPER_KEY == "publix-storefront"
+    assert SCRAPERS["publix-storefront"] is ps
+    assert SCRAPERS["publix"] is not ps
+    assert ps.STORE_KEY == SCRAPERS["publix"].STORE_KEY == "publix"
+    assert ps.SOURCE != getattr(SCRAPERS["publix"], "SOURCE", "scrape")
 
 
-def test_both_stores_report_the_vendor_when_the_key_is_missing(monkeypatch):
-    """One missing credential must not read as two broken scrapers."""
+def test_the_vendor_is_named_when_the_key_is_missing(monkeypatch):
+    """The reason must name Parse.bot, not merely say "not ready"."""
     monkeypatch.delenv(parsebot.ENV_VAR, raising=False)
     monkeypatch.setattr(parsebot, "api_key", lambda: None)
-    for module in (walmart, publix):
+    for module in (walmart,):
         ready, reason = module.readiness()
         assert ready is False
         assert "Parse.bot" in reason
-        assert "Walmart and Publix" in reason
+        assert "Walmart" in reason
 
 
 def test_a_failed_query_does_not_discard_the_rest_of_the_run():
@@ -253,14 +256,14 @@ def test_a_failed_query_does_not_discard_the_rest_of_the_run():
     # succeed on the second attempt and this test would prove nothing. The
     # failure has to be one the client gives up on.
     def flaky(request: httpx.Request) -> httpx.Response:
-        if "thighs" in (request.url.params.get("keyword") or ""):
+        if "thighs" in (request.url.params.get("query") or ""):
             return httpx.Response(404, json={"detail": "not found"})
         return httpx.Response(200, json={"status": "success",
-                                         "data": {"products": PUBLIX_PRODUCTS}})
+                                         "data": {"products": WALMART_PRODUCTS}})
 
     http = httpx.Client(transport=httpx.MockTransport(flaky))
     client = parsebot.ParseBotClient(client=http, key=KEY, pace=_instant_pacer())
-    rows, _meta, stats = publix.scrape(
+    rows, _meta, stats = walmart.scrape(
         postal_code="27401", client=client, now=NOW,
         queries=["chicken thighs", "ground beef"],
     )
@@ -303,11 +306,11 @@ def test_a_missing_pinned_scraper_id_says_so_rather_than_404ing_silently():
     assert "revised" in str(exc.value) or "deleted" in str(exc.value)
 
 
-def test_neither_store_claims_to_know_where_it_operates():
+def test_the_store_does_not_claim_to_know_where_it_operates():
     """A hand-written footprint is how Food Lion came to claim all of Kentucky.
     UNKNOWN is permissive, so this removes no coverage."""
     assert walmart.serves("27401") is None
-    assert publix.serves("27401") is None
+    assert walmart.serves("27401") is None
 
 
 # --------------------------------------------------------------------------- #
@@ -332,7 +335,7 @@ def test_exhausted_credits_are_their_own_error_not_a_throttle():
     message = str(exc.value)
     assert "credits" in message.lower()
     assert "Hobby" in message and "30.0" in message      # the actual remedy
-    assert "Walmart and Publix" in message               # the actual blast radius
+    assert "Walmart" in message               # the actual blast radius
 
 
 def test_a_run_that_runs_out_of_credits_keeps_what_it_already_fetched():
@@ -344,12 +347,12 @@ def test_a_run_that_runs_out_of_credits_keeps_what_it_already_fetched():
         calls["n"] += 1
         if calls["n"] == 1:
             return httpx.Response(200, json={"status": "success",
-                                             "data": {"products": PUBLIX_PRODUCTS}})
+                                             "data": {"products": WALMART_PRODUCTS}})
         return httpx.Response(402, json={"error": {"message": "out of credits"}})
 
     http = httpx.Client(transport=httpx.MockTransport(dies_after_one))
     client = parsebot.ParseBotClient(client=http, key=KEY, pace=_instant_pacer())
-    rows, _meta, stats = publix.scrape(
+    rows, _meta, stats = walmart.scrape(
         postal_code="27401", client=client, now=NOW,
         queries=["chicken thighs", "ground beef", "eggs", "cheese"],
     )
@@ -364,12 +367,12 @@ def test_every_run_reports_what_it_cost_and_what_is_left():
     see at the moment it runs out is not a budget."""
     def ok(request):
         return httpx.Response(200, json={"status": "success",
-                                         "data": {"products": PUBLIX_PRODUCTS}},
+                                         "data": {"products": WALMART_PRODUCTS}},
                               headers={"x-credits-remaining": "812",
                                        "x-ratelimit-daily-remaining": "61"})
     http = httpx.Client(transport=httpx.MockTransport(ok))
     client = parsebot.ParseBotClient(client=http, key=KEY, pace=_instant_pacer())
-    _rows, _meta, stats = publix.scrape(
+    _rows, _meta, stats = walmart.scrape(
         postal_code="27401", client=client, now=NOW, queries=["a", "b", "c"])
     assert stats["parsebot_calls"] == 3
     assert stats["parsebot_credits_remaining"] == "812"

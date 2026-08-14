@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Local-first grocery price/deal planner.
 
 Scrapes grocery deals, stores them in a local SQLite database, and lets you

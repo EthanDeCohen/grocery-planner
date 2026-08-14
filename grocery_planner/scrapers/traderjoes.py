@@ -1,272 +1,35 @@
-"""Trader Joe's, from its own Magento 2 GraphQL endpoint (GFP-264).
+# ######### decohen-partners ##########
+# Protein Ledger
+"""Trader Joe's, from its own Magento GraphQL endpoint (GFP-264).
 
-``https://www.traderjoes.com/api/graphql`` is a stock Magento 2 Commerce
-GraphQL API with the guard rails left off. Verified live on 2026-08-11:
+In:  a ZIP (picks the store) and an optional page limit.
+Out: deal rows with prices and sizes, plus nutrition where the label has it.
 
-* ``POST {"query":"{__typename}"}`` returns ``{"data":{"__typename":"Query"}}``.
-  Arbitrary queries run -- there is **no persisted-query allow-list**, which is
-  the single biggest difference from Sprouts (GFP-257), where every operation
-  has to be a hash the server already knows and the hashes rot on each deploy.
-* Introspection is **enabled** -- ``{__schema{types{name}}}`` returns 599 types.
-  So every field name in this module was *read off the schema*, not guessed,
-  and anyone maintaining it can re-read the schema rather than reverse-engineer
-  a bundle.
-* No auth of any kind. No cookie, no token, no browser step. ``Origin`` and
-  ``Referer`` are sent because it is polite, not because anything checks them.
+The cheapest source in the project to run: no auth, no cookie, no browser step,
+no persisted-query allow-list, and introspection is on -- so field names here
+were read off the schema rather than guessed.
 
-That makes this the cheapest source in the project to stand up -- cheaper even
-than Sprouts, which at least needed a guest session minted first.
+Five things that will bite you if you edit this:
 
-WHAT THIS SOURCE IS: a Sprouts-tier source, not a Flipp-tier one
-----------------------------------------------------------------
-The deciding question for any new store is whether it carries protein, because
-that is what says whether rows can be priced per gram of protein directly or
-have to go through a USDA matching pass first. **Trader Joe's carries it.**
-``nutrition`` is a product attribute holding a full nutrition panel: serving
-size, servings per container, calories, and a ``details`` list with a Protein
-line. So this behaves like Kroger, Whole Foods and Sprouts -- the label is the
-authority for this exact product -- and unlike Flipp, which has no nutrition at
-all.
+* Everything useful (nutrition, size, price) lives in ``custom_attributesV2``,
+  not as a product field. That argument **requires** its ``filters`` -- omit it
+  and you get "Internal server error" for that one field while the response
+  still returns HTTP 200. Easy to miss.
+* Serving sizes are free text and some are volumes ("12 fl oz (360mL)").
+  Reading 360 as grams would invent a density for every drink in the catalogue,
+  so :func:`serving_grams` refuses when the only metric figure is a volume.
+* ``sales_size`` and ``sales_uom_description`` are meaningless apart -- a bare
+  "1.000000" needs its unit.
+* Prices are **per store** (~580 of them) and 924 of 2,454 products aren't
+  carried in Greensboro. But no query argument anywhere takes a location, so
+  the store is picked by filtering the returned lists, not by asking.
+* Pacing starts at a 0.5s floor, not the 0.08s used for GraphQL elsewhere.
+  That floor is the rate the original measurement used; the other budget was
+  measured against a different host and reusing it would be assuming the answer.
 
-Measured over the full published catalogue on 2026-08-11 (2,454 products):
-
-======================================  ======  =====================
-                                        count   share of catalogue
-======================================  ======  =====================
-published products                       2,454  100%
-priced                                   2,454  100%
-carry a nutrition panel                  1,664  68%
-...with a usable protein number          1,566  64%
-...with a computable protein density     1,238  50%
-======================================  ======  =====================
-
-Half the catalogue arrives priced *and* with a label-derived protein density.
-No USDA matching needed for those rows.
-
-THE ATTRIBUTE INDIRECTION
--------------------------
-Everything this module actually wants -- nutrition, size, per-store price --
-lives in ``custom_attributesV2``, **not** as a field on ``ProductInterface``.
-Introspecting ``SimpleProduct`` lists 58 fields and none of them is
-``nutrition``; the same names appear in ``ProductAttributeFilterInput`` as
-filter inputs, which is the clue that they are Magento custom attributes.
-``attributesList(entityType:CATALOG_PRODUCT)`` enumerates all 80 of them.
-
-Two consequences worth knowing before editing the query:
-
-1. ``custom_attributesV2`` **requires its ``filters`` argument**. Omitting it
-   returns ``"Internal server error"`` against that one field while the rest of
-   the response succeeds -- a partial failure that is easy to miss because the
-   HTTP status is still 200.
-2. The filter takes only booleans (``is_visible_on_front`` and friends). There
-   is **no way to request attributes by code**, so asking for ``nutrition``
-   also drags in ``availability``, ``retail_price`` and ``promotion`` -- three
-   per-store JSON blobs of ~20 KB each. That is ~60 KB per product of payload
-   nobody asked for, and it is not optional. It is also, usefully, exactly
-   where the per-store price lives, so this module reads the price out of those
-   blobs rather than *additionally* selecting ``store_specific_info`` -- which
-   carries the same facts again and measured 35% more wire (183 KB vs 119 KB
-   per 24 products).
-
-Attribute values are **JSON documents inside GraphQL ``String`` fields**. They
-must be ``json.loads``-ed, and they are ``"[]"`` -- not ``null`` -- when empty.
-
-THE PARTIAL-FAILURE TRAP: HTTP 200 with a server error inside
---------------------------------------------------------------
-**132 of 2,454 published products (5.4%) come back with
-``custom_attributesV2: null``** and an ``"Internal server error"`` entry in the
-response's ``errors`` list. The HTTP status is 200 and ``data.products.items``
-is fully populated, so nothing about the response looks wrong. Reproduced on
-two separate full runs; 7 of 25 pages carried at least one.
-
-Those products arrive with **no nutrition, no size and no per-store price** --
-they still get a row, priced from the national figure, but they are
-indistinguishable from products that genuinely have none of those things
-unless someone counts them. That is precisely the shape of bug this project
-keeps legislating against, and it caught this module's own first measurement
-pass: "132 products have no size on file" was really "132 products failed
-server-side", and the two readings are not the same fact.
-
-So it is counted (``stats["products_missing_attributes"]``) and logged, and
-:func:`parse_listing` records it per product rather than letting an empty
-attribute map stand in for an absent one. It is *not* retried: it reproduced on
-the same products across runs, so it looks like bad catalogue data rather than
-a transient blip, and retrying 132 products every scrape would spend requests
-to reach the same answer.
-
-THE PANEL TRAP: 'Per Container' reuses the per-serving serving size
--------------------------------------------------------------------
-This is the most dangerous thing in this module and the reason
-:func:`select_panel` exists.
-
-``nutrition`` is a *list* of panels. 289 of the 1,664 products with a panel
-have more than one, and the second is almost always a whole-container restatement
-of the first. The trap is that the ``serving_size`` **string is copied verbatim
-into both panels while the amounts are not**::
-
-    CHICKEN SHU MAI            servings_per_container: "Serves 3"
-      panel 0  "Per Serving"    serving_size "6 pieces with 1 Tbsp. sauce (104g)"   protein 11 g
-      panel 1  "Per Container"  serving_size "6 pieces with 1 Tbsp. sauce (104g)"   protein 33 g
-                                             ^^^^^^^^^^^ identical ^^^^^^^^^^^
-
-Reading protein off panel 1 and serving grams off the string gives
-33/104*100 = 31.7 g per 100 g instead of the true 10.6 -- a **3x
-overstatement** that would rank steamed dumplings alongside whey isolate and
-put them at the top of every cheapest-protein list. Measured across all 209
-products with a titled container panel, the container/serving calorie ratio was
-above 1.05 in **209 of 209 cases** and never once 1.0, so this is the rule for
-this source and not an occasional glitch.
-
-This is the same *class* of bug as kroger.py's ``soldBy=WEIGHT`` trap and
-sprouts.py's ``per lb`` trap -- two figures that look combinable and are
-denominated differently -- and like those, it bites hardest on the
-highest-protein items, which is precisely what makes it worth this much prose.
-
-The defence is deliberately belt-and-braces: :func:`select_panel` takes the
-lowest ``display_sequence`` **and** independently refuses any panel whose title
-mentions a container or a package. Either rule alone would have worked on the
-2026-08 data; both together survive one of them changing.
-
-Multi-panel products also include baking mixes, where panel 1 is the *prepared*
-food ("Per prepared portion") and includes eggs and butter the shopper has to
-buy separately. Same rule, same answer: take panel 0.
-
-THE 'less than' TRAP
---------------------
-Protein arrives as a **string with its unit attached** -- ``"26 g"``, ``"26g"``
--- and 93 of 1,660 protein lines instead read ``"less than 1 g"`` (in four
-different capitalisations). A ``float()`` raises on those; stripping the
-non-digits yields ``1``, which *overstates* protein on an item that has
-essentially none, and overstating protein understates cost per gram of protein,
-which is the one direction of error this project must never make silently.
-
-:func:`protein_grams` returns ``None`` for a bounded value. An upper bound is
-not a measurement (savings.py rule 1), and the items concerned are oils and
-jams whose loss costs the optimiser nothing.
-
-THE 'Serves about' TRAP
------------------------
-``servings_per_container`` is prose, not a number. Of 1,664 panels only **6**
-hold a bare numeral; the rest read ``"Serves 4"``, ``"Serves about 8"``,
-``"Serves about 2.5"`` or ``"Servings varied"``. Sprouts' plain-number rule
-would return ``None`` for 99.6% of this catalogue, so :func:`servings_per_container`
-understands the ``Serves [about] N`` dialect -- and still refuses
-``"Servings varied"`` rather than guessing 1.
-
-THE VOLUME TRAP
----------------
-Serving sizes are free text and several shapes are volumes:
-``"1 Tbsp. (15mL)"``, ``"12 fl oz (360mL)"``, ``"2 Tbsp (30 mL)"``. Reading
-``15`` as grams would invent a density for every beverage and condiment in the
-catalogue. :func:`serving_grams` strips fluid-ounce spellings first and then
-refuses outright when the only metric figure present is a volume. The same
-question is asked again of the *package* size, where ``sales_uom_description``
-is one of ``Fl Oz``/``mL``/``L``/``Pint``/``Qt`` for 444 of 2,454 products.
-
-SIZE: two fields that are meaningless apart
--------------------------------------------
-``sales_size`` is a bare decimal string (``"1.000000"``) and
-``sales_uom_description`` is its unit (``"Oz"``, ``"Lb"``, ``"Fl Oz"``,
-``"Each"``, ``"mL"``, ``"Bag"``, ``"Doz"``...). Neither means anything alone.
-:func:`size_text` joins them into the one grammar the rest of the project
-already speaks -- the string ``savings.parse_size`` reads -- rather than
-growing a second size parser here.
-
-Every published product that the server actually rendered carries both halves:
-the only 132 without a size are exactly the 132 of the partial-failure trap
-above, which is how that trap was found.
-
-WHAT THIS SOURCE DOES *NOT* HAVE: a per-pound denomination
------------------------------------------------------------
-Kroger has ``soldBy``. Sprouts prints ``"per lb"``. **Trader Joe's has
-neither**, and the schema has no field for it -- there is no ``soldBy``, no
-``price_type``, nothing in the 80 attributes that distinguishes a rate from a
-package.
-
-The evidence says it does not need one. All 181 ``Lb`` products carry integer
-sizes (153 of them exactly ``1.000000``) and are things like ``PASTA ORZO``
-1 lb $0.99, ``ROASTED & SALTED ALMONDS 1 LB`` $6.49 and ``GROUND TURKEY`` 1 lb
-$4.79 -- fixed packages at fixed prices, which is how Trader Joe's sells.
-``sales_size`` is therefore read as a **package quantity throughout** and
-``sold_by`` is ``"UNIT"`` for every row.
-
-Flagging this as the assumption it is: it rests on the observed distribution,
-not on a field that states it. If Trader Joe's ever starts pricing a case by
-the pound, nothing in this response would say so, and the failure would be
-silent. It is called out here so a future maintainer knows where to look.
-
-PRICING IS STORE-SCOPED, AND THERE IS NO WAY TO ASK BY ZIP
------------------------------------------------------------
-Both halves of that sentence matter.
-
-**It is store-scoped.** The ``retail_price`` attribute is a JSON list of
-``{"store_code": "0750", "value": "7.99"}`` covering ~580 of the ~660 stores,
-and the prices genuinely differ -- 8 of a 20-product sample had more than one
-distinct price across stores. ``availability`` is a second such list and is
-even more store-specific: 924 of 2,454 published products are simply not
-carried at the Greensboro store. The ``price`` attribute is labelled, by
-Trader Joe's own admin, **"Global TJ price"**, and there is a pseudo-store code
-``"TJ"`` alongside the real ones -- so the national figure is a real, deliberate
-fact, not a default that happens to be there.
-
-**But no argument anywhere takes a location.** Introspected and confirmed:
-
-* ``products(search, filter, pageSize, currentPage, sort)`` -- no postal code,
-  no coordinates, no store argument.
-* ``ProductAttributeFilterInput`` *does* accept ``store_code``, and it is a
-  **no-op**. ``total_count`` is 28,323 with ``store_code:{eq:"TJ"}``, with
-  ``{eq:"0750"}``, with ``{eq:"0003"}`` and with no filter at all. Filtering by
-  it looks like it works and does nothing; this module never uses it.
-* ``pickupLocations(area:{radius:100, search_term:"27401"})`` returns
-  ``total_count: 0``. It is wired up but empty.
-* ``availableStores`` returns exactly one entry, ``"Default Store View"`` --
-  the Magento *store view*, which has nothing to do with a physical shop.
-
-So the store must be chosen by *us* and the price read out of the blob. There
-is no ZIP pinning to invent here and this module does not pretend otherwise.
-
-Resolving a ZIP to a store code is a separate, and expensive, problem. The only
-machine-readable store list Trader Joe's publishes is the locator at
-``locations.traderjoes.com`` -- a different system (Soci local-pages, not
-Magento). Its sitemap is one cheap 220 KB request and yields all 661 stores as
-``/nc/greensboro/750/``, giving state, city and store number. **It does not
-carry postal codes**, and neither do the state pages; only the individual store
-page does. Building a national ZIP index would therefore cost 661 page fetches
-of ~130 KB -- ~86 MB to answer one question -- so this module does not do it.
-
-What it does instead:
-
-* :data:`STORE_CODE_BY_POSTAL_CODE` pins the ZIPs that have been verified by
-  hand, with the evidence recorded next to them.
-* :func:`verify_store` asks the locator whether a pinned store still exists and
-  what postal code it reports, so a closure or a renumbering fails **loudly**
-  rather than silently pricing against a store that is gone. Same reasoning as
-  sprouts.py's pinned-hash canary: a wrong answer that looks like a right
-  answer is the failure mode worth engineering against.
-* When no store code is known, :func:`scrape` falls back to the **national**
-  price -- which is a real published figure, not a guess -- and says so, in
-  every row's ``notes`` and in ``stats["pricing_scope"]``.
-
-PACING
-------
-No throttling was observed at any point: the full 25-page catalogue walk ran at
-pageSize 100 with a 0.5 s gap and returned 2,454 products in 98 s over 13.7 MB
-with zero non-200s. That is *not* a licence to go faster. Responses are large
-(~550 KB on the wire, ~5 s of server time each) and the endpoint is
-unauthenticated, so :data:`CATALOGUE_BUDGET` deliberately starts at a 0.5 s
-floor -- roughly the rate the measurement used, which is already known to be
-sustainable -- rather than at :data:`~grocery_planner.scrapers.retry.GRAPHQL_BUDGET`'s
-0.08 s, which was measured against a *different* host that had proved it could
-take 36 req/s. Reusing a budget measured elsewhere would be assuming the answer.
-
-NO SILENT CAPS
---------------
-``limit``, and the default of dropping products the chosen store does not
-stock, both bound what a run returns. Both are counted in ``stats``
-(``limit_applied``, ``filtered_unavailable``) and logged, because a truncated
-run that reads as a complete one is how a half-empty catalogue gets trusted.
-A product whose availability is simply *unknown* at the chosen store is kept --
-unknown is not absent, the same rule :func:`serves` follows.
+``limit`` and the "drop what this store doesn't stock" filter both bound a run,
+and both are counted in ``stats`` -- a truncated run that reads as a complete
+one is how a half-empty catalogue gets trusted.
 """
 from __future__ import annotations
 
@@ -379,7 +142,7 @@ query GroceryPlannerCatalogue($pageSize: Int!, $currentPage: Int!) {
 
 # Stripped before any mass is read: "12 FL OZ (360mL)" is a volume, and reading
 # 12 as ounces of mass would invent a density out of nothing.
-_FLUID = re.compile(r"\b(?:fl\.?\s*oz\.?|fluid\s+ounces?)\b", re.I)
+_FLUID = re.compile(r"\b(?:fl\.?\s*oz\.?|fluid\s+ounces?)\b", re.I)  # stripped first, so "fl oz" never reads as "oz"
 # "(80g)", "40 g", "129g/4.5 oz". The lookbehind stops "1/16" being read as a
 # mass and stops the "g" of a word being treated as a unit.
 _GRAMS = re.compile(r"(?<![\w.])([0-9]+(?:\.[0-9]+)?)\s*(?:grammes?|grams?|g)\b", re.I)
@@ -406,7 +169,7 @@ _STORE_URL = re.compile(
     r"<loc>\s*(https://locations\.traderjoes\.com/([a-z]{2})/([^/<>\s]+)/([0-9]+)/)\s*</loc>",
     re.I,
 )
-_POSTAL_CODE = re.compile(r'"postalCode"\s*:\s*"?([0-9]{5})', re.I)
+_POSTAL_CODE = re.compile(r'"postalCode"\s*:\s*"?([0-9]{5})', re.I)  # dug out of the store page's embedded JSON
 
 
 class TraderJoesError(RuntimeError):
@@ -534,7 +297,8 @@ def json_attribute(raw: str | None) -> list[dict[str, Any]]:
         value = json.loads(raw)
     except (ValueError, TypeError):
         return []
-    return [entry for entry in value if isinstance(entry, dict)] if isinstance(value, list) else []
+    # Only dict entries are usable; anything else in the list is noise.
+    return [e for e in value if isinstance(e, dict)] if isinstance(value, list) else []
 
 
 def store_scoped_value(blob: list[dict[str, Any]], store_code: str | None) -> str | None:
@@ -595,7 +359,7 @@ def label_number(amount: Any) -> float | None:
     if amount is None:
         return None
     text = str(amount).strip()
-    if not text or _BOUNDED.search(text):
+    if not text or _BOUNDED.search(text):  # 'less than 1 g' is a bound, not a number
         return None
     match = _LEADING_NUMBER.search(text)
     if not match:

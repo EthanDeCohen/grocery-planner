@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Credential provider seam (GFP-97): where secrets come from, in one place.
 
 **This deliberately does NOT build a token broker.** There is one operator
