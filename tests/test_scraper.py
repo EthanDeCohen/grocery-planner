@@ -214,13 +214,19 @@ def test_store_registry():
     # harristeeter/harristeeter-api, and it carries its own SCRAPER_KEY for
     # the same reason sprouts-storefront does -- the banner registers last
     # and would otherwise shadow it.
+    # GFP-293: 'publix-storefront' is a THIRD feed for the same shop -- the
+    # Instacart white-label at delivery.publix.com, a third tenant of the
+    # platform client already serving sprouts and aldi. Publix now holds the
+    # record for feeds per store: the Flipp banner, the Parse.bot catalogue and
+    # this. It carries its own SCRAPER_KEY for the same last-write-wins reason
+    # as the others, and it is the only one of the three needing no credential.
     assert set(SCRAPERS) == {
         "acme", "aldi", "aldi-storefront", "foodlion", "foodlion-catalog",
         "giant", "giant-ad", "harristeeter", "harristeeter-api", "hmart",
         "lidl", "lidl-catalogue", "lowesfoods", "publix", "sprouts",
         "sprouts-storefront",
         "target", "traderjoes", "wegmans", "wegmans-api", "weis", "wholefoods",
-        "publix-catalog", "walmart",
+        "publix-catalog", "publix-storefront", "walmart",
     }
     # Every registered module exposes the thin store-scraper surface the CLI uses.
     for key, mod in SCRAPERS.items():
