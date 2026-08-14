@@ -1,6 +1,8 @@
 """Tests for the shared front-end-agnostic service layer (GFP-14)."""
 import pytest
 
+import conftest
+
 from grocery_planner import service
 
 # --------------------------------------------------------------------------- #
@@ -118,40 +120,13 @@ def test_available_scrapers_lists_known_stores():
 
 
 def test_all_scrapers_includes_every_registered_store_regardless_of_readiness():
-    # GFP-4: wholefoods is registered but (in this test environment, with no
-    # hand-minted session cookie) not ready -- all_scrapers() must still name
-    # it; available_scrapers() must not.
-    # GFP-98 adds 'harristeeter-api' (Kroger shelf prices), which like
-    # wholefoods is registered but not ready without credentials.
-    # GFP-247: 'foodlion-catalog' and 'giant' are the PRISM product
-    # catalogue -- one scraper, two banners. 'foodlion-catalog' is a SECOND
-    # feed for the same shop as 'foodlion' (ad vs catalogue), the same
-    # shape as harristeeter/harristeeter-api above.
-    # GFP-265: 'sprouts-storefront' is the Instacart storefront feed for the
-    # same shop as the 'sprouts' Flipp banner -- the same two-feeds-one-store
-    # shape as harristeeter/harristeeter-api. It had been silently shadowed by
-    # the banner until it was given its own SCRAPER_KEY.
-    # 'aldi-storefront' is the second tenant of that same Instacart client and
-    # collides with the Flipp 'aldi' banner in exactly the same way, so it
-    # carries its own SCRAPER_KEY too. GFP-264 adds 'traderjoes' -- a public
-    # Magento GraphQL API, and the only one of the three with no collision,
-    # which is why it needs no SCRAPER_KEY of its own.
-    # GFP-270 adds 'walmart' (a new shop, reached through the Parse.bot vendor
-    # client) and 'publix-catalog' (a second feed for the existing 'publix'
-    # banner). Neither is ready without a Parse.bot key, which is exactly why
-    # they belong in all_scrapers() and not in available_scrapers().
-    # GFP-293 adds 'publix-storefront', giving Publix THREE feeds: the Flipp
-    # banner, the Parse.bot catalogue, and the Instacart storefront that
-    # supersedes it. Unlike the other two it needs no credential, so it is the
-    # one of the three that is also in available_scrapers().
-    assert set(service.all_scrapers()) == {
-        "acme", "aldi", "aldi-storefront", "foodlion", "foodlion-catalog",
-        "giant", "giant-ad", "harristeeter", "harristeeter-api", "hmart",
-        "lidl", "lidl-catalogue", "lowesfoods", "publix", "sprouts",
-        "sprouts-storefront",
-        "target", "traderjoes", "wegmans", "wegmans-api", "weis", "wholefoods",
-        "publix-catalog", "publix-storefront", "walmart",
-    }
+    # Same hand-maintained declaration test_scraper.py asserts against --
+    # conftest.KNOWN_SCRAPER_KEYS (GFP-303). This test's own point is the
+    # DIFFERENCE between all_scrapers() and available_scrapers(): a store
+    # can be registered without being ready (wholefoods needs a session
+    # cookie, the Parse.bot sources need a key), and all_scrapers() must
+    # still name it.
+    assert set(service.all_scrapers()) == conftest.KNOWN_SCRAPER_KEYS
 
 
 def test_scraper_status_unknown_store_raises():
