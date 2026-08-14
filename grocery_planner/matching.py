@@ -62,7 +62,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from . import db
+from . import db, protein_kind
 
 CONFIDENCE_HIGH = 0.9
 CONFIDENCE_MEDIUM = 0.6
@@ -107,9 +107,22 @@ def _has(text: str, *phrases: str) -> bool:
 # low-confidence fallback either. Found by actually running the matcher over
 # the real database and inspecting every match (see the PR description) --
 # not guessed in advance.
+# GFP-279: what remains here is deliberately ONLY the matcher's own business --
+# brand collisions ("Cape Cod" chips, "Nestle Drumstick" cones) and product
+# forms the curated catalog has no entry for (franks, corn dogs, sausage,
+# biscuits, sauce, jerky), where the objection is "we have nothing to match this
+# to", not "this is not meat".
+#
+# `broth` and `soup` USED to be here too, and that duplication is what caused
+# the bug this ticket exists for. `protein_kind.DISQUALIFIERS` also listed them
+# -- along with stock, bouillon, consommé and gravy, which this list never
+# had. Two vocabularies for one idea, maintained by hand, drifted: "beef cooking
+# stock" passed this filter because only `broth` was written down here, and got
+# matched to beef sirloin. They are gone from here and the single vocabulary in
+# `protein_kind` is consulted below instead.
 _EXCLUDE = re.compile(
     r"\b(dog|cat|pet|litter|shampoo|conditioner|detergent|treat|treats|"
-    r"broth|soup|jerky|cone|cones|dessert|salad|dip|cape cod|frank|franks|"
+    r"jerky|cone|cones|dessert|salad|dip|cape cod|frank|franks|"
     r"hot dog|hotdog|corn dog|corn dogs|sausage|biscuit|sauce)\b",
     re.IGNORECASE,
 )
@@ -138,12 +151,11 @@ _LEAN_PCT = re.compile(r"(\d{1,3})\s*%\s*lean", re.IGNORECASE)
 # Beef cuts that identify the species even when the word "beef" itself is
 # absent -- e.g. "85% Lean Fresh Ground Round" never says "beef", but
 # "round" is a beef cut.
-_BEEF_CUT_WORDS = (
-    "ground round", "sirloin", "ribeye", "rib eye", "chuck roast", "chuck",
-    "brisket", "t-bone", "porterhouse", "new york strip", "london broil",
-    "filet mignon", "top round", "bottom round", "flank steak",
-    "skirt steak", "prime rib",
-)
+# GFP-280: ONE list of beef cuts, owned by protein_kind, imported here.
+# This module's copy used to be the longer of two and the species decision used
+# the shorter one, so routing species through protein_kind without unifying them
+# would have made "T-Bone Steak" unclassifiable.
+_BEEF_CUT_WORDS = protein_kind.BEEF_CUT_WORDS
 
 
 def _match_beef(text: str) -> MatchResult | None:
@@ -295,7 +307,39 @@ def _match_whey(text: str) -> MatchResult | None:
     return None
 
 
-_MATCHERS = (_match_beef, _match_pork, _match_chicken, _match_fish, _match_tofu, _match_whey)
+# GFP-280: SPECIES IS DECIDED ONCE, BY protein_kind. These choose only the CUT,
+# and are called only when the species is already settled -- so there is no
+# longer a priority order between them, which is what removes the bug.
+#
+# The old fixed order (beef, pork, chicken, fish, ...) meant the first matcher
+# whose trigger word appeared won outright. Measured 2026-08-12:
+#   "Villari Prime Boneless Pork Ribeye" hit _match_beef on "ribeye" and never
+#   reached _match_pork; "Chicken of the Sea ... Salmon" hit _match_chicken.
+_CUT_MATCHER_FOR_KIND = {
+    "beef": _match_beef,
+    "pork": _match_pork,
+    "chicken": _match_chicken,
+    "fish": _match_fish,
+    # `_match_fish` owns shrimp too -- the curated catalog has a `shrimp` food
+    # (kind: shellfish), so shellfish is NOT one of the species below. Assuming
+    # it was cost one test, which is exactly the guard GFP-285 asks for.
+    "shellfish": _match_fish,
+}
+
+#: Kinds protein_kind can name that the CURATED catalog has no food for. There
+#: is no `turkey-breast` slug -- every turkey food is retailer-specific
+#: (kroger-*, wholefoods-*), which a source_ref cannot point at.
+#:
+#: Declining is the honest answer and is the entire fix: "Butterball Turkey
+#: Bacon" previously matched `bacon` at 0.9 confidence and was served as PORK.
+#: Unmatched is strictly better than confidently wrong, especially for a client
+#: whose restriction is religious or medical (GFP-135).
+_KINDS_WITHOUT_A_CURATED_FOOD = frozenset({"turkey", "lamb"})
+
+#: Matchers for things that are not an animal species at all, so
+#: `kind_from_name` returns None for them. They must still get their turn --
+#: dispatching on species alone would silently drop tofu and whey entirely.
+_NON_ANIMAL_MATCHERS = (_match_tofu, _match_whey)
 
 
 def match_item(item_name: str | None) -> MatchResult | None:
@@ -307,7 +351,35 @@ def match_item(item_name: str | None) -> MatchResult | None:
     text = headline(item_name)
     if not text or _EXCLUDE.search(text):
         return None
-    for matcher in _MATCHERS:
+    # GFP-279: ONE vocabulary for "this is not a cut of meat", and it lives in
+    # protein_kind. Adding a word there now vetoes it here automatically, which
+    # is the property this check exists to buy -- a guard that asserts a
+    # relationship instead of restating a spelling (GFP-179).
+    #
+    # Measured before the fix: "Hanover Brown Sugar & Bacon Baked Beans" matched
+    # 'Bacon, raw' at 0.9 confidence, and inherited BACON'S protein density.
+    # Confidence was never the problem -- the matcher was very sure, and wrong
+    # about what the thing was.
+    #
+    # `is_disqualified`, not `is_not_a_protein_buy`, and the difference is
+    # deliberate: mapping "Beyond Burger" onto beef-sirloin-steak would give a
+    # plant patty beef's density, so the matcher must refuse analogues too. The
+    # bill uses the narrower predicate because there the same analogue is a
+    # perfectly good thing to buy. Same vocabulary, different question.
+    if protein_kind.is_disqualified(text):
+        return None
+
+    # Species first, from the one module that owns that question.
+    kind = protein_kind.kind_from_name(text)
+    if kind is not None:
+        cut_matcher = _CUT_MATCHER_FOR_KIND.get(kind)
+        if cut_matcher is None:
+            return None           # named species, nothing curated to point at
+        return cut_matcher(text)  # cut only; species is already settled
+
+    # No animal species named. Tofu and whey answer a different question and
+    # still get their turn.
+    for matcher in _NON_ANIMAL_MATCHERS:
         result = matcher(text)
         if result is not None:
             return result
@@ -367,6 +439,7 @@ def match_deals(conn: sqlite3.Connection | None = None) -> dict[str, Any]:
     matched = unmatched = skipped_manual = missing_food = 0
     by_confidence = {"high": 0, "medium": 0, "low": 0}
     upsert_rows: list[tuple[str, str, int, float, str, str]] = []
+    retract_keys: list[tuple[str, str]] = []
 
     for row in pairs:
         store, item_name = row["store"], row["item_name"]
@@ -376,6 +449,13 @@ def match_deals(conn: sqlite3.Connection | None = None) -> dict[str, Any]:
         result = match_item(item_name)
         if result is None:
             unmatched += 1
+            # GFP-279: an item the rules now REJECT must lose the match it was
+            # given when they were laxer. Without this the veto only governs
+            # items seen for the first time, so tightening a rule fixes the
+            # future and leaves the past exactly as wrong as it was -- measured
+            # here: re-running after the fix changed the match count by 0 and
+            # left beans still pointing at 'Bacon, raw' with bacon's density.
+            retract_keys.append((store, item_name))
             continue
         food_id = food_ids.get(result.source_ref)
         if food_id is None:
@@ -395,6 +475,25 @@ def match_deals(conn: sqlite3.Connection | None = None) -> dict[str, Any]:
             by_confidence["low"] += 1
         upsert_rows.append((store, item_name, food_id, result.confidence, result.method, now))
 
+    # Retract before upserting, so `retracted` counts only removals and is not
+    # muddled by rows the upsert then re-adds. `match_source <> MANUAL` is the
+    # load-bearing clause: a nutritionist's correction is never undone, and
+    # neither is a retailer-supplied match. "BUSH'S Original Baked Beans"
+    # arrives via kroger_api_direct pointing at a Plant Protein food -- beans
+    # matched to beans, entirely correct, and it must survive a rule that
+    # rejects the NAME.
+    retracted = 0
+    if retract_keys:
+        before = own.execute("SELECT COUNT(*) FROM deal_food_match").fetchone()[0]
+        own.executemany(
+            "DELETE FROM deal_food_match "
+            f"WHERE store=? AND item_name=? AND match_source <> '{MANUAL}'",
+            retract_keys,
+        )
+        retracted = before - own.execute(
+            "SELECT COUNT(*) FROM deal_food_match"
+        ).fetchone()[0]
+
     own.executemany(
         "INSERT INTO deal_food_match"
         "(store, item_name, food_id, confidence, method, match_source, updated_at) "
@@ -411,6 +510,7 @@ def match_deals(conn: sqlite3.Connection | None = None) -> dict[str, Any]:
         "distinct_items": len(pairs),
         "matched": matched,
         "unmatched": unmatched,
+        "retracted": retracted,
         "skipped_manual": skipped_manual,
         "missing_food_reference": missing_food,
         "by_confidence": by_confidence,

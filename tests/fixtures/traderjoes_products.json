@@ -1,0 +1,400 @@
+[
+ {
+  "sku": "046189",
+  "name": "CHICKEN SHU MAI",
+  "url_key": "046189-chicken-shu-mai",
+  "price_range": {
+   "minimum_price": {
+    "final_price": {
+     "value": 3.99,
+     "currency": "USD"
+    }
+   }
+  },
+  "custom_attributesV2": {
+   "items": [
+    {
+     "code": "item_title",
+     "value": "Chicken Shu Mai"
+    },
+    {
+     "code": "sales_size",
+     "value": "11.000000"
+    },
+    {
+     "code": "sales_uom_code",
+     "value": "179"
+    },
+    {
+     "code": "sales_uom_description",
+     "value": "Oz"
+    },
+    {
+     "code": "country_of_origin",
+     "value": "Product of United States"
+    },
+    {
+     "code": "availability",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"1\"}, {\"store_code\": \"0750\", \"value\": \"1\"}, {\"store_code\": \"TJ\", \"value\": \"1\"}]"
+    },
+    {
+     "code": "retail_price",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"3.99\"}, {\"store_code\": \"0750\", \"value\": \"3.99\"}]"
+    },
+    {
+     "code": "nutrition",
+     "value": "[{\"display_sequence\":\"0\",\"panel_id\":\"1\",\"panel_title\":\"Per serving\",\"serving_size\":\"6 pieces with 1 Tbsp. sauce (104g)\",\"calories_per_serving\":\"130\",\"servings_per_container\":\"Serves 3\",\"details\":[{\"display_seq\":\"1\",\"nutritional_item\":\"Total Fat\",\"amount\":\"3.0 g\",\"percent_dv\":\".04\"},{\"display_seq\":\"2\",\"nutritional_item\":\"Saturated Fat\",\"amount\":\"0.5 g\",\"percent_dv\":\".03\"},{\"display_seq\":\"3\",\"nutritional_item\":\"Trans Fat\",\"amount\":\"0 g\",\"percent_dv\":\"\"},{\"display_seq\":\"4\",\"nutritional_item\":\"Cholesterol\",\"amount\":\"40 mg\",\"percent_dv\":\".13\"},{\"display_seq\":\"5\",\"nutritional_item\":\"Sodium\",\"amount\":\"760 mg\",\"percent_dv\":\".33\"},{\"display_seq\":\"6\",\"nutritional_item\":\"Total Carbohydrate\",\"amount\":\"16 g\",\"percent_dv\":\".06\"},{\"display_seq\":\"7\",\"nutritional_item\":\"Dietary Fiber\",\"amount\":\"1 g\",\"percent_dv\":\".04\"},{\"display_seq\":\"8\",\"nutritional_item\":\"Total Sugars\",\"amount\":\"6 g\",\"percent_dv\":\"\"},{\"display_seq\":\"9\",\"nutritional_item\":\"Added Sugars\",\"amount\":\"4 g Added Sugars\",\"percent_dv\":\".08\"},{\"display_seq\":\"10\",\"nutritional_item\":\"Protein\",\"amount\":\"11 g\",\"percent_dv\":\"\"},{\"display_seq\":\"11\",\"nutritional_item\":\"Vitamin D\",\"amount\":\"0.0 mcg\",\"percent_dv\":\"0\"},{\"display_seq\":\"12\",\"nutritional_item\":\"Calcium\",\"amount\":\"20 mg\",\"percent_dv\":\"0\"},{\"display_seq\":\"13\",\"nutritional_item\":\"Iron\",\"amount\":\"1.0 mg\",\"percent_dv\":\".06\"},{\"display_seq\":\"14\",\"nutritional_item\":\"Potassium\",\"amount\":\"190 mg\",\"percent_dv\":\".04\"}]},{\"display_sequence\":\"1\",\"panel_id\":\"2\",\"panel_title\":\"Per container\",\"serving_size\":\"6 pieces with 1 Tbsp. sauce (104g)\",\"calories_per_serving\":\"390\",\"servings_per_container\":\"Serves 3\",\"details\":[{\"display_seq\":\"1\",\"nutritional_item\":\"Total Fat\",\"amount\":\"10 g\",\"percent_dv\":\".13\"},{\"display_seq\":\"2\",\"nutritional_item\":\"Saturated Fat\",\"amount\":\"2.0 g\",\"percent_dv\":\".1\"},{\"display_seq\":\"3\",\"nutritional_item\":\"Trans Fat\",\"amount\":\"0 g\",\"percent_dv\":\"\"},{\"display_seq\":\"4\",\"nutritional_item\":\"Cholesterol\",\"amount\":\"115 mg\",\"percent_dv\":\".38\"},{\"display_seq\":\"5\",\"nutritional_item\":\"Sodium\",\"amount\":\"2270 mg\",\"percent_dv\":\".99\"},{\"display_seq\":\"6\",\"nutritional_item\":\"Total Carbohydrate\",\"amount\":\"49 g\",\"percent_dv\":\".18\"},{\"display_seq\":\"7\",\"nutritional_item\":\"Dietary Fiber\",\"amount\":\"3 g\",\"percent_dv\":\".11\"},{\"display_seq\":\"8\",\"nutritional_item\":\"Total Sugars\",\"amount\":\"17 g\",\"percent_dv\":\"\"},{\"display_seq\":\"9\",\"nutritional_item\":\"Added Sugars\",\"amount\":\"13 g Added Sugars\",\"percent_dv\":\".26\"},{\"display_seq\":\"10\",\"nutritional_item\":\"Protein\",\"amount\":\"33 g\",\"percent_dv\":\"\"},{\"display_seq\":\"11\",\"nutritional_item\":\"Vitamin D\",\"amount\":\"0.1 mcg\",\"percent_dv\":\"0\"},{\"display_seq\":\"12\",\"nutritional_item\":\"Calcium\",\"amount\":\"50 mg\",\"percent_dv\":\".04\"},{\"display_seq\":\"13\",\"nutritional_item\":\"Iron\",\"amount\":\"3.1 mg\",\"percent_dv\":\".15\"},{\"display_seq\":\"14\",\"nutritional_item\":\"Potassium\",\"amount\":\"570 mg\",\"percent_dv\":\".1\"}]}]"
+    }
+   ]
+  }
+ },
+ {
+  "sku": "058523",
+  "name": "NATURAL CUBED CHICKEN BREAST",
+  "url_key": "058523-natural-cubed-chicken-breast",
+  "price_range": {
+   "minimum_price": {
+    "final_price": {
+     "value": 7.99,
+     "currency": "USD"
+    }
+   }
+  },
+  "custom_attributesV2": {
+   "items": [
+    {
+     "code": "item_title",
+     "value": "NATURAL CUBED CHICKEN BREAST"
+    },
+    {
+     "code": "sales_size",
+     "value": "1.000000"
+    },
+    {
+     "code": "sales_uom_code",
+     "value": "180"
+    },
+    {
+     "code": "sales_uom_description",
+     "value": "Lb"
+    },
+    {
+     "code": "country_of_origin",
+     "value": "Hatched, Raised and Harvested in United States"
+    },
+    {
+     "code": "availability",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"1\"}, {\"store_code\": \"0750\", \"value\": \"0\"}, {\"store_code\": \"TJ\", \"value\": \"1\"}]"
+    },
+    {
+     "code": "retail_price",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"7.99\"}, {\"store_code\": \"0750\", \"value\": \"7.99\"}]"
+    },
+    {
+     "code": "nutrition",
+     "value": "[{\"display_sequence\":\"0\",\"panel_id\":\"1\",\"panel_title\":\"\",\"serving_size\":\"4 oz raw (112g)\",\"calories_per_serving\":\"140\",\"servings_per_container\":\"Servings varied\",\"details\":[{\"display_seq\":\"1\",\"nutritional_item\":\"Total Fat\",\"amount\":\"3g\",\"percent_dv\":\".05\"},{\"display_seq\":\"2\",\"nutritional_item\":\"Saturated Fat\",\"amount\":\"0.5g\",\"percent_dv\":\".03\"},{\"display_seq\":\"3\",\"nutritional_item\":\"Trans Fat\",\"amount\":\"0g\",\"percent_dv\":\"\"},{\"display_seq\":\"4\",\"nutritional_item\":\"Cholesterol\",\"amount\":\"85mg\",\"percent_dv\":\".28\"},{\"display_seq\":\"5\",\"nutritional_item\":\"Sodium\",\"amount\":\"50mg\",\"percent_dv\":\".02\"},{\"display_seq\":\"6\",\"nutritional_item\":\"Total Carbohydrate\",\"amount\":\"0g\",\"percent_dv\":\"0\"},{\"display_seq\":\"7\",\"nutritional_item\":\"Fiber\",\"amount\":\"0g\",\"percent_dv\":\"0\"},{\"display_seq\":\"8\",\"nutritional_item\":\"Sugars\",\"amount\":\"0g\",\"percent_dv\":\"\"},{\"display_seq\":\"9\",\"nutritional_item\":\"Protein\",\"amount\":\"26g\",\"percent_dv\":\"\"},{\"display_seq\":\"10\",\"nutritional_item\":\"Vitamin A\",\"amount\":\"\",\"percent_dv\":\"0\"},{\"display_seq\":\"11\",\"nutritional_item\":\"Vitamin C\",\"amount\":\"\",\"percent_dv\":\"0\"},{\"display_seq\":\"12\",\"nutritional_item\":\"Calcium\",\"amount\":\"\",\"percent_dv\":\"0\"},{\"display_seq\":\"13\",\"nutritional_item\":\"Iron\",\"amount\":\"\",\"percent_dv\":\".02\"}]}]"
+    }
+   ]
+  }
+ },
+ {
+  "sku": "001610",
+  "name": "GARLIC STUFFED OLIVES",
+  "url_key": "001610-garlic-stuffed-olives",
+  "price_range": {
+   "minimum_price": {
+    "final_price": {
+     "value": 4.49,
+     "currency": "USD"
+    }
+   }
+  },
+  "custom_attributesV2": {
+   "items": [
+    {
+     "code": "item_title",
+     "value": "Colossal Olives Stuffed with Garlic Cloves"
+    },
+    {
+     "code": "sales_size",
+     "value": "16.000000"
+    },
+    {
+     "code": "sales_uom_code",
+     "value": "179"
+    },
+    {
+     "code": "sales_uom_description",
+     "value": "Oz"
+    },
+    {
+     "code": "country_of_origin",
+     "value": "U.S.A."
+    },
+    {
+     "code": "availability",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"1\"}, {\"store_code\": \"0750\", \"value\": \"1\"}, {\"store_code\": \"TJ\", \"value\": \"1\"}]"
+    },
+    {
+     "code": "retail_price",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"4.49\"}, {\"store_code\": \"0750\", \"value\": \"4.49\"}]"
+    },
+    {
+     "code": "nutrition",
+     "value": "[{\"display_sequence\":\"0\",\"panel_id\":\"1\",\"panel_title\":\"\",\"serving_size\":\"about 1 olive (9.5g)\",\"calories_per_serving\":\"15 \",\"servings_per_container\":\"Serves About 30\",\"details\":[{\"display_seq\":\"1\",\"nutritional_item\":\"Total Fat\",\"amount\":\"1 g\",\"percent_dv\":\".02\"},{\"display_seq\":\"2\",\"nutritional_item\":\"Saturated Fat\",\"amount\":\"0 g\",\"percent_dv\":\"0\"},{\"display_seq\":\"3\",\"nutritional_item\":\"Trans Fat\",\"amount\":\"0 g\",\"percent_dv\":\"\"},{\"display_seq\":\"4\",\"nutritional_item\":\"Cholesterol\",\"amount\":\"0 mg\",\"percent_dv\":\"0\"},{\"display_seq\":\"5\",\"nutritional_item\":\"Sodium\",\"amount\":\"150 mg\",\"percent_dv\":\".06\"},{\"display_seq\":\"6\",\"nutritional_item\":\"Total Carbohydrate\",\"amount\":\"less than 1 g\",\"percent_dv\":\"0\"},{\"display_seq\":\"7\",\"nutritional_item\":\"Dietary Fiber\",\"amount\":\"1 g\",\"percent_dv\":\".04\"},{\"display_seq\":\"8\",\"nutritional_item\":\"Total Sugars\",\"amount\":\"0 g\",\"percent_dv\":\"\"},{\"display_seq\":\"9\",\"nutritional_item\":\"Includes\",\"amount\":\"0 g Added Sugars\",\"percent_dv\":\"0\"},{\"display_seq\":\"10\",\"nutritional_item\":\"Protein\",\"amount\":\"0 g\",\"percent_dv\":\"\"},{\"display_seq\":\"11\",\"nutritional_item\":\"Vitamin D\",\"amount\":\"0.0 mcg\",\"percent_dv\":\"0\"},{\"display_seq\":\"12\",\"nutritional_item\":\"Calcium\",\"amount\":\"10 mg\",\"percent_dv\":\"0\"},{\"display_seq\":\"13\",\"nutritional_item\":\"Iron\",\"amount\":\"0.0 mg\",\"percent_dv\":\"0\"},{\"display_seq\":\"14\",\"nutritional_item\":\"Potassium\",\"amount\":\"10 mg\",\"percent_dv\":\"0\"}]}]"
+    }
+   ]
+  }
+ },
+ {
+  "sku": "001437",
+  "name": "IMPORTED OLIVE OIL",
+  "url_key": "001437-imported-olive-oil",
+  "price_range": {
+   "minimum_price": {
+    "final_price": {
+     "value": 9.99,
+     "currency": "USD"
+    }
+   }
+  },
+  "custom_attributesV2": {
+   "items": [
+    {
+     "code": "item_title",
+     "value": "Imported Olive Oil Packed in Italy"
+    },
+    {
+     "code": "sales_size",
+     "value": "33.800000"
+    },
+    {
+     "code": "sales_uom_code",
+     "value": "198"
+    },
+    {
+     "code": "sales_uom_description",
+     "value": "Fl Oz"
+    },
+    {
+     "code": "country_of_origin",
+     "value": "Product of Italy"
+    },
+    {
+     "code": "availability",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"1\"}, {\"store_code\": \"0750\", \"value\": \"1\"}, {\"store_code\": \"TJ\", \"value\": \"1\"}]"
+    },
+    {
+     "code": "retail_price",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"9.99\"}, {\"store_code\": \"0750\", \"value\": \"9.99\"}]"
+    },
+    {
+     "code": "nutrition",
+     "value": "[{\"display_sequence\":\"0\",\"panel_id\":\"1\",\"panel_title\":null,\"serving_size\":\"1 Tbsp. (15mL)\",\"calories_per_serving\":\"120 \",\"servings_per_container\":\"Serves about 68\",\"details\":[{\"display_seq\":\"0\",\"nutritional_item\":\"Total Fat\",\"amount\":\"14 g\",\"percent_dv\":\".18\"},{\"display_seq\":\"1\",\"nutritional_item\":\"Saturated Fat\",\"amount\":\"2.0 g\",\"percent_dv\":\".1\"},{\"display_seq\":\"2\",\"nutritional_item\":\"Trans Fat\",\"amount\":\"0 g\",\"percent_dv\":null},{\"display_seq\":\"3\",\"nutritional_item\":\"Cholesterol\",\"amount\":\"0 mg\",\"percent_dv\":\"0\"},{\"display_seq\":\"4\",\"nutritional_item\":\"Sodium\",\"amount\":\"0 mg\",\"percent_dv\":\"0\"},{\"display_seq\":\"5\",\"nutritional_item\":\"Total Carbohydrate\",\"amount\":\"0 g\",\"percent_dv\":\"0\"},{\"display_seq\":\"6\",\"nutritional_item\":\"Dietary Fiber\",\"amount\":\"0 g\",\"percent_dv\":\"0\"},{\"display_seq\":\"7\",\"nutritional_item\":\"Total Sugars\",\"amount\":\"0 g\",\"percent_dv\":null},{\"display_seq\":\"8\",\"nutritional_item\":\"Includes\",\"amount\":\"0 g Added Sugars\",\"percent_dv\":\"0\"},{\"display_seq\":\"9\",\"nutritional_item\":\"Protein\",\"amount\":\"0 g\",\"percent_dv\":null},{\"display_seq\":\"10\",\"nutritional_item\":\"Vitamin D\",\"amount\":\"0.0 mcg\",\"percent_dv\":\"0\"},{\"display_seq\":\"11\",\"nutritional_item\":\"Calcium\",\"amount\":\"0 mg\",\"percent_dv\":\"0\"},{\"display_seq\":\"12\",\"nutritional_item\":\"Iron\",\"amount\":\"0.1 mg\",\"percent_dv\":\"0\"},{\"display_seq\":\"13\",\"nutritional_item\":\"Potassium\",\"amount\":\"0 mg\",\"percent_dv\":\"0\"},{\"display_seq\":\"15\",\"nutritional_item\":\"Monounsaturated Fat\",\"amount\":\"10 g\",\"percent_dv\":null},{\"display_seq\":\"16\",\"nutritional_item\":\"Polyunsaturated Fat\",\"amount\":\"1.5 g\",\"percent_dv\":null}]}]"
+    }
+   ]
+  }
+ },
+ {
+  "sku": "000152",
+  "name": "SOURDOUGH BREAD",
+  "url_key": "000152-sourdough-bread",
+  "price_range": {
+   "minimum_price": {
+    "final_price": {
+     "value": 3.69,
+     "currency": "USD"
+    }
+   }
+  },
+  "custom_attributesV2": {
+   "items": [
+    {
+     "code": "item_title",
+     "value": "Sourdough Bread Sliced"
+    },
+    {
+     "code": "sales_size",
+     "value": "24.000000"
+    },
+    {
+     "code": "sales_uom_code",
+     "value": "179"
+    },
+    {
+     "code": "sales_uom_description",
+     "value": "Oz"
+    },
+    {
+     "code": "country_of_origin",
+     "value": "Made in United States"
+    },
+    {
+     "code": "availability",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"1\"}, {\"store_code\": \"0750\", \"value\": \"1\"}, {\"store_code\": \"TJ\", \"value\": \"1\"}]"
+    },
+    {
+     "code": "retail_price",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"3.69\"}, {\"store_code\": \"0750\", \"value\": \"3.69\"}]"
+    },
+    {
+     "code": "nutrition",
+     "value": "[]"
+    }
+   ]
+  }
+ },
+ {
+  "sku": "006372",
+  "name": "PUMPKIN BUTTER",
+  "url_key": "006372-hol-pumpkin-butter",
+  "price_range": {
+   "minimum_price": {
+    "final_price": {
+     "value": 2.99,
+     "currency": "USD"
+    }
+   }
+  },
+  "custom_attributesV2": {
+   "items": [
+    {
+     "code": "item_title",
+     "value": "Pumpkin Butter"
+    },
+    {
+     "code": "sales_size",
+     "value": "10.000000"
+    },
+    {
+     "code": "sales_uom_code",
+     "value": "179"
+    },
+    {
+     "code": "sales_uom_description",
+     "value": "Oz"
+    },
+    {
+     "code": "country_of_origin",
+     "value": "Product of United States"
+    },
+    {
+     "code": "availability",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"0\"}, {\"store_code\": \"0750\", \"value\": \"0\"}, {\"store_code\": \"TJ\", \"value\": \"1\"}]"
+    },
+    {
+     "code": "retail_price",
+     "value": "[]"
+    },
+    {
+     "code": "nutrition",
+     "value": "[{\"display_sequence\":\"1\",\"panel_id\":\"1\",\"panel_title\":\"\",\"serving_size\":\"1 tbsp (18g)\",\"calories_per_serving\":\"45\",\"servings_per_container\":\"Serves about 16\",\"details\":[{\"display_seq\":\"1\",\"nutritional_item\":\"Total Fat\",\"amount\":\"0 g\",\"percent_dv\":\"0\"},{\"display_seq\":\"2\",\"nutritional_item\":\"Saturated Fat\",\"amount\":\"0 g\",\"percent_dv\":\"0\"},{\"display_seq\":\"3\",\"nutritional_item\":\"Trans Fat\",\"amount\":\"0 g\",\"percent_dv\":\"\"},{\"display_seq\":\"4\",\"nutritional_item\":\"Cholesterol\",\"amount\":\"0 mg\",\"percent_dv\":\"0\"},{\"display_seq\":\"5\",\"nutritional_item\":\"Sodium\",\"amount\":\"0 mg\",\"percent_dv\":\"0\"},{\"display_seq\":\"6\",\"nutritional_item\":\"Total Carbohydrate\",\"amount\":\"11 g\",\"percent_dv\":\".04\"},{\"display_seq\":\"7\",\"nutritional_item\":\"Dietary Fiber\",\"amount\":\"0 g\",\"percent_dv\":\"0\"},{\"display_seq\":\"8\",\"nutritional_item\":\"Total Sugars\",\"amount\":\"10 g\",\"percent_dv\":\"\"},{\"display_seq\":\"9\",\"nutritional_item\":\"Includes\",\"amount\":\"10 g Added Sugars\",\"percent_dv\":\".2\"},{\"display_seq\":\"10\",\"nutritional_item\":\"Protein\",\"amount\":\"0 g\",\"percent_dv\":\"\"},{\"display_seq\":\"11\",\"nutritional_item\":\"Vitamin D\",\"amount\":\"0.0 mcg\",\"percent_dv\":\"0\"},{\"display_seq\":\"12\",\"nutritional_item\":\"Calcium\",\"amount\":\"0 mg\",\"percent_dv\":\"0\"},{\"display_seq\":\"13\",\"nutritional_item\":\"Iron\",\"amount\":\"0.1 mg\",\"percent_dv\":\"0\"},{\"display_seq\":\"14\",\"nutritional_item\":\"Potassium\",\"amount\":\"0 mg\",\"percent_dv\":\"0\"}]}]"
+    }
+   ]
+  }
+ },
+ {
+  "sku": "006223",
+  "name": "SOUR CREAM PINT WHOLE",
+  "url_key": "006223-sour-cream-pint-whole",
+  "price_range": {
+   "minimum_price": {
+    "final_price": {
+     "value": 0,
+     "currency": "USD"
+    }
+   }
+  },
+  "custom_attributesV2": {
+   "items": [
+    {
+     "code": "item_title",
+     "value": "Sour Cream"
+    },
+    {
+     "code": "sales_size",
+     "value": "16.000000"
+    },
+    {
+     "code": "sales_uom_code",
+     "value": "179"
+    },
+    {
+     "code": "sales_uom_description",
+     "value": "Oz"
+    },
+    {
+     "code": "country_of_origin",
+     "value": "Product of United States"
+    },
+    {
+     "code": "availability",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"1\"}, {\"store_code\": \"0750\", \"value\": \"1\"}, {\"store_code\": \"TJ\", \"value\": \"1\"}]"
+    },
+    {
+     "code": "retail_price",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"2.49\"}, {\"store_code\": \"0750\", \"value\": \"2.49\"}]"
+    },
+    {
+     "code": "nutrition",
+     "value": "[{\"display_sequence\":\"0\",\"panel_id\":\"1\",\"panel_title\":\"\",\"serving_size\":\"2 Tbsp (30g)\",\"calories_per_serving\":\"60 \",\"servings_per_container\":\"Serves about 15\",\"details\":[{\"display_seq\":\"1\",\"nutritional_item\":\"Total Fat\",\"amount\":\"5 g\",\"percent_dv\":\".06\"},{\"display_seq\":\"2\",\"nutritional_item\":\"Saturated Fat\",\"amount\":\"3.0 g\",\"percent_dv\":\".15\"},{\"display_seq\":\"3\",\"nutritional_item\":\"Trans Fat\",\"amount\":\"0 g\",\"percent_dv\":\"\"},{\"display_seq\":\"4\",\"nutritional_item\":\"Cholesterol\",\"amount\":\"20 mg\",\"percent_dv\":\".07\"},{\"display_seq\":\"5\",\"nutritional_item\":\"Sodium\",\"amount\":\"20 mg\",\"percent_dv\":\".01\"},{\"display_seq\":\"6\",\"nutritional_item\":\"Total Carbohydrate\",\"amount\":\"2 g\",\"percent_dv\":\".01\"},{\"display_seq\":\"7\",\"nutritional_item\":\"Dietary Fiber\",\"amount\":\"0 g\",\"percent_dv\":\"0\"},{\"display_seq\":\"8\",\"nutritional_item\":\"Total Sugars\",\"amount\":\"2 g\",\"percent_dv\":\"\"},{\"display_seq\":\"9\",\"nutritional_item\":\"Includes\",\"amount\":\"0 g Added Sugars\",\"percent_dv\":\"0\"},{\"display_seq\":\"10\",\"nutritional_item\":\"Protein\",\"amount\":\"1 g\",\"percent_dv\":\"\"},{\"display_seq\":\"11\",\"nutritional_item\":\"Vitamin D\",\"amount\":\"0.2 mcg\",\"percent_dv\":\"0\"},{\"display_seq\":\"12\",\"nutritional_item\":\"Calcium\",\"amount\":\"50 mg\",\"percent_dv\":\".04\"},{\"display_seq\":\"13\",\"nutritional_item\":\"Iron\",\"amount\":\"0.0 mg\",\"percent_dv\":\"0\"},{\"display_seq\":\"14\",\"nutritional_item\":\"Potassium\",\"amount\":\"40 mg\",\"percent_dv\":\"0\"}]}]"
+    }
+   ]
+  }
+ },
+ {
+  "sku": "015688",
+  "name": "MUSHROOMS SHIITAKE",
+  "url_key": "015688-mushrooms-shiitake",
+  "price_range": {
+   "minimum_price": {
+    "final_price": {
+     "value": 2.99,
+     "currency": "USD"
+    }
+   }
+  },
+  "custom_attributesV2": {
+   "items": [
+    {
+     "code": "item_title",
+     "value": "Shiitake Mushrooms"
+    },
+    {
+     "code": "sales_size",
+     "value": "4.000000"
+    },
+    {
+     "code": "sales_uom_code",
+     "value": "179"
+    },
+    {
+     "code": "sales_uom_description",
+     "value": "Oz"
+    },
+    {
+     "code": "availability",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"1\"}, {\"store_code\": \"TJ\", \"value\": \"1\"}]"
+    },
+    {
+     "code": "retail_price",
+     "value": "[{\"store_code\": \"0003\", \"value\": \"2.99\"}, {\"store_code\": \"0750\", \"value\": \"3.49\"}]"
+    }
+   ]
+  }
+ },
+ {
+  "sku": "001487",
+  "name": "PEANUT BUTTER CREAMY UNSALTED",
+  "url_key": "001487-peanut-butter-creamy-unsalted",
+  "price_range": {
+   "minimum_price": {
+    "final_price": {
+     "value": 2.49,
+     "currency": "USD"
+    }
+   }
+  },
+  "custom_attributesV2": null
+ }
+]

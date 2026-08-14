@@ -13,7 +13,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from grocery_planner import service
+from grocery_planner import bill, service
 from grocery_planner.customers import Customer
 from grocery_planner.service import shopping, shoppingfmt
 
@@ -130,6 +130,141 @@ def test_the_list_records_when_it_was_generated(conn):
 def test_a_zero_or_negative_period_is_refused(conn):
     with pytest.raises(ValueError):
         service.grocery_list_for(_client(), days=0, conn=conn)
+
+
+# --------------------------------------------------------------------------- #
+# GFP-169: the list IS the plan
+#
+# The defect: grocery_list_for built from ONE day's bill multiplied by `days`
+# and accepted no Selection, while the client page beside it priced a varied
+# week_plan -- and vary-week has been the default since GFP-142. A nutritionist
+# approved one plan on screen; the client carried a different list into a shop.
+#
+# Note on what is NOT asserted here. The bill's `cost` is an AMORTISED daily
+# share at the deal's own $/g rate; the list's `estimated_cost` is whole
+# packages at the shelf price, rounded UP because you cannot buy 0.4 of a
+# packet. Those two are not equal by construction and asserting they were
+# would pin a falsehood. What makes the list "the plan" is that it contains
+# the plan's items and the plan's protein -- which is what these test.
+# --------------------------------------------------------------------------- #
+def _week(conn, customer, selection=None, days=7):
+    return bill.week_plan_for(customer, selection=selection, conn=conn, days=days)
+
+
+def _stock_a_varied_shelf(conn):
+    """Enough distinct proteins that a varied week can actually differ."""
+    _deal(conn, "Chicken Drumsticks, 1 lb", 1.49, sold_by="WEIGHT", uom="lb")
+    _deal(conn, "Ground Turkey, 1 lb", 1.99, sold_by="WEIGHT", uom="lb")
+    _deal(conn, "Pork Loin, 1 lb", 2.49, sold_by="WEIGHT", uom="lb")
+    _deal(conn, "Beef Chuck, 1 lb", 3.49, sold_by="WEIGHT", uom="lb")
+
+
+def test_the_list_carries_the_whole_varied_week_not_one_day_repeated(conn):
+    """THE REGRESSION. A varied week reaches the list as several items."""
+    _stock_a_varied_shelf(conn)
+    customer = _client()
+
+    glist = service.grocery_list_for(customer, days=7, conn=conn)
+    plan = _week(conn, customer)
+
+    planned = {(l.store, l.item_name) for day in plan.days for l in day.lines}
+    listed = {(i.store, i.item_name) for i in glist.items}
+    assert listed == planned
+    # The old code could only ever emit day one's items. If variety produced a
+    # week worth varying, the list has to show it.
+    if plan.distinct_items > 1:
+        assert len(glist.items) > 1
+
+
+def test_the_list_holds_the_plans_protein(conn):
+    """Aggregation must not lose or invent grams."""
+    _stock_a_varied_shelf(conn)
+    customer = _client()
+
+    glist = service.grocery_list_for(customer, days=7, conn=conn)
+    plan = _week(conn, customer)
+
+    assert sum(i.grams_protein for i in glist.items) == pytest.approx(
+        plan.covered_grams
+    )
+    assert glist.shortfall_grams == pytest.approx(
+        max(plan.target_grams - plan.covered_grams, 0.0)
+    )
+
+
+def test_single_store_produces_a_one_store_list(conn):
+    _deal(conn, "Chicken Drumsticks, 1 lb", 1.49, store="harristeeter",
+          sold_by="WEIGHT", uom="lb")
+    _deal(conn, "Ground Turkey, 1 lb", 0.99, store="wholefoods",
+          sold_by="WEIGHT", uom="lb")
+
+    glist = service.grocery_list_for(
+        _client(), days=7, conn=conn,
+        selection=bill.Selection(single_store=True),
+    )
+    assert len(glist.stores) == 1
+
+
+def test_the_selection_actually_reaches_the_list(conn):
+    """Two selections that plan differently must list differently.
+
+    Before GFP-169 the argument did not exist, so every selection produced the
+    identical list -- which is precisely how the list and the screen disagreed.
+    """
+    _stock_a_varied_shelf(conn)
+    customer = _client()
+
+    flat_sel = bill.Selection(vary_week=False)
+    varied = service.grocery_list_for(
+        customer, days=7, conn=conn, selection=bill.Selection(vary_week=True))
+    flat = service.grocery_list_for(
+        customer, days=7, conn=conn, selection=flat_sel)
+    flat_plan = _week(conn, customer, selection=flat_sel)
+
+    # A flat week repeats one day's allocation, so the list is exactly that
+    # day's items -- however many the allocator needed to hit the target.
+    assert {(i.store, i.item_name) for i in flat.items} == {
+        (l.store, l.item_name) for l in flat_plan.days[0].lines
+    }
+    assert flat_plan.repeated_days == 6, "a flat week is the same day seven times"
+    # Variety reaches for items the flat week never touches, and before GFP-169
+    # none of them could appear on a list at all.
+    assert len(varied.items) > len(flat.items)
+
+
+@pytest.mark.parametrize("cover_all", [False, True])
+@pytest.mark.parametrize("single_store", [False, True])
+@pytest.mark.parametrize("vary_week", [False, True])
+@pytest.mark.parametrize("days", [1, 7, 14])
+def test_list_protein_equals_plan_protein_across_selections(
+    conn, cover_all, single_store, vary_week, days,
+):
+    """The property test the ticket asked for.
+
+    Whatever the selection and however long the period, the list is an
+    aggregation of the plan -- so its items and its protein are the plan's.
+    This single test would have caught the original bug on every combination.
+    """
+    _stock_a_varied_shelf(conn)
+    _deal(conn, "Salmon Fillet, 1 lb", 6.99, store="wholefoods",
+          sold_by="WEIGHT", uom="lb")
+    customer = _client()
+    selection = bill.Selection(
+        cover_all_categories=cover_all,
+        single_store=single_store,
+        vary_week=vary_week,
+    )
+
+    glist = service.grocery_list_for(
+        customer, days=days, conn=conn, selection=selection)
+    plan = _week(conn, customer, selection=selection, days=days)
+
+    assert {(i.store, i.item_name) for i in glist.items} == {
+        (l.store, l.item_name) for day in plan.days for l in day.lines
+    }
+    assert sum(i.grams_protein for i in glist.items) == pytest.approx(
+        plan.covered_grams
+    )
 
 
 # --------------------------------------------------------------------------- #

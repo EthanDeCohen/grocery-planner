@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import matching, sourcelink
 from .stores import STORES, Store
 
 SOURCE_CSV = "csv-import"
@@ -139,9 +140,23 @@ def import_store(conn: sqlite3.Connection, store: Store, data_dir: Path) -> Impo
 
 
 def import_dir(conn: sqlite3.Connection, data_dir: Path) -> list[ImportResult]:
-    """Import every known store found under data_dir."""
+    """Import every known store found under data_dir, then match what landed.
+
+    GFP-121: this is the second of the two paths that write ``deals``, and it
+    had the same hole as the scrape path -- rows arrived and nothing ever
+    matched them to a food, so they could not reach a $/g protein figure and
+    were invisible to the optimiser.
+
+    Matched once after the whole directory rather than per store:
+    ``match_deals`` runs over every distinct ``(store, item_name)`` in the
+    table anyway, so calling it per store would repeat the same full sweep for
+    each folder present.
+    """
     results = []
     for store in STORES:
         if (data_dir / store.data_folder).is_dir():
             results.append(import_store(conn, store, data_dir))
+    if results:
+        matching.match_deals(conn=conn)
+        sourcelink.build_links(conn=conn)   # GFP-248
     return results

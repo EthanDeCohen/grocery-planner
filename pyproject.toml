@@ -49,5 +49,8 @@ db_script = ["init/*.ddl", "init/*.dml", "migration/*.ddl", "migration/*.dml", "
 grocery_planner = ["data/*.json", "assets/*.png"]
 
 [tool.pytest.ini_options]
+markers = [
+    "live: makes a real network request; excluded from the default offline run",
+]
 testpaths = ["tests"]
 addopts = "-q"

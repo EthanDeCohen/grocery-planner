@@ -124,8 +124,26 @@ from datetime import date, timedelta
 from enum import Enum
 from typing import Iterable
 
-from . import db, nutrition, preferences, savings, service, targets
+from . import db, nutrition, preferences, protein_kind, savings, service, targets
 from .customers import Customer, CustomerRepository
+
+#: The lowest match confidence a row may have and still be RECOMMENDED (GFP-271).
+#:
+#: `savings.cost_per_gram_protein` grades every row: 1.0 is a density measured
+#: from a published nutrition panel, 0.3 is a number scraped out of a product
+#: name with no servings-per-container behind it. Ranking is cheapest-first, so
+#: without a floor a 0.3 guess competes head-to-head with a 1.0 measurement and
+#: wins whenever the guess is low -- and a guess is wrong in the CHEAP direction
+#: far more often than the dear one, because the usual failure is missing a
+#: multiplier. An understatement therefore never sits harmlessly mid-list; it
+#: goes straight to the top, which is the only part of the list anyone reads.
+#:
+#: 0.9 rather than something softer, because the measurement that matters is
+#: what a floor COSTS: it removes 539 rows, and of those, sources publishing
+#: real panels barely notice (Sprouts keeps 111 of 112, Trader Joe's 865 of 870)
+#: while Lidl loses 168 of 269. That asymmetry is the point -- the floor is
+#: paid for almost entirely by rows that were guesses.
+MIN_MATCH_CONFIDENCE = 0.9
 
 # A UI should quote this (or something that says the same thing in fewer
 # words) next to any figure this module produces, so "amortised" never gets
@@ -640,10 +658,27 @@ def _eligible(
     as the bill. The two disagreeing is precisely the bug that ticket exists
     to fix, so they must not be able to.
     """
+    # GFP-271: this gate runs BEFORE the preference check and applies to every
+    # client, including one who has expressed no preferences at all.
+    #
+    # The old code returned `ranked` untouched when `applied_categories` was
+    # empty, reading "no preferences" as "no filtering". But stock is not a
+    # preference question -- `protein_kind` has disqualified broth and gravy all
+    # along, which is exactly why the cheapest-meat strip never showed them. The
+    # bill simply never asked, so a preference-less client got the one answer
+    # every other surface already knew to reject.
+    #
+    # Deliberately `is_not_a_protein_buy` and not `is_disqualified`: the latter
+    # also rejects plant-based analogues, and using it here would delete a vegan
+    # client's entire diet on the way to removing a stock cube.
+    buyable = [
+        item for item in ranked
+        if not protein_kind.is_not_a_protein_buy(item.get("item_name"))
+    ]
     if not applied_categories:
-        return ranked
+        return buyable
     allowed_ids = nutrition.food_ids_in(applied_categories, conn=conn)
-    return [item for item in ranked if item.get("food_id") in allowed_ids]
+    return [item for item in buyable if item.get("food_id") in allowed_ids]
 
 
 def effective_cost_per_gram(
@@ -714,7 +749,7 @@ def _build_bill(
     # Cheapest $/g-protein first; anything unpriceable is already dropped --
     # this module never re-derives that chain, only allocates against it.
     ranked = savings.rank_by_cost_per_gram_protein(
-        all_deals, conn=conn, limit=0, min_confidence=None
+        all_deals, conn=conn, limit=0, min_confidence=MIN_MATCH_CONFIDENCE
     )
     excluded_deals = len(all_deals) - len(ranked)
 
@@ -889,7 +924,7 @@ def rank_history_by_day(
 
     return {
         day: savings.rank_by_cost_per_gram_protein(
-            deals, conn=conn, limit=0, min_confidence=None
+            deals, conn=conn, limit=0, min_confidence=MIN_MATCH_CONFIDENCE
         )
         for day, deals in by_day.items()
     }
@@ -961,7 +996,7 @@ def rank_current_deals(conn: sqlite3.Connection) -> tuple[list[dict], int]:
     """
     all_deals = service.fetch_deals(hide_expired=True, conn=conn)
     ranked = savings.rank_by_cost_per_gram_protein(
-        all_deals, conn=conn, limit=0, min_confidence=None
+        all_deals, conn=conn, limit=0, min_confidence=MIN_MATCH_CONFIDENCE
     )
     return ranked, len(all_deals) - len(ranked)
 
@@ -972,17 +1007,42 @@ def week_plan(
     selection: Selection | None = None,
     conn: sqlite3.Connection | None = None,
     ranked: tuple[list[dict], int] | None = None,
+    days: int = DAYS_IN_WEEK,
 ) -> WeekPlan | None:
     """Seven daily plans, varied or not per ``selection``. ``None`` with no target."""
     own = conn or db.connect()
     customer = CustomerRepository.get(customer_id, conn=own)
     if customer is None:
         return None
+    return week_plan_for(
+        customer, categories, selection, own, ranked, days
+    )
+
+
+def week_plan_for(
+    customer: Customer,
+    categories: Iterable[str] | None = None,
+    selection: Selection | None = None,
+    conn: sqlite3.Connection | None = None,
+    ranked: tuple[list[dict], int] | None = None,
+    days: int = DAYS_IN_WEEK,
+) -> WeekPlan | None:
+    """The same plan for an ALREADY-LOADED customer, as :func:`daily_bill_for` is.
+
+    Exists because GFP-169's shopping list holds a :class:`Customer`, not an
+    id, and re-fetching it to build the plan would be the second lookup that
+    lets the list and the on-screen plan drift apart -- which is the whole
+    defect that ticket exists to close.
+
+    ``None`` on the same terms as :func:`daily_bill_for`: no weight on file
+    means no target, and a plan built on a guessed weight is worse than none.
+    """
+    own = conn or db.connect()
     target = targets.protein_target_for(customer, conn=own)
     if target is None or not target.daily_grams:
         return None
     return _week_from(
-        target.daily_grams, customer_id, categories, selection, own, ranked
+        target.daily_grams, customer.id, categories, selection, own, ranked, days
     )
 
 
@@ -993,6 +1053,7 @@ def _week_from(
     selection: Selection | None,
     conn: sqlite3.Connection,
     ranked: tuple[list[dict], int] | None = None,
+    days: int = DAYS_IN_WEEK,
 ) -> WeekPlan:
     """Build the week one day at a time.
 
@@ -1001,7 +1062,15 @@ def _week_from(
     solved with recently-used items withheld, and if that cannot cover the
     target the day is re-solved with the full pool. Variety gives way. The
     nutrition never does (GFP-131/GFP-136).
+
+    ``days`` defaults to a week and is a parameter only because GFP-169 needs
+    a shopping list to cover the period the caller asked for. The variety
+    lookback stays fixed at :data:`VARIETY_LOOKBACK_DAYS` regardless: it is a
+    statement about not eating the same thing twice running, which does not
+    change because the period got longer.
     """
+    if days < 1:
+        raise ValueError("a plan covers at least one day")
     selection = selection or Selection()
 
     if customer_id is not None and categories is None:
@@ -1012,10 +1081,10 @@ def _week_from(
     pool_ranked, excluded = ranked if ranked is not None else rank_current_deals(conn)
     eligible = _eligible(pool_ranked, applied, conn)
 
-    days: list[Bill] = []
+    built: list[Bill] = []
     recent: list[set[str]] = []            # item names used, most recent last
 
-    for _day in range(DAYS_IN_WEEK):
+    for _day in range(days):
         pool = eligible
         if selection.vary_week:
             avoid = {
@@ -1032,7 +1101,7 @@ def _week_from(
         else:
             lines = _select(pool, daily_target, applied, selection, conn)
 
-        days.append(Bill(
+        built.append(Bill(
             target_grams=daily_target,
             lines=lines,
             total_cost=sum(l.cost for l in lines),
@@ -1044,4 +1113,4 @@ def _week_from(
         ))
         recent.append({l.item_name for l in lines})
 
-    return WeekPlan(days=days, selection=selection)
+    return WeekPlan(days=built, selection=selection)

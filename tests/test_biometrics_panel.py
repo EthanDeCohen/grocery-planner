@@ -344,12 +344,22 @@ def test_the_slider_moves_the_headline_live(panel):
 
 
 def test_the_ends_are_labelled_in_grams_for_this_client(panel):
-    """0.8 and 1.0 mean nothing to a nutritionist mid-consultation; 109 and
-    137 g/day do."""
+    """A bare factor means nothing to a nutritionist mid-consultation; g/day does.
+
+    GFP-282: this used to hard-code "109 g/day", which is 0.8 x pounds. That is
+    an assertion about a SPELLING -- it broke the moment the band's floor moved
+    to the federal 0.54, even though the panel was behaving perfectly. Derived
+    from the constants instead, so the next band change tests the label rather
+    than merely disturbing it.
+    """
     ana = _add("Ana Ruiz", 62.0, "kg")
     panel.set_client(ana.id)
+    from grocery_planner.customers import PRESCRIBED_MAX_FACTOR, PRESCRIBED_MIN_FACTOR
+    pounds = 62.0 / KG_PER_LB
     ends = panel.factor_ends.text()
-    assert "109 g/day" in ends and "137 g/day" in ends
+    # The PRESCRIBED ends, matching what the label says beside each figure.
+    assert f"{round(pounds * PRESCRIBED_MIN_FACTOR)} g/day" in ends
+    assert f"{round(pounds * PRESCRIBED_MAX_FACTOR)} g/day" in ends
 
 
 def test_the_ends_say_which_weight_they_came_from(panel):
@@ -496,3 +506,38 @@ def test_a_stored_budget_is_shown_on_load(panel):
     )
     panel.set_client(ana.id)
     assert panel.budget_spin.value() == pytest.approx(25.0)
+
+
+# --------------------------------------------------------------------------- #
+# GFP-282: the prescribed band must CONTAIN the federal recommendation.
+#
+# The floor was 0.8 while the 2025-2030 Dietary Guidelines recommend 0.54-0.73
+# g/lb, so the two ranges did not overlap at a single point -- and per GFP-133
+# the band is a hard refusal, not a warning. A nutritionist could not prescribe
+# at the published federal figure.
+# --------------------------------------------------------------------------- #
+def test_the_band_contains_the_federal_recommendation():
+    """Asserts the RELATIONSHIP, so the next guidelines edition fails a test.
+
+    Deliberately not `MIN_PROTEIN_FACTOR == 0.54`. That would pass for the wrong
+    reason and would still pass if the federal figure moved underneath it --
+    which is exactly how the 0.8 floor survived the January 2026 revision.
+    """
+    from grocery_planner.customers import (
+        USDA_PROTEIN_FACTOR_MAX, USDA_PROTEIN_FACTOR_MIN,
+    )
+    assert MIN_PROTEIN_FACTOR <= USDA_PROTEIN_FACTOR_MIN
+    assert MAX_PROTEIN_FACTOR >= USDA_PROTEIN_FACTOR_MAX
+
+
+def test_the_nutritionists_own_prescription_is_still_the_default():
+    """Widening the band must not change what a new client actually gets.
+
+    0.8 is the practitioner's stated conservative end ("0.8 or 1 g per pound of
+    desired body weight"). GFP-282 makes the federal range REACHABLE; it does
+    not overrule her. Her figure moves from being the limit to being the
+    default, and every previously-saved factor stays inside the band.
+    """
+    from grocery_planner.customers import DEFAULT_PROTEIN_FACTOR
+    assert DEFAULT_PROTEIN_FACTOR == 0.8
+    assert MIN_PROTEIN_FACTOR <= DEFAULT_PROTEIN_FACTOR <= MAX_PROTEIN_FACTOR

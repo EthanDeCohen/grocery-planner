@@ -54,11 +54,12 @@ both purely as an opaque half of the ``deal_food_match`` lookup key
 """
 from __future__ import annotations
 
+import sqlite3
 import types
 
 import pytest
 
-from grocery_planner import matching, savings
+from grocery_planner import importers, matching, savings
 from grocery_planner.scrapers import SCRAPERS
 from grocery_planner.service import ingest
 
@@ -221,3 +222,86 @@ def test_an_unregistered_store_key_is_neither(monkeypatch):
     assert key not in ingest.available_scrapers()
     with pytest.raises(ingest.UnknownStoreError):
         ingest.scraper_status(key)
+
+
+# --------------------------------------------------------------------------- #
+# GFP-121: ingest must MATCH what it writes, for every store
+#
+# The defect these cover. `matching.match_deals` was called from nowhere in
+# production code -- only from tests, which is exactly why it hid. Kroger and
+# Whole Foods write `deal_food_match` inline from their own scraper modules, so
+# the two stores with bespoke ingest looked healthy; Food Lion, which has no
+# bespoke path, had ZERO match rows and its 297 priced deals could never reach
+# a $/g protein figure, `gplan cheapest`, the trends chart or a grocery list.
+#
+# Every test above this point calls match_deals() by hand, so all of them
+# passed throughout. The missing assertion was never "does the matcher work"
+# -- it does -- but "does anything ever RUN it". These tests do not call it.
+# --------------------------------------------------------------------------- #
+class _ChickenScraper:
+    """One matchable row, so a scrape has something a matcher should catch."""
+
+    DEFAULT_POSTAL_CODE = "27401"
+
+    def scrape(self, postal_code=None, include_coupons=True):
+        row = {c: None for c in importers.DEAL_COLUMNS}
+        row.update(item_name=CHICKEN, sub_category="Meat & Seafood",
+                   deal_type="Weekly Ad", dollar_price=CHICKEN_PRICE,
+                   sale_price=CHICKEN_PRICE, valid_from="2026-06-08",
+                   valid_to="2026-06-16")
+        return [row], {"id": 1}, {"total": 1}
+
+
+@pytest.mark.parametrize("store", [
+    "foodlion",                                # the store that had zero rows
+    "brand-new-grocery-mart-9000",             # and any store added later
+])
+def test_scraping_matches_the_deals_it_writes(conn, monkeypatch, store):
+    """THE REGRESSION. Nobody calls match_deals here -- ingest must."""
+    monkeypatch.setitem(ingest.SCRAPERS, store, _ChickenScraper())
+    ingest.run_scrape(store, postal_code="27401", conn=conn)
+
+    match = matching.get_match(store, CHICKEN, conn=conn)
+    assert match is not None, (
+        f"{store}: deals were written but never matched, so they are "
+        "invisible to $/g protein"
+    )
+    assert match["confidence"] == EXPECTED_CONFIDENCE
+
+
+def test_scraping_reports_what_it_matched(conn, monkeypatch):
+    """The summary carries the match counts, so a silent zero is visible."""
+    monkeypatch.setitem(ingest.SCRAPERS, "foodlion", _ChickenScraper())
+    result = ingest.run_scrape("foodlion", postal_code="27401", conn=conn)
+    assert result["matches"]["matched"] >= 1
+
+
+def test_a_scrape_still_succeeds_when_matching_fails(conn, monkeypatch):
+    """The prices are the point; unmatched deals recover on the next run."""
+    monkeypatch.setitem(ingest.SCRAPERS, "foodlion", _ChickenScraper())
+
+    def boom(conn=None):
+        raise sqlite3.OperationalError("matching exploded")
+
+    monkeypatch.setattr(ingest.matching, "match_deals", boom)
+    result = ingest.run_scrape("foodlion", postal_code="27401", conn=conn)
+
+    assert result["matches"] is None
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM deals WHERE store='foodlion'"
+    ).fetchone()["n"] == 1, "the scrape's rows must survive a matching failure"
+
+
+def test_importing_csv_matches_the_deals_it_writes(conn, tmp_path):
+    """The OTHER path that writes deals had the identical hole."""
+    folder = tmp_path / "foodlion"
+    folder.mkdir()
+    header = ",".join(importers.DEAL_COLUMNS)
+    blanks = "," * (len(importers.DEAL_COLUMNS) - 4)
+    (folder / "deals.csv").write_text(
+        f"{header}\n\"{CHICKEN}\",Meat & Seafood,Weekly Ad,{CHICKEN_PRICE}{blanks}\n",
+        encoding="utf-8",
+    )
+    importers.import_dir(conn, tmp_path)
+
+    assert matching.get_match("foodlion", CHICKEN, conn=conn) is not None

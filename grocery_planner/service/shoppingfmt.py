@@ -36,13 +36,14 @@ import html
 import io
 from pathlib import Path
 
+from .. import weight_basis
 from .shopping import GroceryList
 
 #: Columns for the CSV. Explicit and ordered so the file is a stable contract
 #: rather than whatever the dataclass happens to expose today.
 CSV_COLUMNS = [
     "store", "item", "quantity", "unit", "estimated_cost", "shelf_price",
-    "grams_protein", "sku", "sku_namespace", "url",
+    "grams_protein", "sku", "sku_namespace", "url", "weight_basis",
 ]
 
 #: Never "Buy now". Carried over from GFP-38/GFP-99: these links reach a
@@ -86,7 +87,9 @@ def to_text(glist: GroceryList) -> str:
         width = max(len(i.quantity_label) for i in items)
         for item in items:
             cost = _money(item.estimated_cost)
-            out.append(f"  {item.quantity_label:<{width}}  {item.item_name}")
+            mark = weight_basis.marker(
+                weight_basis.basis_for(item.sold_by, item.weight_basis))
+            out.append(f"  {item.quantity_label:<{width}}  {item.item_name}{mark}")
             detail = f"  {'':<{width}}  {cost}"
             if item.product_identifier:
                 detail += f"  ·  SKU {item.product_identifier}"
@@ -98,6 +101,12 @@ def to_text(glist: GroceryList) -> str:
         out.append("")
 
     out.append(f"Estimated total: {_money(glist.total_cost)}")
+    # A marker with no legend is an unexplained symbol, and this page leaves the
+    # screen -- it gets printed and carried. Only the states actually present.
+    for mark, note in weight_basis.footnotes_for(
+        [weight_basis.basis_for(i.sold_by, i.weight_basis) for i in glist.items]
+    ):
+        out.append(f"{mark}  {note}")
     if glist.unpriced:
         out.append(
             f"{len(glist.unpriced)} item(s) have no quantity: their package "
@@ -123,6 +132,9 @@ def to_csv(glist: GroceryList) -> str:
             item.product_identifier or "",
             item.product_identifier_ns or "",
             item.source_url or "",
+            # The basis as DATA, not as a dagger: a glyph in a CSV cell is not
+            # something a spreadsheet or an ordering system can act on.
+            weight_basis.basis_for(item.sold_by, item.weight_basis) or "",
         ])
     return buffer.getvalue()
 
@@ -175,8 +187,10 @@ def to_html(glist: GroceryList) -> str:
     for store_label, items in glist.by_store():
         parts.append(f"<h2>{esc(store_label)}</h2><ul>")
         for item in items:
+            mark = weight_basis.marker(
+                weight_basis.basis_for(item.sold_by, item.weight_basis))
             row = [f'<span class="qty">{esc(item.quantity_label)}</span>',
-                   esc(item.item_name)]
+                   esc(item.item_name) + esc(mark)]
             if item.source_url:
                 row.append(
                     f' — <a href="{esc(item.source_url)}" '
@@ -190,6 +204,11 @@ def to_html(glist: GroceryList) -> str:
         parts.append("</ul>")
 
     parts.append(f'<p class="total">Estimated total: {_money(glist.total_cost)}</p>')
+    # Same rule as the text renderer: only the markers actually on the page.
+    for mark, note in weight_basis.footnotes_for(
+        [weight_basis.basis_for(i.sold_by, i.weight_basis) for i in glist.items]
+    ):
+        parts.append(f'<p class="footnote">{esc(mark)}  {esc(note)}</p>')
     if glist.unpriced:
         parts.append(
             f'<p class="note">{len(glist.unpriced)} item(s) have no quantity: '

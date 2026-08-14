@@ -92,6 +92,53 @@ COUNT = "each"
 # this is the last multiplication in the chain and should not compound the
 # table's own rounding.
 GRAMS_PER_OZ = 28.349523125
+OUNCES_PER_LB = 16.0
+# DERIVED, never written out. The literal 453.59237 previously appeared in
+# three unrelated places (service/shopping.py, scrapers/kroger.py's unit table,
+# and by hand in per-pound arithmetic), which is three chances for one of them
+# to be edited and the others not. Deriving it means the pound and the ounce
+# can never disagree about what a gram is.
+GRAMS_PER_LB = GRAMS_PER_OZ * OUNCES_PER_LB  # 453.59237
+
+
+def pounds_to_grams(pounds: float | None) -> float | None:
+    """Grams in ``pounds``. ``None`` in, ``None`` out (this module's rule 1)."""
+    return None if pounds is None else pounds * GRAMS_PER_LB
+
+
+def grams_to_pounds(grams: float | None) -> float | None:
+    """The inverse of :func:`pounds_to_grams`, for display back in pounds."""
+    return None if grams is None else grams / GRAMS_PER_LB
+
+
+def price_per_gram_from_per_pound(price_per_pound: float | None) -> float | None:
+    """Dollars per gram, given a dollars-per-pound shelf price.
+
+    The customer-facing conversion. Fresh meat -- the highest-protein aisle in
+    every store -- is priced per pound, while everything this app compares is
+    denominated per gram, so this is the join between the two and the single
+    place the arithmetic should live.
+
+    A non-positive price returns ``None`` rather than 0.0: a free pound of
+    chicken is a data error, and letting it through would sort straight to the
+    top of every cheapest-protein list.
+    """
+    if price_per_pound is None or price_per_pound <= 0:
+        return None
+    return price_per_pound / GRAMS_PER_LB
+
+
+def price_per_100g_from_per_pound(price_per_pound: float | None) -> float | None:
+    """Dollars per 100 g, given a dollars-per-pound price.
+
+    Exists because 100 g is the unit the nutrition side is denominated in
+    (``food_nutrients.amount_per_100g``) and the unit shelf labels outside the
+    US use, so it is the more legible of the two for display. Derived from
+    :func:`price_per_gram_from_per_pound` rather than re-divided, so the two
+    can never round apart.
+    """
+    per_gram = price_per_gram_from_per_pound(price_per_pound)
+    return None if per_gram is None else per_gram * 100.0
 
 # unit token -> (base, multiplier into that base)
 _UNITS: dict[str, tuple[str, float]] = {
@@ -416,6 +463,26 @@ def cost_per_gram_protein(
         return None
 
     size = parse_size(item_name)
+
+    # GFP-248: a promotional name carries no size, so the sale price -- the one
+    # number a nutritionist opens this app to find -- could never reach a $/g
+    # figure, while the catalogue row for the SAME product had the size at full
+    # price. When this store has a catalogue feed and a link was established
+    # (both names matched the same food AND their words overlap), borrow that
+    # row's size. Absent a link, everything below behaves exactly as before:
+    # this adds a path, it never removes one.
+    borrowed = None
+    if size is None or size.base_unit != WEIGHT:
+        # Imported here, not at module scope: sourcelink imports THIS module
+        # for parse_size/WEIGHT, so a top-level import would be a cycle.
+        from . import sourcelink
+
+        link = sourcelink.get_link(store, item_name, conn=conn)
+        if link is not None:
+            candidate = parse_size(link.linked_item_name)
+            if candidate is not None and candidate.base_unit == WEIGHT:
+                size, borrowed = candidate, link
+
     # Only a weight-based size converts to grams; `each`/`fl oz` cannot (see
     # the module docstring's cost_per_gram_protein paragraph). When there is
     # no weight-based size, fall through to the GFP-69 label-claim path below
@@ -441,13 +508,25 @@ def cost_per_gram_protein(
         if protein_grams <= 0:
             return None
 
+        # GFP-248: a borrowed size is real evidence -- the catalogue measured
+        # this product -- but it is one inference removed from the row being
+        # priced, so the result must not claim the confidence of a size read
+        # directly off the name. Take the weaker of the two, and say in the
+        # method that a borrow happened, so a nutritionist auditing a
+        # surprising number can see where the package weight came from.
+        confidence = match["confidence"]
+        method = match["method"]
+        if borrowed is not None:
+            confidence = min(confidence, borrowed.confidence)
+            method = f"{method}+{borrowed.method}"
+
         return ProteinCost(
             cost_per_gram_protein=price / protein_grams,
             food_id=match["food_id"],
             food_name=food["name"],
             protein_source=food["source"],
-            match_confidence=match["confidence"],
-            match_method=match["method"],
+            match_confidence=confidence,
+            match_method=method,
             size_grams=size_grams,
             protein_grams=protein_grams,
         )

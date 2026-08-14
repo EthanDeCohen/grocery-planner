@@ -54,7 +54,7 @@ def test_the_top_of_her_range(conn):
 
 @pytest.mark.parametrize("pounds,low,high", [(150, 120, 150), (180, 144, 180),
                                              (120, 96, 120), (200, 160, 200)])
-def test_the_band_is_always_08_to_10_per_pound(conn, pounds, low, high):
+def test_the_band_shown_is_always_the_prescribed_08_to_10(conn, pounds, low, high):
     client = _client(conn, desired_weight_kg=lb_to_kg(pounds))
     target = targets.protein_target_for(client, conn=conn)
     assert round(target.daily_low_grams) == low
@@ -120,9 +120,18 @@ def test_the_factor_is_per_pound_not_per_kilogram(conn):
 
 def test_the_default_factor_is_the_conservative_end(conn):
     """A tool that computes what somebody eats should not pick the top of a
-    professional's band on their behalf."""
-    assert DEFAULT_PROTEIN_FACTOR == MIN_PROTEIN_FACTOR == 0.8
-    assert MAX_PROTEIN_FACTOR == 1.0
+    professional's band on their behalf.
+
+    GFP-282: this used to read DEFAULT == MIN == 0.8, which quietly assumed the
+    admissible floor and the prescribed floor were the same number. They are no
+    longer -- the input admits the federal 0.54 -- so the assertion now says
+    what it always meant: the default is the CONSERVATIVE END OF HER BAND, and
+    it is admissible.
+    """
+    from grocery_planner.customers import PRESCRIBED_MAX_FACTOR, PRESCRIBED_MIN_FACTOR
+    assert DEFAULT_PROTEIN_FACTOR == PRESCRIBED_MIN_FACTOR
+    assert DEFAULT_PROTEIN_FACTOR < PRESCRIBED_MAX_FACTOR
+    assert MIN_PROTEIN_FACTOR <= DEFAULT_PROTEIN_FACTOR <= MAX_PROTEIN_FACTOR
 
 
 def test_the_old_default_is_gone(conn):
@@ -212,9 +221,15 @@ def test_the_old_default_clamps_upward(conn):
     upward, because the old default sat under the nutritionist's range.
     Targets rise; none fall. On a nutrition tool that is the direction to
     err in."""
+    from grocery_planner.customers import PRESCRIBED_MAX_FACTOR, PRESCRIBED_MIN_FACTOR
     converted = 1.6 * KG_PER_LB
-    assert converted < MIN_PROTEIN_FACTOR
-    assert max(MIN_PROTEIN_FACTOR, min(MAX_PROTEIN_FACTOR, converted)) == MIN_PROTEIN_FACTOR
+    # GFP-282: clamped to HER floor, not the admissible one. 0.726 is now inside
+    # the admissible range (which reaches down to the federal 0.54), so clamping
+    # against MIN_PROTEIN_FACTOR would leave a migrated client below the range
+    # their nutritionist prescribed -- under-fed, which is the direction this
+    # test exists to prevent.
+    assert converted < PRESCRIBED_MIN_FACTOR
+    assert max(PRESCRIBED_MIN_FACTOR, min(PRESCRIBED_MAX_FACTOR, converted)) == PRESCRIBED_MIN_FACTOR
 
 
 def test_a_hand_set_factor_is_converted_not_preserved(conn):

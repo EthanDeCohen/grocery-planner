@@ -7,17 +7,25 @@ the scrape + persist logic lives in exactly one place.
 """
 from __future__ import annotations
 
+import inspect
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from .. import config, db, importers, logs, records, scrapers
+from .. import (
+    availability, config, db, importers, logs, matching, records, scrapers,
+    sourcelink,
+)
 from ..scrapers import SCRAPERS
 
 
 class UnknownStoreError(ValueError):
     """Raised when a store key has no registered scraper."""
+
+
+class UnsupportedLimitError(ValueError):
+    """Raised when ``--limit`` is asked of a scraper that has no such bound."""
 
 
 class ScrapeGuardError(RuntimeError):
@@ -112,6 +120,79 @@ def available_scrapers() -> list[str]:
 def all_scrapers() -> list[str]:
     """Every REGISTERED store key, ready or not (GFP-4). See :func:`available_scrapers`."""
     return sorted(SCRAPERS)
+
+
+@dataclass(frozen=True)
+class ScrapePlan:
+    """Which stores are worth offering for a ZIP, and what was left out (GFP-257).
+
+    ``excluded`` is not decoration. Hiding stores is a coverage cap, and the
+    no-silent-caps rule says a cap the user cannot see reads as "this is
+    everything". A dialog that quietly drops seven of nineteen stores looks
+    identical to one that never supported them.
+    """
+
+    postal_code: str
+    keys: list[str]
+    excluded: list[str]
+
+    @property
+    def summary(self) -> str:
+        """One line for the UI, or empty when nothing was filtered out."""
+        if not self.excluded:
+            return ""
+        n = len(self.excluded)
+        return (
+            f"{n} store{'s' if n != 1 else ''} hidden: no branch serves "
+            f"{self.postal_code} ({', '.join(_pretty(k) for k in self.excluded)})."
+        )
+
+
+def _pretty(key: str) -> str:
+    """The store's display name, falling back to the registry key.
+
+    A second-source key like ``sprouts-storefront`` has no ``stores`` entry of
+    its own -- it shares the banner's -- so the fallback is load-bearing rather
+    than defensive.
+    """
+    from ..stores import BY_KEY
+
+    store = BY_KEY.get(key)
+    return getattr(store, "display_name", None) or key
+
+
+def scrapers_for_postal_code(
+    postal_code: str | None = None, conn: sqlite3.Connection | None = None,
+) -> ScrapePlan:
+    """Ready scrapers that also serve ``postal_code`` (GFP-257).
+
+    Readiness and location are different questions and both have to be asked.
+    :func:`available_scrapers` answers "could this run at all" -- credentials
+    present, session minted. This adds "and is there a branch near the user",
+    which is what stops the Run scrape dialog offering ACME Markets, a
+    Northeast chain, to a client in Greensboro.
+
+    The resolver behind it (``availability.serving_scrapers``) is **permissive
+    about unknowns**: a store whose availability could not be established is
+    still offered, because collapsing "we could not find out" into "no" would
+    silently remove a store the client may genuinely have. Only established
+    evidence removes anything.
+
+    Nothing here hits the network -- ``availability`` resolves on a 60-day TTL
+    and reads from the database thereafter, so opening a dialog stays instant.
+    """
+    from .. import availability, config
+
+    zip_code = postal_code or config.postal_code()
+    ready = available_scrapers()
+    own = conn or db.connect()
+    serving = set(availability.serving_scrapers(zip_code, conn=own))
+    keys = [k for k in ready if k in serving]
+    return ScrapePlan(
+        postal_code=zip_code,
+        keys=keys,
+        excluded=[k for k in ready if k not in serving],
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -239,12 +320,55 @@ _HISTORY_UPSERT = (
 )
 
 
+def _limit_kwargs(scraper: Any, limit: int | None) -> dict[str, int]:
+    """``{'limit': n}`` for a scraper that takes one, or a clear refusal.
+
+    GFP-265/GFP-267: the catalogue scrapers bound their own crawl (ALDI's
+    product-page path walls up after a handful of requests and the pacer then
+    crawls at 30 s each, so a full 1,200-page run is ~10 hours). A caller has
+    to be able to ask for a smaller slice.
+
+    Silently ignoring ``limit`` on a scraper that has no such parameter would
+    be the worst outcome: the operator asks for 200 products, waits, and gets a
+    full crawl they explicitly tried to avoid. So an unsupported limit is an
+    error naming the scrapers that do support one.
+    """
+    if limit is None:
+        return {}
+    if not supports_limit(scraper):
+        raise UnsupportedLimitError(
+            f"{getattr(scraper, 'MERCHANT', 'This scraper')} does not take a "
+            f"--limit; it fetches whatever its source publishes. Scrapers that "
+            f"do: {', '.join(scrapers_supporting_limit())}."
+        )
+    return {"limit": limit}
+
+
+def supports_limit(scraper: Any) -> bool:
+    """Whether this scraper's ``scrape()`` accepts a ``limit``.
+
+    Asked of the signature rather than kept as a list, so a scraper that grows
+    (or loses) a bound cannot drift out of agreement with the CLI's help text
+    or with the error message that names the alternatives.
+    """
+    try:
+        return "limit" in inspect.signature(scraper.scrape).parameters
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def scrapers_supporting_limit() -> list[str]:
+    """Registry keys whose scrapers accept ``limit``, for user-facing messages."""
+    return sorted(k for k, module in SCRAPERS.items() if supports_limit(module))
+
+
 def run_scrape(
     store_key: str,
     postal_code: str | None = None,
     conn: sqlite3.Connection | None = None,
     force: bool = False,
     dry_run: bool = False,
+    limit: int | None = None,
 ) -> dict[str, Any]:
     """Scrape a store's fresh deals and persist them, replacing prior scrape rows.
 
@@ -303,10 +427,35 @@ def run_scrape(
     # behaviour.
     store = scrapers.store_key_for(scraper, store_key)
     source = scrapers.source_for(scraper)
-    rows, flyer, stats = scraper.scrape(postal_code=postal_code)
+    own = conn or db.connect()
+
+    # GFP-257: does this store even operate here? Asked BEFORE the scrape,
+    # because the alternative is what used to happen -- a store with no
+    # presence in the ZIP returns zero rows, which trips GFP-67's
+    # EmptyScrapeError, so a healthy scraper in the wrong market was
+    # indistinguishable from a broken parser. "Not in this market" is a
+    # different outcome and gets a different answer.
+    #
+    # Only established evidence stops a scrape. UNKNOWN is permissive, so
+    # adding this never removes coverage that existed before it.
+    market = availability.resolve(store_key, zip_code, conn=own)
+    if not market.should_scrape:
+        logs.get_logger(__name__).info(
+            "skipping %s for %s: %s (%s)",
+            store_key, zip_code, market.state, market.method)
+        return {
+            "flyer": None,
+            "stats": {"total": 0},
+            "postal_code": zip_code,
+            "records": {"created": 0, "updated": 0},
+            "skipped": "not_in_market",
+            "availability": market.state,
+            "availability_method": market.method,
+        }
+
+    rows, flyer, stats = scraper.scrape(postal_code=postal_code, **_limit_kwargs(scraper, limit))
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     today = now[:10]
-    own = conn or db.connect()
 
     # GFP-87: --dry-run stops HERE -- after the scrape and the stats, before the
     # first destructive statement. That placement is the whole point: run_scrape
@@ -362,6 +511,37 @@ def run_scrape(
     record_summary = records.update_records(own, store, zip_code, rows, today)
     own.commit()
 
+    # GFP-121: match the deals to foods, for EVERY store, right after they
+    # land. Nothing in the app called matching.match_deals() -- Kroger and
+    # Whole Foods write deal_food_match inline from their own scrapers, so the
+    # two stores with bespoke ingest looked fine while the store-agnostic
+    # matcher sat orphaned. Food Lion, which has no bespoke path, therefore
+    # never had a single match row and its 297 priced deals were invisible to
+    # $/g protein, gplan cheapest, the trends chart and every grocery list.
+    #
+    # Here, not in a Food Lion branch: GFP-32's rule is that the engine never
+    # branches on store identity, and a fix that special-cased one store would
+    # leave the next store to be added with the same silent hole. match_deals
+    # already runs over every distinct (store, item_name) and already refuses
+    # to overwrite a manual correction, so calling it on the one path that
+    # writes deals is the whole fix.
+    #
+    # A failure here must not fail a scrape, for the same reason pruning does
+    # not: the prices are the point, and unmatched deals are recoverable on the
+    # next run while a lost scrape is not.
+    try:
+        match_summary = matching.match_deals(conn=own)
+        # GFP-248: and then link this store's promo rows to its catalogue
+        # rows, so a sale price inherits the size and protein the ad never
+        # carries. After matching, never before -- a link requires both sides
+        # to have matched the same food, so it reads what match_deals just
+        # wrote.
+        link_summary = sourcelink.build_links(conn=own)
+    except sqlite3.Error as exc:
+        logs.get_logger(__name__).warning(
+            "could not match deals to foods after scraping %s: %s", store, exc)
+        match_summary = link_summary = None
+
     # GFP-42: trim old history AFTER the records are safely committed, and
     # never before. Records are stored rather than recomputed precisely so a
     # record low outlives the observation behind it -- pruning first would
@@ -386,4 +566,6 @@ def run_scrape(
         "postal_code": zip_code,
         "records": record_summary,
         "pruned_history_rows": pruned,
+        "matches": match_summary,
+        "links": link_summary,
     }

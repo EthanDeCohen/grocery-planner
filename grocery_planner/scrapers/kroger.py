@@ -97,7 +97,7 @@ from typing import Any, Iterable
 
 import httpx
 
-from .. import credentials, db, matching, weight_basis
+from .. import credentials, db, matching, savings, weight_basis
 from . import base, retry
 
 # The CLI/registry name. Distinct from STORE_KEY because this is a SECOND
@@ -190,12 +190,15 @@ PROTEIN_NUTRIENT_CODE = "PRO-"
 # unitOfMeasure. Only weight units appear here: a serving measured in
 # millilitres cannot be converted to grams without a density we do not have,
 # so it yields None rather than a guess.
+# The ounce and pound figures come from savings rather than being restated:
+# the pound is DERIVED from the ounce there, so the two can never drift apart
+# the way three hand-copied literals in three modules could.
 _GRAMS_PER_UNIT = {
     "gram": 1.0, "grm": 1.0, "g": 1.0,
     "milligram": 0.001, "mgm": 0.001,
     "kilogram": 1000.0, "kgm": 1000.0,
-    "ounce": 28.349523125, "onz": 28.349523125, "oz": 28.349523125,
-    "pound": 453.59237, "lbr": 453.59237, "lb": 453.59237,
+    "ounce": savings.GRAMS_PER_OZ, "onz": savings.GRAMS_PER_OZ, "oz": savings.GRAMS_PER_OZ,
+    "pound": savings.GRAMS_PER_LB, "lbr": savings.GRAMS_PER_LB, "lb": savings.GRAMS_PER_LB,
 }
 
 
@@ -854,6 +857,28 @@ def _upsert_food_fact(conn: sqlite3.Connection, fact: _FoodFact) -> None:
 # --------------------------------------------------------------------------- #
 # Orchestration
 # --------------------------------------------------------------------------- #
+def serves(postal_code: str) -> bool | None:
+    """Does a grocery store of this chain exist near ``postal_code``? (GFP-257)
+
+    The real capability, and the reason GFP-257's design is "ask the source":
+    Kroger already answers this exactly, and :func:`pick_store` already reads
+    the ``chain`` value BACK rather than trusting a name -- GFP-77's lesson,
+    which cost real time to learn.
+
+    ``None`` when the question cannot be put -- no credentials, an API error, a
+    rate limit. Unknown is not the same as absent, and availability.py treats it
+    permissively: a store we could not ask about is still scraped.
+    """
+    ready, _ = readiness()
+    if not ready:
+        return None
+    try:
+        with KrogerClient(load_auth()) as client:
+            return pick_store(client.locations_near(postal_code)) is not None
+    except (KrogerError, OSError, ValueError):
+        return None
+
+
 def scrape(
     postal_code: str | None = None,
     queries: Iterable[tuple[str, str]] | None = None,

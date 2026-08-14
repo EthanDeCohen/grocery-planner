@@ -63,8 +63,21 @@ PUBLIC_API = [
     # ScraperStatus/all_scrapers/scraper_status are the new vocabulary for
     # telling them apart; available_scrapers() itself now means "ready".
     "ScraperStatus",
+    # GFP-257: readiness and location are separate questions. available_scrapers()
+    # answers "could this run at all"; scrapers_for_postal_code() adds "and is
+    # there a branch near the user", which is what stopped the Run scrape dialog
+    # offering a Northeast chain to a client in Greensboro.
+    "ScrapePlan",
+    "scrapers_for_postal_code",
     "UnknownDealTypeError",
     "UnknownStoreError",
+    # GFP-263: `--limit` bounds a crawl against a source that rate-polices its
+    # product pages. The two helpers are public because the CLI has to refuse
+    # an unsupported limit BEFORE opening a scraping_jobs row -- a typo must
+    # not write a failed job that jobs.last_success later reads as a real
+    # attempt. supports_limit() reads the scraper's signature rather than a
+    # hand-kept list, so the help text cannot drift from the truth.
+    "UnsupportedLimitError",
     "all_scrapers",
     "available_scrapers",
     "best_deals",
@@ -75,7 +88,9 @@ PUBLIC_API = [
     "is_expired",
     "run_scrape",
     "scraper_status",
+    "scrapers_supporting_limit",
     "stores_with_deals",
+    "supports_limit",
     "today_iso",
 ]
 
@@ -98,8 +113,30 @@ def test_all_scrapers_includes_every_registered_store_regardless_of_readiness():
     # it; available_scrapers() must not.
     # GFP-98 adds 'harristeeter-api' (Kroger shelf prices), which like
     # wholefoods is registered but not ready without credentials.
+    # GFP-247: 'foodlion-catalog' and 'giant' are the PRISM product
+    # catalogue -- one scraper, two banners. 'foodlion-catalog' is a SECOND
+    # feed for the same shop as 'foodlion' (ad vs catalogue), the same
+    # shape as harristeeter/harristeeter-api above.
+    # GFP-265: 'sprouts-storefront' is the Instacart storefront feed for the
+    # same shop as the 'sprouts' Flipp banner -- the same two-feeds-one-store
+    # shape as harristeeter/harristeeter-api. It had been silently shadowed by
+    # the banner until it was given its own SCRAPER_KEY.
+    # 'aldi-storefront' is the second tenant of that same Instacart client and
+    # collides with the Flipp 'aldi' banner in exactly the same way, so it
+    # carries its own SCRAPER_KEY too. GFP-264 adds 'traderjoes' -- a public
+    # Magento GraphQL API, and the only one of the three with no collision,
+    # which is why it needs no SCRAPER_KEY of its own.
+    # GFP-270 adds 'walmart' (a new shop, reached through the Parse.bot vendor
+    # client) and 'publix-catalog' (a second feed for the existing 'publix'
+    # banner). Neither is ready without a Parse.bot key, which is exactly why
+    # they belong in all_scrapers() and not in available_scrapers().
     assert set(service.all_scrapers()) == {
-        "foodlion", "harristeeter", "harristeeter-api", "wholefoods",
+        "acme", "aldi", "aldi-storefront", "foodlion", "foodlion-catalog",
+        "giant", "giant-ad", "harristeeter", "harristeeter-api", "hmart",
+        "lidl", "lidl-catalogue", "lowesfoods", "publix", "sprouts",
+        "sprouts-storefront",
+        "target", "traderjoes", "wegmans", "wegmans-api", "weis", "wholefoods",
+        "publix-catalog", "walmart",
     }
 
 

@@ -44,6 +44,15 @@ TABLE deal_food_match
   store: TEXT NOT NULL
   updated_at: TEXT NOT NULL DEFAULT datetime('now')
 
+TABLE deal_source_link
+  confidence: REAL NOT NULL
+  food_id: INTEGER
+  item_name: TEXT NOT NULL PK
+  linked_item_name: TEXT NOT NULL
+  method: TEXT NOT NULL
+  store: TEXT NOT NULL PK
+  updated_at: TEXT NOT NULL
+
 TABLE deals
   deal_description: TEXT
   deal_type: TEXT
@@ -175,6 +184,13 @@ TABLE scraping_jobs
   source: TEXT
   started_at: TEXT
   status: TEXT
+
+TABLE store_availability
+  checked_at: TEXT NOT NULL
+  method: TEXT NOT NULL
+  postal_code: TEXT NOT NULL PK
+  scraper_key: TEXT NOT NULL PK
+  state: TEXT NOT NULL
 
 TABLE stores
   data_folder: TEXT NOT NULL

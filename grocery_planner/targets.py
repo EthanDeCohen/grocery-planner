@@ -56,6 +56,8 @@ from . import db, formulas
 from .customers import (
     MAX_PROTEIN_FACTOR,
     MIN_PROTEIN_FACTOR,
+    PRESCRIBED_MAX_FACTOR,
+    PRESCRIBED_MIN_FACTOR,
     Customer,
     CustomerRepository,
     kg_to_lb,
@@ -262,7 +264,11 @@ def protein_target_for(
     low = high = None
     if not _has_custom_formula(own):
         pounds = kg_to_lb(kilograms)
-        low, high = pounds * MIN_PROTEIN_FACTOR, pounds * MAX_PROTEIN_FACTOR
+        # GFP-282: the PRESCRIBED ends, not the admissible ones. The two were
+        # one constant until the band widened to admit the federal figure;
+        # using the admissible floor here would report her worked example as
+        # 81-150 g/day instead of the 120-150 she actually prescribed.
+        low, high = pounds * PRESCRIBED_MIN_FACTOR, pounds * PRESCRIBED_MAX_FACTOR
 
     return ProteinTarget(
         daily_grams=daily,

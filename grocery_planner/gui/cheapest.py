@@ -26,7 +26,7 @@ import html
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
-from .. import service
+from .. import service, weight_basis
 
 #: Height is bounded by the store count, but a runaway registry should not be
 #: able to eat the window. Beyond this the strip scrolls rather than growing.
@@ -60,11 +60,19 @@ def describe(item: service.CheapestProtein) -> str:
     # -- the same rule gui/wheretobuy.py follows, and the reason a link here is
     # worth having at all: every scraped row now carries one, but the legacy
     # csv-import rows never will.
-    name = item.item_name
+    # GFP-152/GFP-270: the by-weight marker, on the ITEM NAME rather than the
+    # price, for the reason gui/wheretobuy.py gives -- it tells the shopper
+    # something about the product they are about to pick up. A Publix rate row
+    # gets ‡, because "$2.39" here means "per pound", and this strip is the
+    # first thing a nutritionist reads.
+    mark = weight_basis.marker(
+        weight_basis.basis_for(item.sold_by, item.weight_basis)
+    )
+    name = f"{item.item_name}{mark}"
     if item.source_url:
         name = (
-            f'{item.item_name} — <a href="{html.escape(item.source_url, quote=True)}">'
-            f"{LINK_TEXT}</a>"
+            f'{item.item_name}{mark} — '
+            f'<a href="{html.escape(item.source_url, quote=True)}">{LINK_TEXT}</a>'
         )
     return (
         f"<b>{item.label}</b> — {_per_gram(item.cost_per_gram_protein)}/g protein"

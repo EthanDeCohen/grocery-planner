@@ -1,0 +1,235 @@
+[
+ {
+  "hasPickup": true,
+  "iwsLongitude": -76.050638,
+  "iwsName": "Liquor City",
+  "storeNumber": 1,
+  "stateAbbreviation": "NY",
+  "zones": "SYRACUSE",
+  "iwsCity": "Fayetteville",
+  "ecommerceOpeningDate": "2020-01-14T00:00:00Z",
+  "iwsZip": "13066",
+  "iwsPhone": "315-449-1818",
+  "openingDate": "2006-08-27T00:00:00Z",
+  "city": "Liverpool",
+  "name": "John Glenn",
+  "iwsEmail": "winemerchandisingmanager@liquorcitywineandspirits.com;winemanager@liquorcitywineandspirits.com",
+  "phoneNumber": "315-546-1200",
+  "latitude": 43.13316,
+  "zip": "13090",
+  "openState": "Open",
+  "iwsImage": "https://shop.wegmans.com/images/liquor_city.68c06432.png",
+  "iwsStoreNumber": 15,
+  "streetAddress": "7519 Oswego Road",
+  "aislePositionMapping": "{\"See Store Associate\":100,\"Outside Entranceway\":200,\"Front Vestibule\":300,\"Inside Entranceway\":400,\"Produce\":500,\"Floral\":600,\"Bakery - Artisan Bread and Rolls\":700,\"Bakery - Non-Refrigerated Desserts\":800,\"Bakery - Refrigerated Desserts\":900,\"Fresh Bakery\":1000,\"Prepared Foods\":1100,\"Deli\":1200,\"Cheese Shop\":1300,\"Seafood\":1400,\"Meat Department\":1500,\"Dairy\":1600,\"Dairy1\":1700,\"Dairy1A\":1800,\"Dairy1B\":1900,\"Dairy 1\":2000,\"Dairy 1A\":2100,\"Dairy 1B\":2200,\"Dairy2\":2300,\"Dairy2A\":2400,\"Dairy2B\":2500,\"Dairy 2\":2600,\"Dairy 2A\":2700,\"Dairy 2B\":2800,\"Dairy3\":2900,\"Dairy3A\":3000,\"Dairy3B\":3100,\"Dairy 3\":3200,\"Dairy 3A\":3300,\"Dairy 3B\":3400,\"Dairy4\":3500,\"Dairy4A\":3600,\"Dairy4B\":3700,\"Dairy 4\":3800,\"Dairy 4A\":3900,\"Dairy 4B\":4000,\"Dairy5\":4100,\"Dairy5A\":4200,\"Dairy5B\":4300,\"Dairy 5\":4400,\"Dairy 5A\":4500,\"Dairy 5B\":4600,\"Dairy6\":4700,\"Dairy6A\":4800,\"Dairy6B\":4900,\"Dairy 6\":5000,\"Dairy 6A\":5100,\"Dairy 6B\":5200,\"Dairy7\":5300,\"Dairy7A\":5400,\"Dairy7B\":5500,\"Dairy 7\":5600,\"Dairy 7A\":5700,\"Dairy 7B\":5800,\"Dairy8\":5900,\"Dairy8A\":6000,\"Dairy8B\":6100,\"Dairy 8\":6200,\"Dairy 8A\":6300,\"Dairy 8B\":6400,\"Dairy - Eggs\":6500,\"Pharmacy\":6600,\"01\":6700,\"01A\":6800,\"01B\":6900,\"01C\":7000,\"02\":7100,\"02A\":7200,\"02B\":7300,\"02C\":7400,\"03\":7500,\"03A\":7600,\"03B\":7700,\"03C\":7800,\"04\":7900,\"04A\":8000,\"04B\":8100,\"04C\":8200,\"05\":8300,\"05A\":8400,\"05B\":8500,\"05C\":8600,\"06\":8700,\"06A\":8800,\"06B\":8900,\"06C\":9000,\"07\":9100,\"07A\":9200,\"07B\":9300,\"07C\":9400,\"08\":9500,\"08A\":9600,\"08B\":9700,\"08C\":9800,\"09\":9900,\"09A\":10000,\"09B\":10100,\"09C\":10200,\"10\":10300,\"10A\":10400,\"10B\":10500,\"10C\":10600,\"11\":10700,\"11A\":10800,\"11B\":10900,\"11C\":11000,\"12\":11100,\"12A\":11200,\"12B\":11300,\"12C\":11400,\"13\":11500,\"13A\":11600,\"13B\":11700,\"13C\":11800,\"14\":11900,\"14A\":12000,\"14B\":12100,\"14C\":12200,\"15\":12300,\"15A\":12400,\"15B\":12500,\"15C\":12600,\"16\":12700,\"16A\":12800,\"16B\":12900,\"16C\":13000,\"17\":13100,\"17A\":13200,\"17B\":13300,\"17C\":13400,\"18\":13500,\"18A\":13600,\"18B\":13700,\"18C\":13800,\"19\":13900,\"19A\":14000,\"19B\":14100,\"19C\":14200,\"20\":14300,\"20A\":14400,\"20B\":14500,\"20C\":14600,\"21\":14700,\"21A\":14800,\"21B\":14900,\"21C\":15000,\"22\":15100,\"22A\":15200,\"22B\":15300,\"22C\":15400,\"23\":15500,\"23A\":15600,\"23B\":15700,\"23C\":15800,\"24\":15900,\"24A\":16000,\"24B\":16100,\"24C\":16200,\"25\":16300,\"25A\":16400,\"25B\":16500,\"25C\":16600,\"26\":16700,\"26A\":16800,\"26B\":16900,\"26C\":17000,\"27\":17100,\"27A\":17200,\"27B\":17300,\"27C\":17400,\"28\":17500,\"28A\":17600,\"28B\":17700,\"28C\":17800,\"29\":17900,\"29A\":18000,\"29B\":18100,\"29C\":18200,\"30\":18300,\"30A\":18400,\"30B\":18500,\"30C\":18600,\"Beer Shop\":18700,\"Beer 1\":18705,\"Beer - Walk-In Cooler\":18710,\"Beer 2\":18715,\"Beer 3\":18720,\"Beer 4\":18725,\"Beer 5\":18730,\"Beer 6\":18735,\"Beer 7\":18740,\"Beer 8\":18745,\"Frozen Foods\":18800,\"Frozen 1\":18900,\"Frozen 2A\":19000,\"Frozen 2B\":19100,\"Frozen 3A\":19200,\"Frozen 3B\":19300,\"Frozen 4\":19400,\"Frozen 4A\":19500,\"Frozen 4B\":19600,\"Frozen 5\":19700,\"Front End Register Area\":19800}",
+  "cs_uid": "",
+  "iwsStateAbbreviation": "NY",
+  "longitude": -76.2232,
+  "hasPharmacy": true,
+  "iwsLatitude": 43.033266,
+  "iwsStreetAddress": "6793 East Genesee St",
+  "hasECommerce": true,
+  "hasDelivery": true,
+  "pointOfSaleIndicator": "F",
+  "key": "1-JOHN-GLENN",
+  "id": 1,
+  "position": {
+   "lat": 43.13316,
+   "lng": -76.2232
+  },
+  "alcoholTypesForSale": [
+   "Beer",
+   "Spirits",
+   "Wine"
+  ],
+  "iwsLogo": "",
+  "iwsLogoAsset": [
+   {
+    "assetId": "urn:aaid:aem:970286ed-ddf3-4942-ac6d-b27b398fc00b",
+    "height": 468,
+    "name": "liquor_city.68c06432.png",
+    "size": "72 KB",
+    "type": "image",
+    "url": "https://images.wegmans.com/is/image/wegmanscsprod/liquor_city.68c06432",
+    "width": 468
+   }
+  ],
+  "sellsAlcohol": true,
+  "slug": "john-glenn-ny",
+  "wineStoreRef": {
+   "ACL": {},
+   "_in_progress": false,
+   "_version": 6,
+   "created_at": "2023-11-28T04:29:07.847Z",
+   "created_by": "blt9cbaa633cba3585e",
+   "locale": "en-us",
+   "publish_details": {
+    "environment": "blt2499c7a17f212e77",
+    "locale": "en-us",
+    "time": "2026-05-18T16:33:48.655Z",
+    "user": "blt834118c93a5d0ecf"
+   },
+   "tags": [],
+   "title": "Liquor City",
+   "uid": "blt4616638f6281d9da",
+   "updated_at": "2026-05-18T16:33:41.697Z",
+   "updated_by": "blt834118c93a5d0ecf",
+   "store_number": 15,
+   "description": "Shop fine wines, liquor, and more with one of the widest selections in the country.",
+   "url": "https://liquorcitywineandspirits.com/",
+   "image": [],
+   "image_src": "https://images.wegmans.com/is/image/wegmans/LiquorCity-nearby",
+   "logo": [
+    {
+     "assetId": "urn:aaid:aem:970286ed-ddf3-4942-ac6d-b27b398fc00b",
+     "height": 468,
+     "name": "liquor_city.68c06432.png",
+     "size": "72 KB",
+     "type": "image",
+     "url": "https://images.wegmans.com/is/image/wegmanscsprod/liquor_city.68c06432",
+     "width": 468
+    }
+   ],
+   "logo_src": "",
+   "pickup_instructions": {
+    "content": {
+     "_version": 6,
+     "attrs": {},
+     "children": [
+      {
+       "attrs": {},
+       "children": [
+        {
+         "text": "Please follow signage to pick up."
+        }
+       ],
+       "type": "p",
+       "uid": "e7808c78cf614657b1231eba08b9426f"
+      }
+     ],
+     "type": "doc",
+     "uid": "46715cd27c9c4b3cac6a6752d0478123"
+    },
+    "image": {
+     "alt": "",
+     "asset": [
+      {
+       "assetId": "urn:aaid:aem:e8c6b7d6-87fa-47c7-a866-63e20feb26e2",
+       "height": 331,
+       "name": "LiquorCity-nearby.jpg",
+       "size": "190 KB",
+       "type": "image",
+       "url": "https://images.wegmans.com/is/image/wegmans/LiquorCity-nearby",
+       "width": 800
+      }
+     ],
+     "source_external": ""
+    }
+   },
+   "_content_type_uid": "store_wine_store"
+  }
+ },
+ {
+  "name": "King of Prussia",
+  "openState": "Open",
+  "hasPickup": true,
+  "storeNumber": 48,
+  "stateAbbreviation": "PA",
+  "zones": "S.E. PENN",
+  "ecommerceOpeningDate": "2020-01-14T00:00:00Z",
+  "openingDate": "2012-05-06T00:00:00Z",
+  "city": "King of Prussia",
+  "phoneNumber": "484-690-3500",
+  "latitude": 40.0831,
+  "zip": "19406",
+  "streetAddress": "1 Village Dr",
+  "aislePositionMapping": "{\"See Store Associate\":100,\"Outside Entranceway\":200,\"Front Vestibule\":300,\"Inside Entranceway\":400,\"Produce\":500,\"Floral\":600,\"Cheese Shop\":700,\"Bakery - Artisan Bread and Rolls\":800,\"Bakery - Non-Refrigerated Desserts\":900,\"Bakery - Refrigerated Desserts\":1000,\"Fresh Bakery\":1100,\"Packaged Bread\":1200,\"Deli\":1300,\"Catering\":1400,\"Prepared Foods\":1500,\"Seafood\":1600,\"Meat Department\":1700,\"Dairy\":1800,\"Dairy1\":1900,\"Dairy1A\":2000,\"Dairy1B\":2100,\"Dairy 1\":2200,\"Dairy 1A\":2300,\"Dairy 1B\":2400,\"Dairy2\":2500,\"Dairy2A\":2600,\"Dairy2B\":2700,\"Dairy 2\":2800,\"Dairy 2A\":2900,\"Dairy 2B\":3000,\"Dairy3\":3100,\"Dairy3A\":3200,\"Dairy3B\":3300,\"Dairy 3\":3400,\"Dairy 3A\":3500,\"Dairy 3B\":3600,\"Dairy4\":3700,\"Dairy4A\":3800,\"Dairy4B\":3900,\"Dairy 4\":4000,\"Dairy 4A\":4100,\"Dairy 4B\":4200,\"Dairy5\":4300,\"Dairy5A\":4400,\"Dairy5B\":4500,\"Dairy 5\":4600,\"Dairy 5A\":4700,\"Dairy 5B\":4800,\"Dairy6\":4900,\"Dairy6A\":5000,\"Dairy6B\":5100,\"Dairy 6\":5200,\"Dairy 6A\":5300,\"Dairy 6B\":5400,\"Dairy7\":5500,\"Dairy7A\":5600,\"Dairy7B\":5700,\"Dairy 7\":5800,\"Dairy 7A\":5900,\"Dairy 7B\":6000,\"Dairy8\":6100,\"Dairy8A\":6200,\"Dairy8B\":6300,\"Dairy 8\":6400,\"Dairy 8A\":6500,\"Dairy 8B\":6600,\"Dairy - Eggs\":6700,\"Pharmacy\":6800,\"01\":6900,\"01A\":7000,\"01B\":7100,\"01C\":7200,\"02\":7300,\"02A\":7400,\"02B\":7500,\"02C\":7600,\"03\":7700,\"03A\":7800,\"03B\":7900,\"03C\":8000,\"04\":8100,\"04A\":8200,\"04B\":8300,\"04C\":8400,\"05\":8500,\"05A\":8600,\"05B\":8700,\"05C\":8800,\"06\":8900,\"06A\":9000,\"06B\":9100,\"06C\":9200,\"07\":9300,\"07A\":9400,\"07B\":9500,\"07C\":9600,\"08\":9700,\"08A\":9800,\"08B\":9900,\"08C\":10000,\"09\":10100,\"09A\":10200,\"09B\":10300,\"09C\":10400,\"10\":10500,\"10A\":10600,\"10B\":10700,\"10C\":10800,\"Wine\":10900,\"Beer Shop\":11000,\"Beer 1\":11005,\"Beer - Walk-In Cooler\":11010,\"Beer 2\":11015,\"Beer 3\":11020,\"Beer 4\":11025,\"Beer 5\":11030,\"Beer 6\":11035,\"Beer 7\":11040,\"Beer 8\":11045,\"11\":11100,\"11A\":11200,\"11B\":11300,\"11C\":11400,\"Frozen Foods\":11500,\"12\":11600,\"12A\":11700,\"12B\":11800,\"12C\":11900,\"13\":12000,\"13A\":12100,\"13B\":12200,\"13C\":12300,\"14\":12400,\"14A\":12500,\"14B\":12600,\"14C\":12700,\"15\":12800,\"15A\":12900,\"15B\":13000,\"15C\":13100,\"16\":13200,\"16A\":13300,\"16B\":13400,\"16C\":13500,\"17\":13600,\"17A\":13700,\"17B\":13800,\"17C\":13900,\"18\":14000,\"18A\":14100,\"18B\":14200,\"18C\":14300,\"19\":14400,\"19A\":14500,\"19B\":14600,\"19C\":14700,\"20\":14800,\"20A\":14900,\"20B\":15000,\"20C\":15100,\"21\":15200,\"21A\":15300,\"21B\":15400,\"21C\":15500,\"22\":15600,\"22A\":15700,\"22B\":15800,\"22C\":15900,\"23\":16000,\"23A\":16100,\"23B\":16200,\"23C\":16300,\"24\":16400,\"24A\":16500,\"24B\":16600,\"24C\":16700,\"25\":16800,\"25A\":16900,\"25B\":17000,\"25C\":17100,\"26\":17200,\"26A\":17300,\"26B\":17400,\"26C\":17500,\"27\":17600,\"27A\":17700,\"27B\":17800,\"27C\":17900,\"28\":18000,\"28A\":18100,\"28B\":18200,\"28C\":18300,\"29\":18400,\"29A\":18500,\"29B\":18600,\"29C\":18700,\"30\":18800,\"30A\":18900,\"30B\":19000,\"30C\":19100,\"Front End Register Area\":19200}",
+  "cs_uid": "",
+  "longitude": -75.4022,
+  "hasPharmacy": true,
+  "hasECommerce": true,
+  "hasDelivery": true,
+  "pointOfSaleIndicator": "F",
+  "key": "48-KING-OF-PRUSSIA",
+  "id": 48,
+  "position": {
+   "lat": 40.0831,
+   "lng": -75.4022
+  },
+  "alcoholTypesForSale": [
+   "Beer",
+   "Cocktails",
+   "Wine"
+  ],
+  "sellsAlcohol": true,
+  "slug": "king-of-prussia-pa"
+ },
+ {
+  "name": "Raleigh",
+  "openState": "Open",
+  "hasPickup": true,
+  "storeNumber": 108,
+  "stateAbbreviation": "NC",
+  "zones": "NORTH CAROLINA",
+  "ecommerceOpeningDate": "2020-01-14T00:00:00Z",
+  "openingDate": "2019-09-29T00:00:00Z",
+  "city": "Raleigh",
+  "phoneNumber": "984-960-5600",
+  "latitude": 35.821138,
+  "zip": "27609-7495",
+  "streetAddress": "1200 Wake Towne Drive",
+  "aislePositionMapping": "{\"See Store Associate\":100,\"Outside Entranceway\":200,\"Front Vestibule\":300,\"Inside Entranceway\":400,\"Produce\":500,\"Floral\":600,\"Cheese Shop\":700,\"Bakery - Refrigerated Desserts\":800,\"Bakery - Non-Refrigerated Desserts\":900,\"Bakery - Artisan Bread and Rolls\":1000,\"Fresh Bakery\":1100,\"Prepared Foods\":1200,\"Seafood\":1300,\"Meat Department\":1400,\"Deli\":1500,\"Dairy\":1600,\"Dairy1\":1700,\"Dairy1A\":1800,\"Dairy1B\":1900,\"Dairy 1\":2000,\"Dairy 1A\":2100,\"Dairy 1B\":2200,\"Dairy2\":2300,\"Dairy2A\":2400,\"Dairy2B\":2500,\"Dairy 2\":2600,\"Dairy 2A\":2700,\"Dairy 2B\":2800,\"Dairy3\":2900,\"Dairy3A\":3000,\"Dairy3B\":3100,\"Dairy 3\":3200,\"Dairy 3A\":3300,\"Dairy 3B\":3400,\"Dairy4\":3500,\"Dairy4A\":3600,\"Dairy4B\":3700,\"Dairy 4\":3800,\"Dairy 4A\":3900,\"Dairy 4B\":4000,\"Dairy5\":4100,\"Dairy5A\":4200,\"Dairy5B\":4300,\"Dairy 5\":4400,\"Dairy 5A\":4500,\"Dairy 5B\":4600,\"Dairy6\":4700,\"Dairy6A\":4800,\"Dairy6B\":4900,\"Dairy 6\":5000,\"Dairy 6A\":5100,\"Dairy 6B\":5200,\"Dairy7\":5300,\"Dairy7A\":5400,\"Dairy7B\":5500,\"Dairy 7\":5600,\"Dairy 7A\":5700,\"Dairy 7B\":5800,\"Dairy8\":5900,\"Dairy8A\":6000,\"Dairy8B\":6100,\"Dairy 8\":6200,\"Dairy 8A\":6300,\"Dairy 8B\":6400,\"Dairy - Eggs\":6500,\"Frozen Foods\":6600,\"01\":6700,\"01A\":6800,\"01B\":6900,\"01C\":7000,\"02\":7100,\"02A\":7200,\"02B\":7300,\"02C\":7400,\"03\":7500,\"03A\":7600,\"03B\":7700,\"03C\":7800,\"04\":7900,\"04A\":8000,\"04B\":8100,\"04C\":8200,\"05\":8300,\"05A\":8400,\"05B\":8500,\"05C\":8600,\"06\":8700,\"06A\":8800,\"06B\":8900,\"06C\":9000,\"07\":9100,\"07A\":9200,\"07B\":9300,\"07C\":9400,\"08\":9500,\"08A\":9600,\"08B\":9700,\"08C\":9800,\"09\":9900,\"09A\":10000,\"09B\":10100,\"09C\":10200,\"10\":10300,\"10A\":10400,\"10B\":10500,\"10C\":10600,\"11\":10700,\"11A\":10800,\"11B\":10900,\"11C\":11000,\"12\":11100,\"12A\":11200,\"12B\":11300,\"12C\":11400,\"13\":11500,\"13A\":11600,\"13B\":11700,\"13C\":11800,\"14\":11900,\"14A\":12000,\"14B\":12100,\"14C\":12200,\"15\":12300,\"15A\":12400,\"15B\":12500,\"15C\":12600,\"16\":12700,\"16A\":12800,\"16B\":12900,\"16C\":13000,\"17\":13100,\"17A\":13200,\"17B\":13300,\"17C\":13400,\"18\":13500,\"18A\":13600,\"18B\":13700,\"18C\":13800,\"19\":13900,\"19A\":14000,\"19B\":14100,\"19C\":14200,\"20\":14300,\"20A\":14400,\"20B\":14500,\"20C\":14600,\"21\":14700,\"21A\":14800,\"21B\":14900,\"21C\":15000,\"22\":15100,\"22A\":15200,\"22B\":15300,\"22C\":15400,\"23\":15500,\"23A\":15600,\"23B\":15700,\"23C\":15800,\"24\":15900,\"24A\":16000,\"24B\":16100,\"24C\":16200,\"25\":16300,\"25A\":16400,\"25B\":16500,\"25C\":16600,\"26\":16700,\"26A\":16800,\"26B\":16900,\"26C\":17000,\"27\":17100,\"27A\":17200,\"27B\":17300,\"27C\":17400,\"28\":17500,\"28A\":17600,\"28B\":17700,\"28C\":17800,\"29\":17900,\"29A\":18000,\"29B\":18100,\"29C\":18200,\"30\":18300,\"30A\":18400,\"30B\":18500,\"30C\":18600,\"Wine\":18700,\"Beer Shop\":18800,\"Beer 1\":18805,\"Beer - Walk-In Cooler\":18810,\"Beer 2\":18815,\"Beer 3\":18820,\"Beer 4\":18825,\"Beer 5\":18830,\"Beer 6\":18835,\"Beer 7\":18840,\"Beer 8\":18845,\"Pharmacy\":18900,\"Front End Register Area\":19000}",
+  "cs_uid": "",
+  "longitude": -78.621264,
+  "hasPharmacy": true,
+  "hasECommerce": true,
+  "hasDelivery": true,
+  "pointOfSaleIndicator": "F",
+  "key": "108-RALEIGH",
+  "id": 108,
+  "position": {
+   "lat": 35.821138,
+   "lng": -78.621264
+  },
+  "alcoholTypesForSale": [
+   "Beer",
+   "Wine"
+  ],
+  "sellsAlcohol": true,
+  "slug": "raleigh-nc"
+ },
+ {
+  "name": "Chapel Hill",
+  "openState": "Open",
+  "hasPickup": true,
+  "storeNumber": 140,
+  "stateAbbreviation": "NC",
+  "zones": "NORTH CAROLINA",
+  "ecommerceOpeningDate": "2021-01-22T00:00:00Z",
+  "openingDate": "2021-02-24T00:00:00Z",
+  "city": "Chapel Hill",
+  "phoneNumber": "919-864-7400",
+  "latitude": 35.945277,
+  "zip": "27514",
+  "streetAddress": "1810 Fordham Blvd",
+  "aislePositionMapping": "{\"See Store Associate\":100,\"Outside Entranceway\":200,\"Front Vestibule\":300,\"Inside Entranceway\":400,\"Produce\":500,\"Floral\":600,\"Cheese Shop\":700,\"Bakery - Refrigerated Desserts\":800,\"Bakery - Non-Refrigerated Desserts\":900,\"Bakery - Artisan Bread and Rolls\":1000,\"Fresh Bakery\":1100,\"Catering\":1200,\"Prepared Foods\":1300,\"Seafood\":1400,\"Meat Department\":1500,\"Deli\":1600,\"Dairy\":1700,\"Dairy1\":1800,\"Dairy1A\":1900,\"Dairy1B\":2000,\"Dairy 1\":2100,\"Dairy 1A\":2200,\"Dairy 1B\":2300,\"Dairy2\":2400,\"Dairy2A\":2500,\"Dairy2B\":2600,\"Dairy 2\":2700,\"Dairy 2A\":2800,\"Dairy 2B\":2900,\"Dairy3\":3000,\"Dairy3A\":3100,\"Dairy3B\":3200,\"Dairy 3\":3300,\"Dairy 3A\":3400,\"Dairy 3B\":3500,\"Dairy4\":3600,\"Dairy4A\":3700,\"Dairy4B\":3800,\"Dairy 4\":3900,\"Dairy 4A\":4000,\"Dairy 4B\":4100,\"Dairy5\":4200,\"Dairy5A\":4300,\"Dairy5B\":4400,\"Dairy 5\":4500,\"Dairy 5A\":4600,\"Dairy 5B\":4700,\"Dairy6\":4800,\"Dairy6A\":4900,\"Dairy6B\":5000,\"Dairy 6\":5100,\"Dairy 6A\":5200,\"Dairy 6B\":5300,\"Dairy7\":5400,\"Dairy7A\":5500,\"Dairy7B\":5600,\"Dairy 7\":5700,\"Dairy 7A\":5800,\"Dairy 7B\":5900,\"Dairy8\":6000,\"Dairy8A\":6100,\"Dairy8B\":6200,\"Dairy 8\":6300,\"Dairy 8A\":6400,\"Dairy 8B\":6500,\"Dairy - Eggs\":6600,\"Frozen Foods\":6700,\"01\":6800,\"01A\":6900,\"01B\":7000,\"01C\":7100,\"02\":7200,\"02A\":7300,\"02B\":7400,\"02C\":7500,\"03\":7600,\"03A\":7700,\"03B\":7800,\"03C\":7900,\"04\":8000,\"04A\":8100,\"04B\":8200,\"04C\":8300,\"05\":8400,\"05A\":8500,\"05B\":8600,\"05C\":8700,\"06\":8800,\"06A\":8900,\"06B\":9000,\"06C\":9100,\"07\":9200,\"07A\":9300,\"07B\":9400,\"07C\":9500,\"08\":9600,\"08A\":9700,\"08B\":9800,\"08C\":9900,\"09\":10000,\"09A\":10100,\"09B\":10200,\"09C\":10300,\"10\":10400,\"10A\":10500,\"10B\":10600,\"10C\":10700,\"11\":10800,\"11A\":10900,\"11B\":11000,\"11C\":11100,\"12\":11200,\"12A\":11300,\"12B\":11400,\"12C\":11500,\"13\":11600,\"13A\":11700,\"13B\":11800,\"13C\":11900,\"14\":12000,\"14A\":12100,\"14B\":12200,\"14C\":12300,\"15\":12400,\"15A\":12500,\"15B\":12600,\"15C\":12700,\"16\":12800,\"16A\":12900,\"16B\":13000,\"16C\":13100,\"17\":13200,\"17A\":13300,\"17B\":13400,\"17C\":13500,\"18\":13600,\"18A\":13700,\"18B\":13800,\"18C\":13900,\"19\":14000,\"19A\":14100,\"19B\":14200,\"19C\":14300,\"20\":14400,\"20A\":14500,\"20B\":14600,\"20C\":14700,\"21\":14800,\"21A\":14900,\"21B\":15000,\"21C\":15100,\"22\":15200,\"22A\":15300,\"22B\":15400,\"22C\":15500,\"23\":15600,\"23A\":15700,\"23B\":15800,\"23C\":15900,\"24\":16000,\"24A\":16100,\"24B\":16200,\"24C\":16300,\"25\":16400,\"25A\":16500,\"25B\":16600,\"25C\":16700,\"26\":16800,\"26A\":16900,\"26B\":17000,\"26C\":17100,\"27\":17200,\"27A\":17300,\"27B\":17400,\"27C\":17500,\"28\":17600,\"28A\":17700,\"28B\":17800,\"28C\":17900,\"29\":18000,\"29A\":18100,\"29B\":18200,\"29C\":18300,\"30\":18400,\"30A\":18500,\"30B\":18600,\"30C\":18700,\"Wine\":18800,\"Beer Shop\":18900,\"Beer 1\":18905,\"Beer - Walk-In Cooler\":18910,\"Beer 2\":18915,\"Beer 3\":18920,\"Beer 4\":18925,\"Beer 5\":18930,\"Beer 6\":18935,\"Beer 7\":18940,\"Beer 8\":18945,\"Front End Register Area\":19000}",
+  "cs_uid": "",
+  "longitude": -79.008678,
+  "hasPharmacy": false,
+  "hasECommerce": true,
+  "hasDelivery": true,
+  "pointOfSaleIndicator": "F",
+  "key": "140-CHAPEL-HILL",
+  "id": 140,
+  "position": {
+   "lat": 35.945277,
+   "lng": -79.008678
+  },
+  "alcoholTypesForSale": [
+   "Beer",
+   "Wine"
+  ],
+  "sellsAlcohol": true,
+  "slug": "chapel-hill-nc"
+ }
+]

@@ -230,3 +230,84 @@ def test_food_item_exposes_the_kind(conn):
     pk.classify_all(conn)
     food = nutrition.get_food("Pork Loin Chops", conn=conn)
     assert food.protein_kind == "pork"
+
+
+# --------------------------------------------------------------------------- #
+# GFP-274: a meat word used as a FLAVOUR MODIFIER on a non-meat head noun.
+#
+# The traps above defend against a meat word used as a BRAND ("Chicken of the
+# Sea") or a FORM ("Beef Flavored Ramen"). This is the third shape, and it
+# reached production: the live app served a tin of beans as GIANT's cheapest
+# PORK. No numeric guard can catch it -- beans carry real protein at a real
+# price, so the density is entirely plausible. It is wrong in KIND.
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("name", [
+    # The row measured live in `gp cheapest` on 2026-08-12.
+    "Hanover Brown Sugar & Bacon Baked Beans, 16 oz",
+    "Bush's Best Pork and Beans, 28 oz",
+    "Bacon Ranch Hummus, 10 oz",
+    "Refried Beans with Bacon, 16 oz",
+])
+def test_a_legume_is_never_meat_however_it_is_flavoured(name):
+    assert pk.classify(name) == pk.OTHER
+    assert pk.kind_from_name(name) is None
+
+
+def test_a_brand_spelling_is_not_caught_and_that_is_acceptable():
+    """The known edge of the rule, written down rather than discovered later.
+
+    "Beanee Weenee" is beans and franks, but `\\bbeans?\\b` does not match
+    "Beanee" -- catching it would need a brand list, which is the cleverness
+    this module refuses. It lands on UNKNOWN, which is honest and, crucially,
+    is NOT in MEAT_KINDS, so it can never surface as somebody's cheapest pork.
+    """
+    assert pk.classify("Van Camp's Beanee Weenee Original, 7.75 oz") == pk.UNKNOWN
+    assert pk.UNKNOWN not in pk.MEAT_KINDS
+
+
+def test_the_bean_rule_does_not_swallow_actual_meat():
+    """The guard the `rub`/`popcorn` lesson demands: a veto must not eat real rows.
+
+    No cut of meat is named for a legume, which is why an absolute veto is safe
+    here where it was not for preparation words.
+    """
+    assert pk.classify("Boneless Skinless Chicken Breast, 3 lb") == "chicken"
+    assert pk.classify("Bacon, Thick Cut, 16 oz") == "pork"
+    assert pk.classify("Ground Beef 80/20, 1 lb") == "beef"
+
+
+# --------------------------------------------------------------------------- #
+# GFP-271: "not meat" and "not a protein buy" are different questions, and
+# conflating them would delete a vegan client's entire diet.
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("name", [
+    "Swanson Beef Cooking Stock, 32 oz",
+    "beef cooking stock 3G Protein, 32 oz",   # the row that broke the optimiser
+    "Chicken Broth, Low Sodium, 48 oz",
+    "Knorr Beef Bouillon Cubes",
+    "Turkey Gravy, 12 oz",
+    "Montreal Steak Seasoning",
+])
+def test_stock_and_seasoning_are_not_a_protein_buy(name):
+    assert pk.is_not_a_protein_buy(name) is True
+
+
+@pytest.mark.parametrize("name", [
+    "Beyond Burger Plant-Based Patties, 8 oz",
+    "Impossible Beef, 12 oz",
+    "Meatless Breakfast Sausage",
+])
+def test_plant_based_analogues_remain_buyable(name):
+    """The distinction this predicate exists for.
+
+    `is_disqualified` rejects these -- correct, they are not MEAT. But they are
+    real protein someone buys deliberately, so the bill must not filter on that
+    predicate. If this test ever fails, a vegan client's plan just became empty.
+    """
+    assert pk.is_disqualified(name) is True
+    assert pk.is_not_a_protein_buy(name) is False
+
+
+def test_real_meat_is_a_protein_buy():
+    assert pk.is_not_a_protein_buy("Boneless Skinless Chicken Breast, 3 lb") is False
+    assert pk.is_not_a_protein_buy(None) is False
