@@ -28,6 +28,7 @@ from . import (
     credentials,
     db,
     config as app_config,
+    evaluation,
     formulas,
     logs,
     importers,
@@ -75,11 +76,13 @@ profile_app = typer.Typer(help="Set/get profile values (used as formula variable
 schedule_app = typer.Typer(help="Automatic background refresh (GFP-7).")
 nutrition_app = typer.Typer(help="Nutrition catalog (protein data): GFP-23/GFP-24.")
 client_app = typer.Typer(help="Clients: add, edit, remove, restore (GFP-33).")
+evaluate_app = typer.Typer(help="Measure the matcher against known answers (GFP-281).")
 app.add_typer(formula_app, name="formula")
 app.add_typer(profile_app, name="profile")
 app.add_typer(schedule_app, name="schedule")
 app.add_typer(nutrition_app, name="nutrition")
 app.add_typer(client_app, name="client")
+app.add_typer(evaluate_app, name="evaluate")
 
 
 class Kind(str, Enum):
@@ -784,6 +787,86 @@ def logs_cmd(
         typer.echo("")
         for line in lines[-tail:]:
             typer.echo(f"  {line}")
+
+
+def _show_evaluation(report: "evaluation.Report") -> None:
+    """Render one harvest. Every denominator is stated, because a bare
+    percentage hides whether it was measured over 2,000 items or two."""
+    typer.echo(f"Harvest {report.evaluated_at}")
+    typer.echo(
+        f"  scored {report.scored}  "
+        f"(agree {report.agree}, disagree {report.disagree}, "
+        f"declined {report.declined})"
+    )
+    # Stated, never silently dropped: an excluded 40% reads as full coverage.
+    typer.echo(
+        f"  excluded {report.unlabelled} with no usable answer "
+        f"(protein_kind '{evaluation.UNKNOWN_KIND}')"
+    )
+    if report.precision is not None:
+        typer.echo(f"  precision   {report.precision:6.1%}  of what it answered")
+        typer.echo(f"  answer rate {report.answer_rate:6.1%}  of what it could have")
+        typer.echo(f"  recall      {report.recall:6.1%}  right, out of everything known")
+    else:
+        typer.echo("  precision   undefined - it answered nothing at all")
+
+    scored_methods = [m for m in report.by_method if m.answered]
+    if scored_methods:
+        typer.echo("")
+        _print_table(
+            ["method", "answered", "precision"],
+            [(m.method, str(m.answered), f"{m.precision:.1%}") for m in scored_methods],
+        )
+
+    populated = [b for b in report.buckets if b.answered]
+    if populated:
+        typer.echo("")
+        typer.echo("Calibration - what each stated confidence was actually worth:")
+        _print_table(
+            ["stated", "answered", "observed", ""],
+            [
+                (f"[{b.low:.1f}, {b.high:.2f})", str(b.answered), f"{b.observed:.1%}",
+                 "OVERCONFIDENT" if b.overconfident else "")
+                for b in populated
+            ],
+        )
+
+
+@evaluate_app.command("run")
+def evaluate_run() -> None:
+    """Score the rules against the answers retailers already gave us (GFP-281).
+
+    Reads nothing new: retailer-direct scrapers and the nutritionist's own
+    corrections already store an authoritative answer per item, and the keyword
+    rules independently have an opinion about the same names. Every
+    disagreement is a labelled error, free.
+    """
+    conn = db.connect()
+    try:
+        evaluation.harvest(conn)
+    except evaluation.NoGroundTruthError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    _show_evaluation(evaluation.report(conn))
+
+    fell, why = evaluation.regressed(conn)
+    typer.echo("")
+    typer.secho(
+        f"{'REGRESSION: ' if fell else ''}{why}",
+        fg=typer.colors.RED if fell else None,
+    )
+    if fell:
+        raise typer.Exit(code=1)
+
+
+@evaluate_app.command("report")
+def evaluate_report() -> None:
+    """Show the most recent harvest without running a new one."""
+    report = evaluation.report(db.connect())
+    if report is None:
+        typer.echo("No harvest yet - run `gplan evaluate run`.")
+        raise typer.Exit()
+    _show_evaluation(report)
 
 
 config_app = typer.Typer(
