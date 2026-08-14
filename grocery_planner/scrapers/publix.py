@@ -96,9 +96,9 @@ SCRAPER_KEY = "publix-catalog"
 #:
 #: They cannot be joined. `productitems` accepts only a uuid; a sitemap
 #: `baseProductId` gets HTTP 400. The mapping between them lives on the product
-#: detail page, which serves an Akamai `bm-verify` interstitial, or in search --
-#: and `Disallow: /search?*` is in Publix's robots.txt, so search is out on
-#: policy regardless of whether it could be made to work.
+#: detail page, which serves an Akamai `bm-verify` interstitial, or in search,
+#: which is 403 behind the same bot-detection layer. Both bridges are shut by
+#: the same control, so finding a uuid source is the whole problem.
 #:
 #: So this module stays the only way to read Publix at all, and the case for
 #: unscheduling it is stronger than when it was written: the free replacement

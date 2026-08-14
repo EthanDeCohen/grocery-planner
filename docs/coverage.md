@@ -482,9 +482,9 @@ the next person to notice that will retrace this.
 | `services.publix.com/…/productitems?Id=<uuid>&StoreNbr=` | **200, no auth, real prices** |
 | `sitemap_products1..7.xml` | **200, ~70k products, published for crawlers** |
 | `/?setstorenumber=1658` | **200**, sets a `Store` cookie; prices then appear in page HTML |
-| `/search?*` | **`Disallow` in robots.txt** |
 | `/search/api/search/storeproductssavings` | 403, blanket path deny |
 | `/pd/<slug>/<baseProductId>` | Akamai `bm-verify` interstitial |
+| `/search?query=…` | 200, but the query is ignored without a store |
 
 The working half is genuinely attractive: `productitems` returns **package
 prices**, not the per-pound rates that force the ‡ marker, and the sitemaps would
@@ -492,16 +492,17 @@ let protein candidates be filtered offline with no search endpoint at all — 59
 chicken URLs in sitemap 1 alone.
 
 **They cannot be joined.** `productitems` accepts only a uuid; a sitemap
-`baseProductId` returns HTTP 400. That mapping exists only on the product page
-(bot-challenged) or in search — and `Disallow: /search?*` settles search on
-policy, not on engineering. Clearing the Akamai side would mean defeating bot
-detection, which is not something this project does.
+`baseProductId` returns HTTP 400. That mapping exists only on the product detail
+page or in search, and both sit behind the same Akamai layer — a `bm-verify`
+interstitial on one, an identical 428-byte 403 on the other regardless of
+parameters or a valid `Store` cookie. **Finding a uuid source is the whole
+problem**; everything else already works.
 
 Two things follow. The decision on this page is **unchanged and better
 supported**: unschedule the metered feed, because the free replacement does not
-exist. And **GFP-197's original verdict stands** — "the store locator returns no
-results to an automated client" was right; the cause is Akamai plus a robots
-directive rather than the locator itself.
+exist yet. And **GFP-197's original verdict stands** — "the store locator returns
+no results to an automated client" was right, and the cause is the bot-detection
+layer rather than the locator itself.
 
 **And walmart.io is not a replacement for Parse.bot Walmart.** They are
 complements — Parse.bot gives a *store-scoped price* (verified: same query at

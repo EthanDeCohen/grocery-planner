@@ -261,15 +261,41 @@ def test_an_expensive_source_cannot_be_given_a_recurring_cadence(env_db):
         scheduler.set_schedule(db.connect(), "publix-catalog", "interval", "7d")
 
 
-def test_the_expensive_source_is_still_runnable_on_demand():
+def test_the_expensive_source_is_still_runnable_on_demand(monkeypatch):
     """Refusing a cadence is not the same as removing the source.
 
     Running it once, deliberately, is a decision someone is making with their
     eyes open. `available_scrapers` is what the GUI's Run-scrape dialog offers,
     and publix-catalog must stay in it.
+
+    READINESS IS FORCED HERE ON PURPOSE. publix-catalog is only *ready* when a
+    Parse.bot API key is configured, so asserting on available_scrapers() as it
+    happens to be would test whether this machine has a key -- it passed locally
+    and failed on CI for exactly that reason, the same environment split GFP-270
+    hit in test_stores_shows_scraper_readiness.
+
+    Pinning readiness to True asserts the thing that actually matters and holds
+    everywhere: publix-catalog is withheld from the schedule because it is
+    EXPENSIVE, not because it is unconfigured. Those are different reasons and
+    only one of them is this ticket's.
     """
+    from grocery_planner.scrapers import publix
+
+    monkeypatch.setattr(publix, "readiness", lambda: (True, ""))
     assert "publix-catalog" in service.available_scrapers()
     assert "publix-catalog" not in service.schedulable_scrapers()
+
+
+def test_the_expensive_source_is_still_registered():
+    """Unscheduling must not have quietly deregistered it.
+
+    all_scrapers() is the registry, independent of credentials, so this holds
+    with or without a Parse.bot key.
+    """
+    from grocery_planner.scrapers import publix
+
+    assert "publix-catalog" in service.all_scrapers()
+    assert publix.SCHEDULABLE is False
 
 
 def test_the_free_publix_banner_is_unaffected():
