@@ -122,6 +122,29 @@ def all_scrapers() -> list[str]:
     return sorted(SCRAPERS)
 
 
+def schedulable_scrapers() -> list[str]:
+    """Ready scrapers that may be given a RECURRING cadence (GFP-287).
+
+    A third question, distinct from the two above, and the distinction is about
+    money rather than capability. A source can be registered, ready, and
+    perfectly correct to run on demand while still being a bad idea to run
+    every week -- because a metered vendor charges per call and some sources
+    cost far more per usable row than others.
+
+    `publix-catalog` is the case this exists for: 9.1 credits per usable row
+    against Walmart's 0.14, and the sole reason the Parse.bot bill did not fit
+    the free tier. See the note on `scrapers.publix.SCHEDULABLE`.
+
+    Deliberately NOT folded into :func:`available_scrapers`, which the GUI's Run
+    scrape dialog uses: running an expensive source once, knowingly, is fine.
+    What this refuses is the recurring cadence that spends money unattended.
+    """
+    return sorted(
+        key for key in available_scrapers()
+        if getattr(SCRAPERS[key], "SCHEDULABLE", True)
+    )
+
+
 @dataclass(frozen=True)
 class ScrapePlan:
     """Which stores are worth offering for a ZIP, and what was left out (GFP-257).

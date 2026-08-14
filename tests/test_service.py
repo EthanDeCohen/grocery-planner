@@ -87,6 +87,16 @@ PUBLIC_API = [
     "fetch_deals",
     "is_expired",
     "run_scrape",
+    # GFP-287: a THIRD question, alongside "registered" (all_scrapers) and
+    # "ready" (available_scrapers) -- may this source run UNATTENDED AND
+    # REPEATEDLY? That is about money, not capability: publix-catalog is ready
+    # and correct to run on demand, but costs 9.1 Parse.bot credits per usable
+    # row against Walmart's 0.14, and a weekly cadence for it was the only
+    # reason the bill did not fit the free tier.
+    #
+    # Public because the scheduler and the GUI must be able to offer a
+    # different list from the Run-scrape dialog's.
+    "schedulable_scrapers",
     "scraper_status",
     "scrapers_supporting_limit",
     "stores_with_deals",

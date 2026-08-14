@@ -82,7 +82,17 @@ def set_schedule(
     conn: sqlite3.Connection, store: str, kind: str, expression: str, enabled: bool = True
 ) -> None:
     """Create or replace a store's cadence. Validates before it writes."""
-    if store not in service.available_scrapers():
+    # GFP-287: schedulable, not merely available. A source can be ready and
+    # correct to run on demand while being a bad idea to run every week, because
+    # a metered vendor bills per call -- publix-catalog costs 9.1 credits per
+    # usable row against Walmart's 0.14, and was the only reason the Parse.bot
+    # bill did not fit the free tier.
+    #
+    # Guarded HERE rather than only removing the row, because a schedule is a
+    # standing instruction to spend money: deleting one without closing the door
+    # leaves it a single UI click from coming back, with nothing recording why
+    # it should not.
+    if store not in service.schedulable_scrapers():
         raise service.UnknownStoreError(store)
     build_trigger(kind, expression)  # raises ScheduleError on nonsense
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")

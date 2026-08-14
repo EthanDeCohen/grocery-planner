@@ -448,6 +448,68 @@ still leaves room for the Target verification. Keeping it means $30/month for
 Every scrape reports `parsebot_calls` plus the vendor's remaining credit and
 daily counters in its stats, so this is visible before it becomes a 402.
 
+### DECIDED 2026-08-14 (GFP-287): Publix is unscheduled, Walmart stays
+
+The user's position was "I'm not paying for Parse.bot". The table above says
+that does not require dropping Parse.bot — it requires **dropping Publix**:
+
+```
+weekly cadence          before            after
+  walmart               ~130/month        ~130/month
+  publix-catalog        ~433/month        0          <- unscheduled
+  ------------------------------------------------
+  total                 ~563  OVER 200    ~130  fits the FREE tier
+```
+
+The $30/month Hobby tier was only ever being spent on **eleven rows**.
+
+**What changed.** The live `publix-catalog interval 7d` schedule is deleted, and
+`scrapers.publix.SCHEDULABLE = False` now stops it being re-added.
+`service.schedulable_scrapers()` is a third question alongside *registered* and
+*ready* — it asks whether a source should run **unattended and repeatedly**,
+which is a question about money rather than capability.
+
+The scraper is **kept**. `gplan scrape publix-catalog` still runs it: spending
+100 credits once, knowingly, is a decision someone is making with their eyes
+open. What is refused is the cadence that spends money while nobody is looking.
+
+**Could Publix's own site replace the metered feed? No — GFP-288, asked and
+answered 2026-08-14.** Worth recording because two of the four pieces work, and
+the next person to notice that will retrace this.
+
+| route | result |
+| --- | --- |
+| `services.publix.com/…/productitems?Id=<uuid>&StoreNbr=` | **200, no auth, real prices** |
+| `sitemap_products1..7.xml` | **200, ~70k products, published for crawlers** |
+| `/?setstorenumber=1658` | **200**, sets a `Store` cookie; prices then appear in page HTML |
+| `/search?*` | **`Disallow` in robots.txt** |
+| `/search/api/search/storeproductssavings` | 403, blanket path deny |
+| `/pd/<slug>/<baseProductId>` | Akamai `bm-verify` interstitial |
+
+The working half is genuinely attractive: `productitems` returns **package
+prices**, not the per-pound rates that force the ‡ marker, and the sitemaps would
+let protein candidates be filtered offline with no search endpoint at all — 595
+chicken URLs in sitemap 1 alone.
+
+**They cannot be joined.** `productitems` accepts only a uuid; a sitemap
+`baseProductId` returns HTTP 400. That mapping exists only on the product page
+(bot-challenged) or in search — and `Disallow: /search?*` settles search on
+policy, not on engineering. Clearing the Akamai side would mean defeating bot
+detection, which is not something this project does.
+
+Two things follow. The decision on this page is **unchanged and better
+supported**: unschedule the metered feed, because the free replacement does not
+exist. And **GFP-197's original verdict stands** — "the store locator returns no
+results to an automated client" was right; the cause is Akamai plus a robots
+directive rather than the locator itself.
+
+**And walmart.io is not a replacement for Parse.bot Walmart.** They are
+complements — Parse.bot gives a *store-scoped price* (verified: same query at
+27401 and 94110 priced 3 of 43 items differently), the official API gives *UPC*,
+which is the route to real nutrition. The API is also blocked (GFP-269) and
+national-priced only, so swapping today would trade per-ZIP pricing — the
+defining feature of v2 — for nothing.
+
 ## Leads filed, validated, not built
 
 Both would change a market rather than pad a total.

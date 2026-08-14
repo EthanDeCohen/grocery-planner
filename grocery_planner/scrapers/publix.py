@@ -60,6 +60,51 @@ from .walmart import is_rate, priced_pound_name   # one rate grammar, not two
 
 #: The CLI/registry name. `publix` is already the Flipp weekly-ad banner.
 SCRAPER_KEY = "publix-catalog"
+
+#: NOT SCHEDULABLE, on cost (GFP-287, decided by the user 2026-08-14).
+#:
+#: This source works. It is simply the worst value in the project by a wide
+#: margin, and it was the only reason the Parse.bot bill did not fit the free
+#: tier. Measured from the vendor's own usage export:
+#:
+#:     store     credits/scrape   usable rows   credits per usable row
+#:     Walmart         30             217              0.14
+#:     Publix         100              11              9.10     <- 65x worse
+#:
+#: `search_products_by_zip` costs 10 credits a call -- more than three times
+#: Walmart's -- and most of the Publix catalogue comes back priceless anyway,
+#: so the ceiling is low even if the budget were not.
+#:
+#:     Free tier 200/month:  Walmart + Publix ~563  far over
+#:                           Walmart only     ~130  fits, 70 spare
+#:
+#: So the $30/month Hobby tier was being paid for eleven rows.
+#:
+#: The scraper is KEPT, not deleted: it is written, tested, and costs nothing
+#: while unscheduled. `gplan scrape publix-catalog` still runs it deliberately.
+#: What is refused is the recurring cadence that quietly spends money.
+#:
+#: GFP-288 asked whether Publix's own endpoints could retire this module and its
+#: bill. Investigated 2026-08-14: NO, and the reason is worth knowing before
+#: anyone tries again.
+#:
+#: Two pieces genuinely work from a plain client, unauthenticated. Publix's
+#: `services.publix.com/search/productdata/productitems?Id=<uuid>&StoreNbr=`
+#: returns real prices -- package prices, not the per-pound rates that force the
+#: double dagger above -- and `sitemap_products1..7.xml` publishes ~70k products
+#: for crawlers, slug and `baseProductId` in each URL.
+#:
+#: They cannot be joined. `productitems` accepts only a uuid; a sitemap
+#: `baseProductId` gets HTTP 400. The mapping between them lives on the product
+#: detail page, which serves an Akamai `bm-verify` interstitial, or in search --
+#: and `Disallow: /search?*` is in Publix's robots.txt, so search is out on
+#: policy regardless of whether it could be made to work.
+#:
+#: So this module stays the only way to read Publix at all, and the case for
+#: unscheduling it is stronger than when it was written: the free replacement
+#: does not exist. Do not delete it.
+SCHEDULABLE = False
+
 STORE_KEY = "publix"
 SOURCE = "parsebot"
 MERCHANT = "Publix"

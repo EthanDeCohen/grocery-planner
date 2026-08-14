@@ -240,3 +240,49 @@ def test_build_scheduler_adds_one_job_per_enabled_schedule(conn):
     job = engine.get_job("scrape:foodlion")
     assert job.misfire_grace_time == scheduler.MISFIRE_GRACE_SECONDS
     assert job.coalesce is True  # missed windows collapse into one catch-up
+
+
+# --------------------------------------------------------------------------- #
+# GFP-287: a source can be READY and still be refused a recurring cadence.
+#
+# publix-catalog works. It costs 9.1 Parse.bot credits per usable row against
+# Walmart's 0.14 -- 65x worse -- and a weekly cadence for it was ~433 credits a
+# month against a 200-credit free tier: 77% of the bill for 5% of the rows.
+#
+# The guard lives in the scheduler rather than only in a deleted row, because a
+# schedule is a standing instruction to SPEND MONEY. Removing the row without
+# closing the door leaves it one UI click from returning, with nothing on record
+# saying why it should not.
+# --------------------------------------------------------------------------- #
+def test_an_expensive_source_cannot_be_given_a_recurring_cadence(env_db):
+    from grocery_planner import db
+
+    with pytest.raises(service.UnknownStoreError):
+        scheduler.set_schedule(db.connect(), "publix-catalog", "interval", "7d")
+
+
+def test_the_expensive_source_is_still_runnable_on_demand():
+    """Refusing a cadence is not the same as removing the source.
+
+    Running it once, deliberately, is a decision someone is making with their
+    eyes open. `available_scrapers` is what the GUI's Run-scrape dialog offers,
+    and publix-catalog must stay in it.
+    """
+    assert "publix-catalog" in service.available_scrapers()
+    assert "publix-catalog" not in service.schedulable_scrapers()
+
+
+def test_the_free_publix_banner_is_unaffected():
+    """The Flipp banner and the Parse.bot catalogue are different sources.
+
+    `publix` is the free weekly ad; `publix-catalog` is the metered one. Only
+    the metered key is refused -- an over-broad rule here would have silently
+    dropped a source that costs nothing.
+    """
+    assert "publix" in service.schedulable_scrapers()
+
+
+def test_schedulable_is_a_subset_of_available():
+    """The relationship, not a spelling: schedulable can never offer a store
+    that is not runnable at all."""
+    assert set(service.schedulable_scrapers()) <= set(service.available_scrapers())
