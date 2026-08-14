@@ -53,14 +53,30 @@ def test_scrape_rejects_a_registered_but_unready_store(env_db, monkeypatch, tmp_
 
 def test_stores_shows_scraper_readiness(env_db, monkeypatch, tmp_path):
     monkeypatch.setattr(wf, "session_path", lambda: tmp_path / "wholefoods_session.json")
+    # GFP-270: assert on the WHOLE FOODS ROW, not on the whole table.
+    #
+    # This used to read `"needs setup" not in configured.stdout`, which quietly
+    # assumed Whole Foods was the only source that could ever need a credential.
+    # Parse.bot (walmart, publix-catalog) also reports "needs setup: No Parse.bot
+    # API key", so the table-wide assertion now depends on whether the machine
+    # running the tests happens to have that key. It passed on a developer box
+    # that had one and failed on CI that did not -- an environment split, not a
+    # behaviour change.
+    #
+    # Row-scoped assertions say what this test actually means: configuring Whole
+    # Foods makes WHOLE FOODS ready, and says nothing about anyone else.
+    def wholefoods_row(output: str) -> str:
+        return next(l for l in output.splitlines() if l.startswith("wholefoods"))
+
     result = runner.invoke(app, ["stores"])
     assert result.exit_code == 0
-    assert "ready" in result.stdout        # foodlion/harristeeter
-    assert "needs setup" in result.stdout  # wholefoods, unconfigured
+    assert "ready" in result.stdout                          # foodlion/harristeeter
+    assert "needs setup" in wholefoods_row(result.stdout)    # unconfigured
 
     (tmp_path / "wholefoods_session.json").write_text('{"wfm_store_d8": "x"}', encoding="utf-8")
     configured = runner.invoke(app, ["stores"])
-    assert "needs setup" not in configured.stdout
+    assert "needs setup" not in wholefoods_row(configured.stdout)
+    assert "ready" in wholefoods_row(configured.stdout)
 
 
 def test_unknown_store_filter_errors(env_db):

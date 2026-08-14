@@ -95,6 +95,12 @@ def test_the_csv_carries_the_basis_as_data_not_as_a_glyph():
 # The cheapest-protein strip -- the first thing read on screen
 # --------------------------------------------------------------------------- #
 def test_the_cheapest_strip_carries_the_dagger():
+    # GFP-270: the GUI extra is OPTIONAL and CI does not install it, so a
+    # GUI-touching test must skip rather than error. Every other such test in
+    # this suite already guards -- see conftest.py and test_biometrics_panel.py.
+    # Without it, a developer machine that happens to have PySide6 passes while
+    # CI fails, which is precisely the split that broke this branch.
+    pytest.importorskip("PySide6", reason="GUI extra not installed")
     from grocery_planner.gui import cheapest as strip
 
     item = CheapestProtein(
@@ -111,6 +117,7 @@ def test_the_cheapest_strip_carries_the_dagger():
 
 def test_the_strip_marks_a_rate_even_with_no_product_link():
     """The link is optional; the marker is not."""
+    pytest.importorskip("PySide6", reason="GUI extra not installed")
     from grocery_planner.gui import cheapest as strip
 
     item = CheapestProtein(
