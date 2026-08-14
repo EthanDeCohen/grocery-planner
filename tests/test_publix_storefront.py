@@ -232,3 +232,30 @@ def test_sitemap_host_key_follows_the_delivery_subdomain():
     """delivery.publix.com, not www -- the tenant lives on its own host."""
     assert ps.TENANT.sitemap_host_key == "delivery_publix_com"
     assert "delivery_publix_com" in ps.TENANT.sitemap_index
+
+
+def test_scrape_builds_its_own_client_bound_to_this_tenant(monkeypatch):
+    """The default-client path, which no other test exercises.
+
+    Every other test injects a client, so `client or StorefrontClient(...)` was
+    never run. GFP-305 removed the PublixStorefrontClient subclass that used to
+    supply TENANT implicitly, and the bare platform client requires it
+    positionally -- so an omission here is a TypeError on the one path a real
+    scrape actually takes.
+    """
+    built = {}
+
+    class FakeClient:
+        def __init__(self, tenant, **kw):
+            built["tenant"] = tenant
+        def discover(self): pass
+        def close(self): pass
+        def product_slugs(self): return []
+
+    monkeypatch.setattr(ps._platform, "StorefrontClient", FakeClient)
+    monkeypatch.setattr(ps._platform, "scrape", lambda tenant, **kw: ([], {}, {}))
+    ps.scrape()
+
+    assert built["tenant"] is ps.TENANT, (
+        "scrape() built a client without binding it to the Publix tenant"
+    )

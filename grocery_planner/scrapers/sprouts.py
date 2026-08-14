@@ -106,7 +106,6 @@ BASE_URL = "https://shop.sprouts.com"
 RETAILER_SLUG = "sprouts"
 STOREFRONT_PATH = f"/store/{RETAILER_SLUG}/storefront"
 PRODUCT_PATH = f"/store/{RETAILER_SLUG}/products/{{slug}}"
-GRAPHQL_PATH = _platform.GRAPHQL_PATH
 SITEMAP_INDEX = f"{BASE_URL}/sitemaps/storefront_pro/shop_{RETAILER_SLUG}_com/sitemap.xml"
 
 # Instacart's ids for this tenant, read back from the live storefront rather
@@ -116,7 +115,6 @@ DEFAULT_SHOP_ID = "515202"
 DEFAULT_ZONE_ID = "430"
 RETAILER_ID = "279"
 
-HEAD_BYTES = _platform.HEAD_BYTES
 
 # Observed 2026-08-11. `SimpleShopCollection` is re-discovered from the
 # storefront on every run and this value is only a cold-start default.
@@ -130,7 +128,6 @@ FALLBACK_HASHES = {
     "SimpleShopCollection":
         "d438f50ce0c6b59526c922754c7908bfbfa073c8893f466f0276f40a0074501a",
 }
-PINNED_OPERATIONS = _platform.PINNED_OPERATIONS
 
 # A product with a stable, well-populated nutrition panel, used to prove the pin
 # still works. Chosen because it exercises the whole path: a real protein
@@ -161,26 +158,9 @@ TENANT = _platform.Tenant(
 # --------------------------------------------------------------------------- #
 # Re-exports -- the GFP-262 public surface, unchanged
 # --------------------------------------------------------------------------- #
-SproutsError = _platform.StorefrontError
-QueryNotAllowedError = _platform.QueryNotAllowedError
-ThrottledError = _platform.ThrottledError
 
-ShopContext = _platform.ShopContext
-Nutrition = _platform.Nutrition
-Listing = _platform.Listing
-_FoodFact = _platform.FoodFact
 
-product_id_from_slug = _platform.product_id_from_slug
-servings_per_container = _platform.servings_per_container
-serving_grams = _platform.serving_grams
-size_is_weight = _platform.size_is_weight
-package_grams = _platform.package_grams
 protein_per_100g = _platform.protein_per_100g
-pricing_unit_size = _platform.pricing_unit_size
-display_item_name = _platform.display_item_name
-parse_listing = _platform.parse_listing
-discover_persisted_queries = _platform.discover_persisted_queries
-nutrition_from_payload = _platform.nutrition_from_payload
 
 
 def product_page_url(slug: str | None) -> str | None:
@@ -190,28 +170,6 @@ def product_page_url(slug: str | None) -> str | None:
 def _zip_centroid(postal_code: str) -> dict[str, float]:
     """Kept as a module-level name because GFP-262 exported it."""
     return _platform.zip_centroid(postal_code, DEFAULT_POSTAL_CODE)
-
-
-class SproutsClient(_platform.StorefrontClient):
-    """The platform client, bound to the Sprouts tenant.
-
-    A subclass rather than a factory function so that ``isinstance`` checks and
-    the GFP-262 constructor signature both keep working. It adds no behaviour,
-    and if it ever needs to, that is the signal Sprouts has stopped being an
-    ordinary tenant of this platform.
-    """
-
-    def __init__(
-        self,
-        client: httpx.Client | None = None,
-        timeout: float = 30.0,
-        graphql_pace=None,
-        page_pace=None,
-    ):
-        super().__init__(
-            TENANT, client=client, timeout=timeout,
-            graphql_pace=graphql_pace, page_pace=page_pace,
-        )
 
 
 # --------------------------------------------------------------------------- #
@@ -245,7 +203,7 @@ def _upsert_food_fact(conn: sqlite3.Connection, fact: _platform.FoodFact) -> Non
     _platform.upsert_food_fact(conn, TENANT, fact)
 
 
-def verify_pinned_hashes(client: SproutsClient | None = None) -> tuple[bool, str]:
+def verify_pinned_hashes(client: _platform.StorefrontClient | None = None) -> tuple[bool, str]:
     """Prove the pinned nutrition query still runs. ``(ok, message)``.
 
     Cheap enough to run as a health check: one product, one request. It exists
@@ -268,7 +226,7 @@ def scrape(
     postal_code: str | None = None,
     limit: int | None = None,
     conn: sqlite3.Connection | None = None,
-    client: SproutsClient | None = None,
+    client: _platform.StorefrontClient | None = None,
     now: datetime | None = None,
     slugs: Iterable[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
