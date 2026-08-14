@@ -92,13 +92,15 @@ def test_candidates_drop_what_cannot_be_a_protein_buy():
         assert junk not in kept, f"{junk} would cost a GraphQL call for nothing"
 
 
-def test_candidates_deduplicate():
-    """The sitemap lists 171,249 product URLs for 108,978 distinct slugs.
+def test_candidates_no_longer_deduplicate_here():
+    """De-duplication moved to the platform (GFP-294), where every tenant gets it.
 
-    ~36% are repeats and each repeat would otherwise cost its own call.
+    Asserted rather than just deleted: if a future edit re-adds a `seen` set
+    here, that is a workaround creeping back into one tenant for a problem the
+    platform already solves.
     """
     slug = "1-just-bare-natural-fresh-chicken-tenders-14-0-oz"
-    assert ps.protein_candidate_slugs([slug, slug, slug]) == [slug]
+    assert ps.protein_candidate_slugs([slug, slug]) == [slug, slug]
 
 
 def test_candidates_preserve_input_order():
@@ -185,10 +187,12 @@ def test_scrape_filters_the_catalogue_before_the_nutrition_pass(monkeypatch):
     monkeypatch.setattr(ps._platform, "scrape", fake_scrape)
     ps.scrape(client=FakeClient())
 
-    assert seen["slugs"] == ["1-perdue-fresh-ground-chicken-breast-1-lb"], (
-        "the raw catalogue reached the platform: filtering and de-duplication "
-        "are what make this tenant's catalogue tractable at all"
-    )
+    # Filtering happens here; de-duplication is the platform's job (GFP-294),
+    # so the repeat survives this call and is dropped downstream.
+    assert seen["slugs"] == [
+        "1-perdue-fresh-ground-chicken-breast-1-lb",
+        "1-perdue-fresh-ground-chicken-breast-1-lb",
+    ], "the raw catalogue reached the platform unfiltered"
 
 
 def test_explicit_slugs_bypass_the_filter(monkeypatch):

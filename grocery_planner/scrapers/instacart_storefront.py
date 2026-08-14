@@ -1217,7 +1217,12 @@ def scrape(
         if context is None:
             raise StorefrontError(f"No {tenant.merchant} shop serves {zip_code}.")
 
-        catalogue = list(slugs) if slugs is not None else list(active.product_slugs())
+        raw = list(slugs) if slugs is not None else list(active.product_slugs())
+        # The sitemaps repeat: 100k listed URLs, 66k distinct slugs on Publix
+        # (GFP-294). A repeat is the same product -- the slug's prefix IS the
+        # product id -- and each one would otherwise cost its own GraphQL call.
+        catalogue = list(dict.fromkeys(raw))   # dedupe, keep order
+        duplicate_slugs = len(raw) - len(catalogue)
 
         # Pass 1 -- nutrition for the whole catalogue. Cheap and bulk-safe.
         panels: dict[str, tuple[str, Nutrition]] = {}
@@ -1248,6 +1253,7 @@ def scrape(
         stats = _stats(
             tenant, context, moment, rows, facts, active,
             products_seen=len(catalogue), no_panel=no_panel,
+            duplicate_slugs=duplicate_slugs,
             priceable=priceable_total, skipped=skipped, limit=limit,
             refused_density=refused, unlisted=unlisted,
         )
@@ -1321,7 +1327,12 @@ def scrape_prices_only(
         if context is None:
             raise StorefrontError(f"No {tenant.merchant} shop serves {zip_code}.")
 
-        catalogue = list(slugs) if slugs is not None else list(active.product_slugs())
+        raw = list(slugs) if slugs is not None else list(active.product_slugs())
+        # The sitemaps repeat: 100k listed URLs, 66k distinct slugs on Publix
+        # (GFP-294). A repeat is the same product -- the slug's prefix IS the
+        # product id -- and each one would otherwise cost its own GraphQL call.
+        catalogue = list(dict.fromkeys(raw))   # dedupe, keep order
+        duplicate_slugs = len(raw) - len(catalogue)
         priceable: list[tuple[str, Nutrition | None]] = [
             (slug, None) for slug in catalogue[:limit]
         ]
@@ -1338,6 +1349,7 @@ def scrape_prices_only(
         stats = _stats(
             tenant, context, moment, rows, facts, active,
             products_seen=len(catalogue),
+            duplicate_slugs=duplicate_slugs,
             # Every product is "no panel" here because none were asked for --
             # said plainly so the number is not misread as a measurement of the
             # catalogue's nutrition coverage.
@@ -1414,6 +1426,7 @@ def _stats(
     refused_density: int,
     unlisted: int,
     limit: int | None,
+    duplicate_slugs: int = 0,
 ) -> dict[str, Any]:
     priced = sum(1 for r in rows if r["dollar_price"] is not None)
     by_weight = sum(1 for r in rows if r["sold_by"] == "WEIGHT")
@@ -1430,6 +1443,9 @@ def _stats(
         "flyer_status": "active",
         "valid_from": moment.date().isoformat(),
         "valid_to": moment.date().isoformat(),
+        # Repeats dropped before we asked about them (GFP-294). Reported
+        # because a silent 34% drop reads as a shrinking catalogue.
+        "duplicate_slugs": duplicate_slugs,
         "priced": priced,
         "with_protein": len(facts),
         "sold_by_weight": by_weight,
