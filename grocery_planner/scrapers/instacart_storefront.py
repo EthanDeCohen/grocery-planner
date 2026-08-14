@@ -94,13 +94,28 @@ a property of the deploy rather than the banner.
 
 The value is nonetheless written out in full in each tenant module rather than
 imported from a shared constant. Sharing the *literal* would encode "these are
-always equal" as a fact, and it is only an observation: the two banners can be
-moved onto different deploy trains at any time, and the day that happens the
-symptom of a shared constant is one tenant silently losing all protein data. A
-duplicated literal that two canaries check independently fails loudly instead,
-which is the same reasoning the rename guards use (assert a relationship, not a
-spelling -- and here the relationship is "each tenant's own pin answers its own
-canary").
+always equal" as a fact, and it is only an observation: the banners can be moved
+onto different deploy trains at any time.
+
+The cost of a shared constant is not the outage -- it is the REPAIR. When one
+tenant rotates, whoever fixes it edits the shared value, and the two tenants
+that had *not* rotated start sending a hash their own deploy does not know. The
+fix for one becomes the outage for the others, and nothing in the code can say
+"Sprouts moved, ALDI did not". A duplicated literal keeps the blast radius at
+one tenant and the repair at one file. Confirmed as the intended trade by the
+user, 2026-08-14: keep the duplication.
+
+MEASURED, and correcting what this note used to claim (GFP-307). It said the
+symptom was "silently losing all protein data". It is not silent: a rejected
+hash comes back **HTTP 400** and now raises :class:`QueryNotAllowedError`, which
+aborts the scrape and names the pin. Verified by feeding Sprouts a corrupted
+hash -- the correct one returned a real panel, the corrupted one 400'd.
+
+The canary remains the early warning, because a 400 mid-scrape is still found
+later than a one-request health check. Note it can only be run where a tenant
+HAS a canary: ALDI legitimately has none (it publishes no panels at all), so
+"each tenant's own pin answers its own canary" holds for the tenants that can
+support one, and is honestly reported as unverifiable for those that cannot.
 
 THE THROTTLE TRAP: /graphql is generous, product HTML is not
 ------------------------------------------------------------
@@ -937,9 +952,42 @@ class StorefrontClient:
                 "Measured behaviour says this path tolerates a high rate, so a "
                 "throttle here is unusual -- check the pacing before raising it."
             )
+        # A REJECTED HASH ARRIVES AS HTTP 400, NOT AS A GraphQL ERROR (GFP-307).
+        #
+        # This was written expecting an ``errors[]`` entry carrying
+        # ``PERSISTED_QUERY_NOT_FOUND``, which is what the Apollo spec suggests
+        # and what the loop below still handles. Measured 2026-08-14 by feeding
+        # Sprouts a deliberately corrupted hash: the server answers **400 Bad
+        # Request** with no usable body, so ``raise_for_status`` fired first and
+        # the loop was unreachable for the one failure it existed to name.
+        #
+        # The cost was a wrong diagnosis in the only place built to give a right
+        # one: ``verify_pinned_hashes`` catches QueryNotAllowedError to say
+        # "re-capture the hash", and httpx.HTTPStatusError fell through to its
+        # transport branch instead -- reporting a stale pin as a network blip,
+        # exactly the confusion that branch's comment forbids.
+        #
+        # 4xx is treated as a pin failure rather than only 400, because the
+        # status is the retailer's choice and a 404/422 would mean the same
+        # thing. 5xx is left alone: that is their problem, not our hash.
+        # record_success() first, unchanged: it means "not throttled, ease off
+        # slowly", and a 400 that arrives promptly is exactly that. It is not a
+        # claim that the request succeeded.
         self.graphql_pace.record_success()
+        if 400 <= response.status_code < 500:
+            raise QueryNotAllowedError(
+                f"{operation} on {self.tenant.store_key}: HTTP "
+                f"{response.status_code} for persisted-query hash {sha[:12]}... "
+                "The hashes rotate per Instacart deploy -- re-run discovery "
+                "against a fresh storefront response rather than editing the "
+                "tenant's pinned_hashes. For an operation discovery cannot see "
+                "(see PINNED_OPERATIONS), re-capture it from a real browser."
+            )
         response.raise_for_status()
         payload = response.json()
+        # Kept: a tenant on a deploy that answers 200 with a GraphQL error is
+        # still possible, and this is the documented shape. It is simply not
+        # what Instacart does today -- see above.
         for error in payload.get("errors") or ():
             code = ((error.get("extensions") or {}).get("code") or "")
             if "PERSISTED_QUERY" in str(code).upper():

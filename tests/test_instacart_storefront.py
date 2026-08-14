@@ -706,3 +706,91 @@ def test_absent_panel_is_an_absence_not_an_error():
         {"data": {"productNutritionalInfo": {"nutritionalInfo": None}}}
     ) is None
     assert ist.nutrition_from_payload({"data": {}}) is None
+
+
+# --------------------------------------------------------------------------- #
+# GFP-307 -- a rejected persisted-query hash must be named as one
+#
+# Measured 2026-08-14 against the live Sprouts endpoint: a corrupted hash comes
+# back HTTP 400 with no usable body, NOT the GraphQL `errors[]` carrying
+# PERSISTED_QUERY_NOT_FOUND that this client was originally written for. That
+# made the branch built to diagnose it unreachable, and `verify_pinned_hashes`
+# reported a stale pin as a transport blip -- the one confusion its own comment
+# forbids.
+# --------------------------------------------------------------------------- #
+def _tenant_with_canary(**over):
+    kwargs = dict(
+        store_key="x", merchant="X", base_url="https://example.com",
+        retailer_slug="x", retailer_id="1",
+        pinned_hashes={"ProductNutritionalInfo": "deadbeef" * 8},
+        canary_product_id="123", default_shop_id="9",
+    )
+    kwargs.update(over)
+    return ist.Tenant(**kwargs)
+
+
+def _client_answering(tenant, status: int):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/graphql":
+            return httpx.Response(status, text="Bad Request")
+        return httpx.Response(200, text="<html></html>")
+
+    http = httpx.Client(
+        base_url=tenant.base_url, transport=httpx.MockTransport(handler)
+    )
+    return ist.StorefrontClient(tenant, client=http)
+
+
+@pytest.mark.parametrize("status", [400, 404, 422])
+def test_a_4xx_on_graphql_is_reported_as_a_rejected_hash(status):
+    """Not as a bare HTTPStatusError, which says nothing about the pin.
+
+    Parametrised across 4xx rather than pinned to 400: the status is the
+    retailer's choice and a 404 or 422 would mean the same thing.
+    """
+    tenant = _tenant_with_canary()
+    client = _client_answering(tenant, status)
+    with pytest.raises(ist.QueryNotAllowedError) as caught:
+        client.nutrition("123", "9")
+
+    message = str(caught.value)
+    assert str(status) in message
+    assert "pinned_hashes" in message, "the message must say what to fix"
+    assert "deadbeef" in message, "and which hash was rejected"
+
+
+def test_a_5xx_on_graphql_is_not_blamed_on_the_hash():
+    """Their outage is not our stale pin, and must not be reported as one."""
+    tenant = _tenant_with_canary()
+    client = _client_answering(tenant, 503)
+    with pytest.raises(httpx.HTTPStatusError):
+        client.nutrition("123", "9")
+
+
+def test_the_canary_says_recapture_the_hash_not_check_the_network():
+    """The whole point of GFP-307.
+
+    verify_pinned_hashes catches QueryNotAllowedError to say "re-capture it",
+    and falls through to a transport branch otherwise. Before the fix a stale
+    pin took the transport branch, telling the operator to look at the network
+    while the actual fix was to re-capture a hash.
+    """
+    tenant = _tenant_with_canary()
+    client = _client_answering(tenant, 400)
+    ok, message = ist.verify_pinned_hashes(tenant, client)
+
+    assert ok is False
+    assert "re-capture" in message
+    assert "transport" not in message, (
+        "a stale pin is being reported as a network problem again"
+    )
+
+
+def test_a_tenant_with_no_canary_reports_that_rather_than_a_false_pass():
+    """ALDI is this case: it publishes no panels at all, so there is nothing to
+    point a canary at. Reporting success it did not earn would be worse than
+    reporting that it cannot check."""
+    tenant = _tenant_with_canary(canary_product_id=None)
+    ok, message = ist.verify_pinned_hashes(tenant)
+    assert ok is False
+    assert "no canary" in message
