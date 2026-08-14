@@ -140,13 +140,17 @@ def test_all_scrapers_includes_every_registered_store_regardless_of_readiness():
     # client) and 'publix-catalog' (a second feed for the existing 'publix'
     # banner). Neither is ready without a Parse.bot key, which is exactly why
     # they belong in all_scrapers() and not in available_scrapers().
+    # GFP-293 adds 'publix-storefront', giving Publix THREE feeds: the Flipp
+    # banner, the Parse.bot catalogue, and the Instacart storefront that
+    # supersedes it. Unlike the other two it needs no credential, so it is the
+    # one of the three that is also in available_scrapers().
     assert set(service.all_scrapers()) == {
         "acme", "aldi", "aldi-storefront", "foodlion", "foodlion-catalog",
         "giant", "giant-ad", "harristeeter", "harristeeter-api", "hmart",
         "lidl", "lidl-catalogue", "lowesfoods", "publix", "sprouts",
         "sprouts-storefront",
         "target", "traderjoes", "wegmans", "wegmans-api", "weis", "wholefoods",
-        "publix-catalog", "walmart",
+        "publix-catalog", "publix-storefront", "walmart",
     }
 
 
