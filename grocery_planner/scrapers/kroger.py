@@ -98,7 +98,7 @@ from typing import Any, Iterable
 import httpx
 
 from .. import credentials, db, matching, savings, weight_basis
-from . import base, retry
+from . import base, foodfacts, retry
 
 # The CLI/registry name. Distinct from STORE_KEY because this is a SECOND
 # source for a store that already has one: `harristeeter` is the Flipp weekly
@@ -815,42 +815,30 @@ def product_to_row(
 # --------------------------------------------------------------------------- #
 # Persistence -- same shape as wholefoods.py, for the same reasons
 # --------------------------------------------------------------------------- #
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+#: The API this figure came from. NOT the banner it is sold under -- see the
+#: two arguments to foodfacts.upsert_food_fact. Kroger is the one source in the
+#: project where these differ, and conflating them would write matches that
+#: join to no deals row.
+FOOD_SOURCE = "kroger"
+MATCH_METHOD = "kroger_api_direct"
 
 
 def _upsert_food_fact(conn: sqlite3.Connection, fact: _FoodFact) -> None:
-    now = _now_iso()
-    conn.execute(
-        "INSERT INTO foods(name, category, source, source_ref, slug, updated_at) "
-        "VALUES (?, ?, 'kroger', ?, ?, ?) "
-        "ON CONFLICT(source, source_ref) DO UPDATE SET "
-        "name=excluded.name, category=excluded.category, slug=excluded.slug, "
-        "updated_at=excluded.updated_at",
-        (fact.name, fact.category, fact.product_id, f"kroger-{fact.product_id}", now),
-    )
-    food_id = conn.execute(
-        "SELECT id FROM foods WHERE source='kroger' AND source_ref=?", (fact.product_id,)
-    ).fetchone()["id"]
-    conn.execute(
-        "INSERT INTO food_nutrients(food_id, nutrient, amount_per_100g, unit) "
-        "VALUES (?, 'protein', ?, 'g') "
-        "ON CONFLICT(food_id, nutrient) DO UPDATE SET "
-        "amount_per_100g=excluded.amount_per_100g, unit=excluded.unit",
-        (food_id, fact.protein_per_100g),
-    )
-    # match_source=MANUAL is deliberate, exactly as in wholefoods.py: the
-    # figure came off the retailer's own label for this exact product, so the
-    # keyword auto-matcher must never be allowed to downgrade it. `method`
-    # keeps the real provenance auditable.
-    conn.execute(
-        "INSERT INTO deal_food_match"
-        "(store, item_name, food_id, confidence, method, match_source, updated_at) "
-        f"VALUES (?, ?, ?, 1.0, 'kroger_api_direct', '{matching.MANUAL}', ?) "
-        "ON CONFLICT(store, item_name) DO UPDATE SET "
-        "food_id=excluded.food_id, confidence=1.0, method='kroger_api_direct', "
-        f"match_source='{matching.MANUAL}', updated_at=excluded.updated_at",
-        (STORE_KEY, fact.item_name, food_id, now),
+    """Record Kroger's own protein figure (GFP-302: one implementation, shared).
+
+    Kept as a module-level name because tests call it directly and because a
+    scraper reading its own nutrition is a fact about this module, not about
+    the helper. The write itself lives in :mod:`foodfacts`.
+    """
+    foodfacts.upsert_food_fact(
+        conn, FOOD_SOURCE, STORE_KEY, MATCH_METHOD,
+        foodfacts.FoodFact(
+            source_ref=fact.product_id,
+            name=fact.name,
+            category=fact.category,
+            protein_per_100g=fact.protein_per_100g,
+            item_name=fact.item_name,
+        ),
     )
 
 

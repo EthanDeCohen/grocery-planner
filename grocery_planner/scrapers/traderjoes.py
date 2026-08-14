@@ -280,7 +280,7 @@ from typing import Any, Iterable
 import httpx
 
 from .. import db, logs, matching, savings, weight_basis
-from . import base, retry
+from . import foodfacts, base, retry
 
 log = logs.get_logger(__name__)
 
@@ -1193,43 +1193,26 @@ def listing_to_row(
 # --------------------------------------------------------------------------- #
 # Persistence -- same shape as kroger.py/sprouts.py, for the same reasons
 # --------------------------------------------------------------------------- #
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+#: Where this figure came from, and the banner it is sold under. Passed
+#: separately because they are not always equal -- see foodfacts.
+FOOD_SOURCE = "traderjoes"
+MATCH_METHOD = "traderjoes_label_direct"
 
 
 def _upsert_food_fact(conn: sqlite3.Connection, fact: _FoodFact) -> None:
-    now = _now_iso()
-    conn.execute(
-        "INSERT INTO foods(name, category, source, source_ref, slug, updated_at) "
-        "VALUES (?, ?, 'traderjoes', ?, ?, ?) "
-        "ON CONFLICT(source, source_ref) DO UPDATE SET "
-        "name=excluded.name, category=excluded.category, slug=excluded.slug, "
-        "updated_at=excluded.updated_at",
-        (fact.name, fact.category, fact.sku, f"traderjoes-{fact.sku}", now),
-    )
-    food_id = conn.execute(
-        "SELECT id FROM foods WHERE source='traderjoes' AND source_ref=?",
-        (fact.sku,),
-    ).fetchone()["id"]
-    conn.execute(
-        "INSERT INTO food_nutrients(food_id, nutrient, amount_per_100g, unit) "
-        "VALUES (?, 'protein', ?, 'g') "
-        "ON CONFLICT(food_id, nutrient) DO UPDATE SET "
-        "amount_per_100g=excluded.amount_per_100g, unit=excluded.unit",
-        (food_id, fact.protein_per_100g),
-    )
-    # match_source=MANUAL for the same reason as kroger.py and sprouts.py: the
-    # figure came off Trader Joe's own label for this exact SKU, so the keyword
-    # auto-matcher must never be allowed to downgrade it. `method` keeps the
-    # real provenance auditable.
-    conn.execute(
-        "INSERT INTO deal_food_match"
-        "(store, item_name, food_id, confidence, method, match_source, updated_at) "
-        f"VALUES (?, ?, ?, 1.0, 'traderjoes_label_direct', '{matching.MANUAL}', ?) "
-        "ON CONFLICT(store, item_name) DO UPDATE SET "
-        "food_id=excluded.food_id, confidence=1.0, method='traderjoes_label_direct', "
-        f"match_source='{matching.MANUAL}', updated_at=excluded.updated_at",
-        (STORE_KEY, fact.item_name, food_id, now),
+    """Record this retailer's own protein figure (GFP-302: one shared write).
+
+    Trader Joe's keys on its own SKU.
+    """
+    foodfacts.upsert_food_fact(
+        conn, FOOD_SOURCE, STORE_KEY, MATCH_METHOD,
+        foodfacts.FoodFact(
+            source_ref=fact.sku,
+            name=fact.name,
+            category=fact.category,
+            protein_per_100g=fact.protein_per_100g,
+            item_name=fact.item_name,
+        ),
     )
 
 
