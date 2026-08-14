@@ -255,7 +255,7 @@ from typing import Any, Iterable
 import httpx
 
 from .. import credentials, db, matching
-from . import base, retry
+from . import base, foodfacts, retry
 
 STORE_KEY = "wholefoods"
 MERCHANT = "Whole Foods Market"
@@ -847,10 +847,6 @@ def _display_item_name(name: str, size_text: str | None, weight_source: str) -> 
     return name
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
 @dataclass(frozen=True)
 class _FoodFact:
     asin: str
@@ -981,39 +977,28 @@ def product_to_row(
 # Persistence: foods / food_nutrients / deal_food_match (see the module
 # docstring's "Where the nutrition data lands" section for why).
 # --------------------------------------------------------------------------- #
+#: Where this figure came from, and the banner it is sold under. Passed
+#: separately because they are not always equal -- see foodfacts.
+FOOD_SOURCE = "wholefoods"
+MATCH_METHOD = "wholefoods_direct"
+
+
 def _upsert_food_fact(conn: sqlite3.Connection, fact: _FoodFact) -> None:
-    slug = f"wholefoods-{fact.asin}"
-    now = _now_iso()
-    conn.execute(
-        "INSERT INTO foods(name, category, source, source_ref, slug, updated_at) "
-        "VALUES (?, ?, 'wholefoods', ?, ?, ?) "
-        "ON CONFLICT(source, source_ref) DO UPDATE SET "
-        "name=excluded.name, category=excluded.category, slug=excluded.slug, "
-        "updated_at=excluded.updated_at",
-        (fact.name, fact.category, fact.asin, slug, now),
-    )
-    food_id = conn.execute(
-        "SELECT id FROM foods WHERE source='wholefoods' AND source_ref=?", (fact.asin,)
-    ).fetchone()["id"]
-    conn.execute(
-        "INSERT INTO food_nutrients(food_id, nutrient, amount_per_100g, unit) "
-        "VALUES (?, 'protein', ?, 'g') "
-        "ON CONFLICT(food_id, nutrient) DO UPDATE SET "
-        "amount_per_100g=excluded.amount_per_100g, unit=excluded.unit",
-        (food_id, fact.protein_per_100g),
-    )
-    # match_source=MANUAL is deliberate, not a typo -- see the module
-    # docstring's "Where the nutrition data lands" section: it is what stops
-    # matching.match_deals()'s keyword auto-matcher from ever downgrading a
-    # Whole-Foods-certain match. method stays auditable as the real story.
-    conn.execute(
-        "INSERT INTO deal_food_match"
-        "(store, item_name, food_id, confidence, method, match_source, updated_at) "
-        f"VALUES (?, ?, ?, 1.0, 'wholefoods_direct', '{matching.MANUAL}', ?) "
-        "ON CONFLICT(store, item_name) DO UPDATE SET "
-        "food_id=excluded.food_id, confidence=1.0, method='wholefoods_direct', "
-        f"match_source='{matching.MANUAL}', updated_at=excluded.updated_at",
-        (STORE_KEY, fact.item_name, food_id, now),
+    """Record Whole Foods' own protein figure (GFP-302: one shared write).
+
+    Whole Foods keys on the ASIN. See the module docstring's "Where the
+    nutrition data lands" section for why the match is written at
+    match_source=MANUAL.
+    """
+    foodfacts.upsert_food_fact(
+        conn, FOOD_SOURCE, STORE_KEY, MATCH_METHOD,
+        foodfacts.FoodFact(
+            source_ref=fact.asin,
+            name=fact.name,
+            category=fact.category,
+            protein_per_100g=fact.protein_per_100g,
+            item_name=fact.item_name,
+        ),
     )
 
 

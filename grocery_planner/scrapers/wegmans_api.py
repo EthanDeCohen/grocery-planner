@@ -62,7 +62,7 @@ from typing import Any, Iterable
 import httpx
 
 from .. import db, matching
-from . import base
+from . import foodfacts, base
 
 STORE_KEY = "wegmans"
 SCRAPER_KEY = "wegmans-api"
@@ -215,51 +215,26 @@ def protein_per_100g(product: dict[str, Any]) -> float | None:
     return None
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+#: Where this figure came from, and the banner it is sold under. Passed
+#: separately because they are not always equal -- see foodfacts.
+FOOD_SOURCE = "wegmans"
+MATCH_METHOD = "wegmans_api_direct"
 
 
 def upsert_food_fact(conn: sqlite3.Connection, fact: FoodFact) -> None:
-    """Record the retailer's own protein figure so the engine can just use it.
+    """Record this retailer's own protein figure (GFP-302: one shared write).
 
-    THE SAME MECHANISM KROGER AND WHOLE FOODS ALREADY USE, deliberately rather
-    than a second one. Writing a ``foods`` row, its protein density, and a
-    ``deal_food_match`` at confidence 1.0 means ``cost_per_gram_protein``
-    reaches this figure through the chain it already walks -- no new code path,
-    no new column, and one model of where protein comes from.
-
-    ``match_source=MANUAL`` is the load-bearing part: the figure came off the
-    retailer's own label for this exact product, so the keyword auto-matcher
-    must never overwrite it with a guess about a similarly-named food.
-    ``method`` keeps the real provenance auditable.
+    Wegmans' feed carries no separate product title, so name and item_name are the same string here -- the fallback the other sources take conditionally, taken unconditionally. See foodfacts' asymmetry note.
     """
-    now = _now_iso()
-    conn.execute(
-        "INSERT INTO foods(name, category, source, source_ref, slug, updated_at) "
-        "VALUES (?, ?, 'wegmans', ?, ?, ?) "
-        "ON CONFLICT(source, source_ref) DO UPDATE SET "
-        "name=excluded.name, category=excluded.category, slug=excluded.slug, "
-        "updated_at=excluded.updated_at",
-        (fact.item_name, fact.category, fact.sku, "wegmans-" + fact.sku, now),
-    )
-    food_id = conn.execute(
-        "SELECT id FROM foods WHERE source='wegmans' AND source_ref=?", (fact.sku,)
-    ).fetchone()["id"]
-    conn.execute(
-        "INSERT INTO food_nutrients(food_id, nutrient, amount_per_100g, unit) "
-        "VALUES (?, 'protein', ?, 'g') "
-        "ON CONFLICT(food_id, nutrient) DO UPDATE SET "
-        "amount_per_100g=excluded.amount_per_100g, unit=excluded.unit",
-        (food_id, fact.protein_per_100g),
-    )
-    conn.execute(
-        "INSERT INTO deal_food_match"
-        "(store, item_name, food_id, confidence, method, match_source, updated_at) "
-        "VALUES (?, ?, ?, 1.0, 'wegmans_api_direct', ?, ?) "
-        "ON CONFLICT(store, item_name) DO UPDATE SET "
-        "food_id=excluded.food_id, confidence=1.0, method='wegmans_api_direct', "
-        "match_source=excluded.match_source, updated_at=excluded.updated_at",
-        (STORE_KEY, fact.item_name, food_id, matching.MANUAL, now),
+    foodfacts.upsert_food_fact(
+        conn, FOOD_SOURCE, STORE_KEY, MATCH_METHOD,
+        foodfacts.FoodFact(
+            source_ref=fact.sku,
+            name=fact.item_name,
+            category=fact.category,
+            protein_per_100g=fact.protein_per_100g,
+            item_name=fact.item_name,
+        ),
     )
 
 
