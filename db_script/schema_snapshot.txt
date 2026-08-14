@@ -107,6 +107,20 @@ TABLE formulas
   expression: TEXT NOT NULL
   name: TEXT PK
 
+TABLE match_evaluation
+  evaluated_at: TEXT NOT NULL
+  id: INTEGER PK
+  item_name: TEXT NOT NULL
+  outcome: TEXT NOT NULL
+  rule_confidence: REAL
+  rule_food_id: INTEGER
+  rule_kind: TEXT
+  rule_method: TEXT
+  store: TEXT NOT NULL
+  truth_food_id: INTEGER NOT NULL
+  truth_kind: TEXT
+  truth_method: TEXT NOT NULL
+
 TABLE price_history
   captured_at: TEXT NOT NULL
   deal_type: TEXT
