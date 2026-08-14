@@ -144,3 +144,59 @@ def _no_network_in_tests(request, monkeypatch):
         httpx.AsyncHTTPTransport, "handle_async_request", _blocked, raising=False
     )
     monkeypatch.setattr(urllib.request, "urlopen", _blocked, raising=False)
+
+
+# --------------------------------------------------------------------------- #
+# THE SCRAPER REGISTRY, DECLARED ONCE AND BY HAND (GFP-303)
+#
+# This list is hand-maintained ON PURPOSE. Two tests assert exact set-equality
+# against it, so a store cannot enter `SCRAPERS` without a human writing its key
+# down here. Do NOT "fix" that by deriving this from `SCRAPERS` -- the
+# assertion would become `SCRAPERS == SCRAPERS` and would prove nothing. The
+# deliberate declaration IS the safety rail.
+#
+# What changed in GFP-303 is only that the declaration lived in TWO files
+# (tests/test_scraper.py and tests/test_service.py), so adding one store meant
+# editing two lists. On 2026-08-14 GFP-293 went red on one, was fixed, then went
+# red again on the other -- the same omission found one file at a time, each
+# costing a full ~14-minute CI cycle. One list, still manual.
+#
+# tests/test_scrape_limit.py deliberately does NOT use this: it spot-checks
+# membership in a list that is *derived* from the registry, which is the right
+# shape for a fact about code (which scrapers accept `--limit`) as opposed to a
+# decision a human makes (which stores exist at all).
+#
+# WHY THERE ARE MORE KEYS THAN STORES -- the accumulated history, which is the
+# other half of this list's value:
+#
+# * GFP-4    'wholefoods' joined the two original Flipp-sourced stores. It is
+#            registered but not READY without a hand-minted session cookie,
+#            which is why all_scrapers() and available_scrapers() differ.
+# * GFP-98   'harristeeter-api' is the Kroger shelf-price API for the SAME
+#            physical store as the 'harristeeter' Flipp weekly ad. Two entries,
+#            one shop, on purpose.
+# * GFP-265  'sprouts-storefront' is that pattern again -- and the cautionary
+#            tale. The Instacart storefront client had been SILENTLY SHADOWED
+#            by the Flipp 'sprouts' banner, because
+#            `SCRAPERS.update(flipp_banners.MODULES)` is last-write-wins and the
+#            hand-written module reused the banner's key. It cost a live
+#            debugging session. 'aldi-storefront' collides the same way.
+#            'traderjoes' is the one with NO collision, which is why it carries
+#            no SCRAPER_KEY of its own.
+# * GFP-270  'walmart' is a genuinely NEW shop, the first source reaching a
+#            chain GFP-197 filed as unreachable. 'publix-catalog' is not new --
+#            it is a second feed for the 'publix' banner, and needs its own
+#            SCRAPER_KEY for the same last-write-wins reason. Neither is ready
+#            without a Parse.bot key.
+# * GFP-293  'publix-storefront' is a THIRD feed for one shop: the Flipp banner,
+#            the Parse.bot catalogue, and the Instacart white-label. Publix
+#            holds the record. It is the only one of the three needing no
+#            credential, so it is the only one also in available_scrapers().
+# --------------------------------------------------------------------------- #
+KNOWN_SCRAPER_KEYS = {
+    "acme", "aldi", "aldi-storefront", "foodlion", "foodlion-catalog",
+    "giant", "giant-ad", "harristeeter", "harristeeter-api", "hmart",
+    "lidl", "lidl-catalogue", "lowesfoods", "publix", "publix-catalog",
+    "publix-storefront", "sprouts", "sprouts-storefront", "target",
+    "traderjoes", "walmart", "wegmans", "wegmans-api", "weis", "wholefoods",
+}

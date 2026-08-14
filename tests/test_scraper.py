@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+import conftest
+
 from grocery_planner.scrapers import base
 
 STORE = base.FOOD_LION
@@ -190,44 +192,11 @@ def test_no_flyer_message_distinguishes_expired_from_missing():
 def test_store_registry():
     from grocery_planner.scrapers import SCRAPERS
 
-    # GFP-4: Whole Foods joined the registry alongside the two Flipp-sourced
-    # stores. Updated here (not just added to) because this is an exact-
-    # equality assertion that necessarily changes the moment a new store is
-    # registered -- flagged in the GFP-4 PR description per the ticket's
-    # "don't touch other test files unless you truly must" instruction.
-    # GFP-98: 'harristeeter-api' is the Kroger shelf-price API for the SAME
-    # physical store as 'harristeeter' (the Flipp weekly ad). Two entries, one
-    # shop, on purpose -- see scrapers/__init__.py.
-    # GFP-265: 'sprouts-storefront' is the same pattern again. 'sprouts' is the
-    # Flipp weekly-ad banner; the Instacart storefront client is a second feed
-    # for the same shop and had been SILENTLY SHADOWED by it, because
-    # `SCRAPERS.update(flipp_banners.MODULES)` is a last-write-wins update and
-    # the hand-written module was using the banner's key. Both are registered
-    # now, and so is 'aldi-storefront' -- the second tenant of the same
-    # Instacart platform client, colliding with the Flipp 'aldi' banner in
-    # exactly the same way. 'traderjoes' is the one new store with NO
-    # collision, which is why it carries no SCRAPER_KEY of its own.
-    # GFP-270: 'walmart' is a NEW shop -- the first source that reaches a
-    # chain GFP-197 filed as unreachable, through the Parse.bot vendor
-    # client. 'publix-catalog' is NOT a new shop: it is a second feed for
-    # the 'publix' Flipp banner, the same two-feeds-one-store shape as
-    # harristeeter/harristeeter-api, and it carries its own SCRAPER_KEY for
-    # the same reason sprouts-storefront does -- the banner registers last
-    # and would otherwise shadow it.
-    # GFP-293: 'publix-storefront' is a THIRD feed for the same shop -- the
-    # Instacart white-label at delivery.publix.com, a third tenant of the
-    # platform client already serving sprouts and aldi. Publix now holds the
-    # record for feeds per store: the Flipp banner, the Parse.bot catalogue and
-    # this. It carries its own SCRAPER_KEY for the same last-write-wins reason
-    # as the others, and it is the only one of the three needing no credential.
-    assert set(SCRAPERS) == {
-        "acme", "aldi", "aldi-storefront", "foodlion", "foodlion-catalog",
-        "giant", "giant-ad", "harristeeter", "harristeeter-api", "hmart",
-        "lidl", "lidl-catalogue", "lowesfoods", "publix", "sprouts",
-        "sprouts-storefront",
-        "target", "traderjoes", "wegmans", "wegmans-api", "weis", "wholefoods",
-        "publix-catalog", "publix-storefront", "walmart",
-    }
+    # The expected set is declared ONCE, by hand, in conftest --
+    # KNOWN_SCRAPER_KEYS, which also carries the history of why there are
+    # more keys than stores. Still exact-equality and still manual: a new
+    # store cannot appear without someone declaring it (GFP-303).
+    assert set(SCRAPERS) == conftest.KNOWN_SCRAPER_KEYS
     # Every registered module exposes the thin store-scraper surface the CLI uses.
     for key, mod in SCRAPERS.items():
         assert mod.MERCHANT and mod.DEFAULT_POSTAL_CODE
