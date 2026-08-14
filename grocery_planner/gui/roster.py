@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Client roster pane (GFP-36, completed by GFP-33): the left half of the window.
 
 Search, the client list, and the full add/edit/remove trio. Selecting a client

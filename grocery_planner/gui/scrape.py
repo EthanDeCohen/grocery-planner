@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Run a scrape (GFP-35) — the old Deals-tab action bar, now a dialog.
 
 The store picker and "Run scrape now" button lived beside the deal table that

@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Tell the user a newer version exists. Nothing more (GFP-96).
 
 The app is a binary downloaded from a GitHub page, so there is no package

@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """PySide6 desktop shell — the menu-bar window the nutritionist GUI sits in.
 
 GFP-35 retired the GFP-14/GFP-11 tab layout (Deals / Formulas / Schedule) and

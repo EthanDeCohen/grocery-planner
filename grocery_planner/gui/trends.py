@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Price-trends pane (GFP-36): is protein getting cheaper, and where?
 
 The right-hand pane of the main window. Draws one line per store of the

@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Daily protein bill (GFP-48): target grams -> foods -> amortised daily cost.
 
 This is the headline number the client page exists to show: "hitting your

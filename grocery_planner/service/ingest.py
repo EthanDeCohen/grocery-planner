@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Scrape ingestion (GFP-14): pulling fresh deals from a store scraper into SQLite.
 
 Split out of the former ``service.py`` module (GFP-43) as the front-end-agnostic
@@ -131,9 +133,12 @@ def schedulable_scrapers() -> list[str]:
     every week -- because a metered vendor charges per call and some sources
     cost far more per usable row than others.
 
-    `publix-catalog` is the case this exists for: 9.1 credits per usable row
-    against Walmart's 0.14, and the sole reason the Parse.bot bill did not fit
-    the free tier. See the note on `scrapers.publix.SCHEDULABLE`.
+    Built for `publix-catalog`, which cost 9.1 credits per usable row against
+    Walmart's 0.14 and was the sole reason the Parse.bot bill did not fit the
+    free tier. GFP-304 deleted that scraper once the free Instacart storefront
+    replaced it, so **no registered source currently opts out** -- the mechanism
+    is kept because the condition that produced it belongs to vendor-billed
+    feeds in general, not to Publix.
 
     Deliberately NOT folded into :func:`available_scrapers`, which the GUI's Run
     scrape dialog uses: running an expensive source once, knowingly, is fine.

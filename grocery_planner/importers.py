@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Import the existing CSV layout (data/<store>/{prices,deals}.csv) into SQLite.
 
 Loss-less mapping of the README schema. Re-importing a store replaces its prior

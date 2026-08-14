@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """SQLite storage layer: schema, connection, and store seeding.
 
 Single-user, file-based, ACID. The schema mirrors the CSV columns from the

@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Daily bill panel (GFP-52): the centre column of the client detail page.
 
 The two price figures, the protein-category checkboxes, and the itemised

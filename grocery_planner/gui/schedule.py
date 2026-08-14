@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Automatic-refresh settings (GFP-35) — the GFP-11 Schedule tab, now a dialog.
 
 Same GFP-7 machinery as before: a per-store cadence stored in the database

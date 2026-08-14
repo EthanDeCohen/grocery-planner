@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """The "cheapest meat protein" strip along the bottom of the window (GFP-107).
 
 Requested directly: alongside the trends chart, a **fixed** row per store saying

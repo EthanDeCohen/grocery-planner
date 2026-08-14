@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """The GIANT Company's weekly ad, via Flipp (GFP-247).
 
 The per-ZIP price half of the Philadelphia banner. GIANT shipped first as a

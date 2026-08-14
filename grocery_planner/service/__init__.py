@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Front-end-agnostic operations shared by every UI (GFP-14).
 
 The CLI (``cli``) and the PySide6 GUI (``gui``) both drive the app through this

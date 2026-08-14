@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Food Lion weekly-ad + digital-coupon scraper.
 
 Thin store module: it supplies the :class:`~grocery_planner.scrapers.base.StoreConfig`

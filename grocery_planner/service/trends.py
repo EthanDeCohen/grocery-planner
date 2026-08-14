@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Price and $/g-protein trends over time (GFP-36, generalised by GFP-40).
 
 The read side of ``price_history``. GFP-36 built the one question the main

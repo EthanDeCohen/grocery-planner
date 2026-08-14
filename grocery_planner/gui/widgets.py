@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Small Qt helpers shared by the desktop shell and its dialogs (GFP-35).
 
 Kept out of :mod:`grocery_planner.gui.app` so the dialogs split out of the old

@@ -1,6 +1,8 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Parse.bot — a third party that turns a walled site into a REST API (GFP-270).
 
-Walmart and Publix are the two chains GFP-197 filed as *technically
+Walmart is a chain GFP-197 filed as *technically
 unreachable*: Walmart's product URLs redirect to a challenge page, Publix's
 price endpoint answers 403 and its store locator returns nothing to an
 automated client. Neither is a robots.txt question — they are bot walls, and
@@ -166,7 +168,7 @@ def readiness() -> tuple[bool, str]:
     return False, (
         "No Parse.bot API key. Put it in "
         f"{credential_path()} as {{\"{CREDENTIAL_KEY}\": \"pmx_...\"}}, or set "
-        f"{ENV_VAR}. Walmart and Publix both depend on it."
+        f"{ENV_VAR}. Walmart depends on it."
     )
 
 
@@ -278,7 +280,7 @@ class ParseBotClient:
             raise OutOfCreditsError(
                 (detail.get("message") or "Parse.bot credits are exhausted.")
                 + upgrade
-                + " Walmart and Publix cannot be scraped until this is resolved;"
+                + " Walmart cannot be scraped until this is resolved;"
                 " every other source is unaffected."
             )
         if response.status_code == 404:

@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Formula editor (GFP-35) — the GFP-11 Formulas tab, now a dialog.
 
 GFP-35 retires the tab layout, but formula editing has to survive it: the

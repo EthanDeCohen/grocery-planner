@@ -1,3 +1,5 @@
+# ######### decohen-partners ##########
+# Protein Ledger
 """Deal query, ranking and export (GFP-14): the read side of the service layer.
 
 Split out of the former ``service.py`` module (GFP-43) as the front-end-agnostic
