@@ -58,10 +58,12 @@ def test_the_named_traps(name, expected):
     ("Easy Street Korean BBQ Pre-Diced, Dry-Rub Seasoned Chicken Thighs", "Meat", "chicken"),
     ("Gorton's Popcorn Shrimp, Whole Tail-Off Shrimp", "Seafood", "shellfish"),
     # Plant-based analogues borrow meat words on purpose. They are protein, but
-    # letting one win a MEAT ranking would answer the question wrongly.
-    ("Beyond Burger® Plant-Based Patties", "Meat", pk.OTHER),
-    ("Lightlife Smart Bacon® Plant-Based Vegan Bacon Strips", "Meat", pk.OTHER),
-    ("Impossible Sausage Made From Plants", "Meat", pk.OTHER),
+    # letting one win a MEAT ranking would answer the question wrongly. Since
+    # GFP-295 they get their own kind instead of being discarded -- `plant` is
+    # not in MEAT_KINDS, so the ranking is protected either way.
+    ("Beyond Burger® Plant-Based Patties", "Meat", "plant"),
+    ("Lightlife Smart Bacon® Plant-Based Vegan Bacon Strips", "Meat", "plant"),
+    ("Impossible Sausage Made From Plants", "Meat", "plant"),
     # Cooked IN beef fat; it is still fries.
     ("Jesse & Ben's Grass-Fed Beef Tallow House-Cut Fries", "Meat", pk.OTHER),
 ])
@@ -249,8 +251,16 @@ def test_food_item_exposes_the_kind(conn):
     "Refried Beans with Bacon, 16 oz",
 ])
 def test_a_legume_is_never_meat_however_it_is_flavoured(name):
-    assert pk.classify(name) == pk.OTHER
-    assert pk.kind_from_name(name) is None
+    """Unchanged guarantee, new answer (GFP-295).
+
+    These used to be an outright veto -- classify() returned OTHER and the food
+    was discarded. Beans and hummus are real protein, so they are now routed to
+    `plant` instead. The protection is identical where it matters: `plant` is
+    not in MEAT_KINDS, so a tin of beans still cannot be served as anyone's
+    cheapest pork.
+    """
+    assert pk.classify(name) == "plant"
+    assert pk.classify(name) not in pk.MEAT_KINDS
 
 
 def test_a_brand_spelling_is_not_caught_and_that_is_acceptable():
@@ -300,14 +310,73 @@ def test_stock_and_seasoning_are_not_a_protein_buy(name):
 def test_plant_based_analogues_remain_buyable(name):
     """The distinction this predicate exists for.
 
-    `is_disqualified` rejects these -- correct, they are not MEAT. But they are
-    real protein someone buys deliberately, so the bill must not filter on that
-    predicate. If this test ever fails, a vegan client's plan just became empty.
+    These are not MEAT, but they are real protein someone buys deliberately, so
+    the bill must not filter them out. Until GFP-295 that was expressed by
+    disqualifying them and relying on callers to use the right predicate; they
+    now get a kind of their own, which says the same thing more directly. If
+    this ever fails, a vegan client's plan just became empty.
     """
-    assert pk.is_disqualified(name) is True
+    assert pk.classify(name) == "plant"
+    assert pk.classify(name) not in pk.MEAT_KINDS
     assert pk.is_not_a_protein_buy(name) is False
 
 
 def test_real_meat_is_a_protein_buy():
     assert pk.is_not_a_protein_buy("Boneless Skinless Chicken Breast, 3 lb") is False
     assert pk.is_not_a_protein_buy(None) is False
+
+
+# --------------------------------------------------------------------------- #
+# GFP-295: protein that is not meat
+#
+# The user's ask was direct: eggs, Greek yogurt, cheese, butter, tofu and beans
+# are protein and must be priced. The old taxonomy named only species, so all
+# of those came back UNKNOWN and the "Overall protein" tab had nothing to show.
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("name, expected", [
+    ("Fage Total Greek Yogurt 0%, 32 oz", "dairy"),
+    ("Kraft Sharp Cheddar Cheese Block, 8 oz", "dairy"),
+    ("Eggland's Best Large White Eggs, 12 ct", "egg"),
+    ("Optimum Nutrition Gold Standard Whey Protein", "dairy"),
+    ("Skippy Peanut Butter, Creamy, 16 oz", "plant"),
+    ("Tofu, Extra Firm, 14 oz", "plant"),
+    ("Publix Black Beans, 15 oz", "plant"),
+])
+def test_non_meat_protein_gets_a_kind(name, expected):
+    assert pk.classify(name) == expected
+
+
+def test_none_of_the_new_kinds_count_as_meat():
+    """The line the old MEAT_KINDS comment predicted would one day matter.
+
+    It said: "the day a non-meat kind is added (egg, soy) the panel must not
+    silently start including it." This is that day.
+    """
+    for kind in ("dairy", "egg", "plant"):
+        assert kind in pk.KINDS
+        assert kind not in pk.MEAT_KINDS
+
+
+@pytest.mark.parametrize("name, expected", [
+    # A dairy word as a modifier must lose to an explicit animal.
+    ("Chicken Cheese Sausage, 12 oz", "chicken"),
+    # ...and these merely contain a dairy word.
+    ("Butter Lettuce, Living", pk.OTHER),
+    ("Hershey's Milk Chocolate Bar", pk.OTHER),
+    # \b keeps "egg" off the vegetable.
+    ("Fresh Eggplant, each", pk.UNKNOWN),
+    # Beans that are not legumes.
+    ("Starbucks Coffee Beans, Dark Roast", pk.OTHER),
+    ("Jelly Beans, Assorted", pk.OTHER),
+])
+def test_the_traps_the_new_vocabulary_walks_into(name, expected):
+    """Each of these was wrong on the first attempt at this taxonomy."""
+    assert pk.classify(name) == expected
+
+
+def test_the_display_groups_cover_every_kind():
+    """GFP-296 renders one row per group, so a kind outside them is invisible."""
+    grouped = {k for kinds in pk.KIND_GROUPS.values() for k in kinds}
+    assert grouped == set(pk.KINDS), (
+        f"ungrouped: {set(pk.KINDS) - grouped}; unknown kind: {grouped - set(pk.KINDS)}"
+    )

@@ -136,14 +136,86 @@ KIND_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     )),
 )
 
+#: GFP-295: protein that is not meat. Added after the species rules above so an
+#: explicit animal still wins -- "chicken sausage" is chicken, not dairy -- but
+#: BEFORE nothing, because two of these used to be outright vetoes and had to
+#: stop being.
+#:
+#: Legumes and plant-based analogues were absolute DISQUALIFIERS until now.
+#: That was right when the only question was "which meat is this": GFP-274 added
+#: the legume veto because "Bacon Baked Beans" was being served as GIANT's
+#: cheapest pork. But a veto answers "not meat" by throwing the row away, and
+#: beans and Beyond Burger are real protein a client may want. They are now
+#: routed to `plant` instead of discarded -- same protection from the meat
+#: ranking, without losing the food.
+#: Non-meat protein, split either side of the meat rules -- see BEFORE/AFTER.
+#:
+#: BEFORE the meat species. GFP-274's finding was that a meat word can arrive as
+#: a FLAVOUR on a non-meat head noun: "Hanover Brown Sugar & Bacon Baked Beans"
+#: matched `bacon` and was served as GIANT's cheapest pork. That used to be an
+#: outright veto; now it routes to `plant`, which protects the meat ranking the
+#: same way without discarding a real protein. Safe to run first because no cut
+#: of meat is named for a legume.
+PLANT_KIND_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("plant", (
+        r"\b(tofu|tempeh|seitan|edamame)\b",
+        r"\b(lentils?|chickpeas?|garbanzos?|hummus|falafel)\b",
+        # Bare "beans", as GFP-274 had it. "Pork and Beans" is the product that
+        # ticket was written for, and any qualifier list misses it.
+        r"\bbeans?\b",
+        r"\b(peanut|almond|cashew|sunflower)\s+butter\b",
+        r"\b(peanuts?|almonds?|cashews?|walnuts?|pistachios?|pecans?)\b",
+        r"\b(plant[\s-]?based|meatless|vegan|veggie|impossible)\b",
+        r"\bbeyond\s+(meat|burgers?|beef|sausages?|chicken|steak)\b",
+    )),
+    # "egg" is a head noun in practice -- it rarely flavours a meat product --
+    # and \b keeps it off "eggplant".
+    ("egg", (r"\beggs?\b",)),
+)
+
+#: AFTER the meat species, because these words are usually MODIFIERS rather than
+#: the product: "chicken cheese sausage" is chicken, not dairy. Running them
+#: late means an explicit animal always wins.
+DAIRY_KIND_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("dairy", (
+        r"\b(yogh?urts?|skyr|kefir)\b",
+        r"\bcottage\s+cheese\b",
+        r"\b(cheeses?|cheddar|mozzarella|parmesan|ricotta|feta|gouda)\b",
+        r"\bmilks?\b",
+        r"\b(butter|ghee)\b",
+        r"\bwhey\b",
+        r"\bcasein\b",
+    )),
+)
+
+#: Just the kind names, in rule order.
+#: The meat species, in rule order. Kept separate from the full list because
+#: MEAT_KINDS below is derived from it.
+MEAT_KIND_RULES = KIND_RULES
+
+#: Every rule, in the order they are tried. Plant and egg first (a meat word can
+#: be a flavour on a legume), then the animals, then dairy last (its words are
+#: usually modifiers).
+KIND_RULES = PLANT_KIND_RULES + MEAT_KIND_RULES + DAIRY_KIND_RULES
+
 #: Just the kind names, in rule order.
 KINDS: tuple[str, ...] = tuple(kind for kind, _ in KIND_RULES)
 
 #: Kinds that count as meat for the "cheapest meat protein" panel (GFP-107).
-#: Seafood is included by product decision, so this is currently every kind —
-#: named explicitly anyway, because the day a non-meat kind is added (egg, soy)
-#: the panel must not silently start including it.
-MEAT_KINDS: frozenset[str] = frozenset(KINDS)
+#: Seafood counts, by product decision. GFP-295 added egg/dairy/plant and this
+#: is exactly the line the old comment predicted would matter: they are protein
+#: but they are NOT meat, and the meat panel must not silently start including
+#: them.
+MEAT_KINDS: frozenset[str] = frozenset(kind for kind, _ in MEAT_KIND_RULES)
+
+#: How the kinds group for display (GFP-296's five rows).
+KIND_GROUPS: dict[str, tuple[str, ...]] = {
+    "Meat": ("beef", "pork", "chicken", "turkey", "lamb"),
+    "Seafood": ("fish", "shellfish"),
+    "Dairy": ("dairy",),
+    "Eggs": ("egg",),
+    "Plant": ("plant",),
+}
 
 #: Product FORMS that are never a cut of meat, however much meat vocabulary the
 #: name carries. Checked before any kind rule. Each entry is a trap that a
@@ -173,11 +245,15 @@ NOT_A_PROTEIN_BUY: tuple[str, ...] = (
 
 DISQUALIFIERS: tuple[str, ...] = (
     r"beefsteak tomato",                       # produce wearing a beef name
-    # Plant-based analogues carry meat words deliberately. They are protein, but
-    # they are not meat, and letting "Beyond Burger" win a meat ranking would be
-    # a straightforwardly wrong answer to "what meat is cheapest".
-    r"\b(plant[\s-]?based|meatless|vegan|veggie|impossible)\b",
-    r"\bbeyond\s+(meat|burgers?|beef|sausages?|chicken|steak)\b",
+    r"\bbutter\s+lettuce\b",                  # a salad, not a dairy aisle item
+    r"\bmilk\s+chocolate\b",                  # a sweet; "chocolate milk" is not
+    r"\b(coffee|vanilla|jelly|cocoa)\s+beans?\b",   # named beans, not legumes
+    # Plant-based analogues and legumes used to be vetoed here. They carry meat
+    # words deliberately ("Beyond Burger") or get a meat word as a flavour
+    # ("Bacon Baked Beans", GFP-274), and letting either win a MEAT ranking is
+    # wrong. But a veto answers that by discarding a real protein. Since GFP-295
+    # they are routed to the `plant` kind instead -- same protection for the
+    # meat panel, without losing the food.
     *NOT_A_PROTEIN_BUY,
     r"\b(ramen|noodles?|soups?)\b",            # "Beef Flavored Ramen"
     r"\b(chips?|crisps?|crackers?)\b",
@@ -195,9 +271,9 @@ DISQUALIFIERS: tuple[str, ...] = (
     # price, so the density is entirely plausible -- the row is wrong in KIND,
     # not in magnitude, and `plausible_density()` has no opinion about kind.
     #
-    # Safe as an absolute veto because no cut of meat is named for a legume, so
-    # this cannot throw away a real meat row the way `rub` and `popcorn` did.
-    r"\b(beans?|lentils?|chickpeas?|garbanzos?|hummus|falafel)\b",
+    # Now a `plant` rule rather than a veto -- see the note at the top of this
+    # tuple. The protection is unchanged: `plant` is not in MEAT_KINDS, so a tin
+    # of beans still cannot be served as anyone's cheapest pork.
 )
 
 #: Bakery forms, which are only decisive when nothing STRONGER contradicts them.
