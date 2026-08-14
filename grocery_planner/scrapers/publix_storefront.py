@@ -169,31 +169,26 @@ def name_from_slug(slug: str) -> str:
 
 
 def protein_candidate_slugs(slugs: Iterable[str]) -> list[str]:
-    """The subset worth asking the nutrition API about, in stable order.
+    """The subset worth asking the nutrition API about, in the order given.
 
-    Two reductions, both free and both measured on the live catalogue:
+    Publix's catalogue is big enough that this is the difference between a
+    viable scrape and an impossible one -- `limit` only bounds the PRICING
+    pass, while the nutrition pass walks every slug it is handed, one call
+    each. Measured: 108,978 unique slugs -> 15,669 candidates.
 
-    * **De-duplicate.** The sitemap lists 171,249 product URLs but only 108,978
-      distinct slugs -- roughly 36% are repeats, and each repeat would otherwise
-      cost its own GraphQL call.
-    * **Drop what cannot be a protein buy**, by asking ``protein_kind`` about
-      the name inside the slug. 108,978 -> 7,725.
+    Order is preserved rather than sorted so successive bounded runs walk the
+    catalogue the same way twice.
 
-    Order is preserved rather than sorted so a bounded run is reproducible and
-    successive runs walk the catalogue the same way -- the optimiser's
-    same-inputs-same-plan invariant (GFP-224) applied to ingestion.
+    De-duplication is NOT done here -- the platform does it for every tenant
+    now (GFP-294).
     """
     kept: list[str] = []
-    seen: set[str] = set()
     for slug in slugs:
-        if slug in seen:
-            continue
-        seen.add(slug)
         name = name_from_slug(slug)
         if protein_kind.is_disqualified(name):
             continue
         if protein_kind.classify(name) not in _NOT_A_PROTEIN:
-            kept.append(slug)          # a named species
+            kept.append(slug)          # a named species: chicken, beef, ...
         elif _has_non_meat_protein(name):
             kept.append(slug)          # eggs, dairy, legumes, nuts, whey
     return kept
