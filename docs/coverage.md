@@ -1,5 +1,36 @@
 # Coverage: what the optimiser can actually price
 
+> ## Update — 2026-08-14: Publix changed twice, and the taxonomy widened
+>
+> Read this before trusting anything below it.
+>
+> **`publix-catalog` no longer exists.** GFP-304 deleted the Parse.bot Publix
+> scraper. Every row in the tables below attributed to it (12 rows, 11 usable)
+> is history, and the whole "Parse.bot budget" section at the end is now about
+> **Walmart only** — which fits the free tier on its own.
+>
+> **Publix is reached free through Instacart**, at `delivery.publix.com`
+> (GFP-293). It is a third tenant of the client already running Sprouts and
+> ALDI. But it has **written zero rows so far**: the pricing pass throttles hard
+> — three requests and it backs off to 30s with a ten-minute cooldown (GFP-293
+> comment). Treat Publix as unmeasured, not as improved.
+>
+> **Its prices are also above shelf**, by Publix's own published policy, and the
+> same is true of Costco Same-Day. Sprouts is the exception that tracks in-store
+> prices. See GFP-297 and GFP-298 — this is a property of the source, and the
+> per-store markers in GFP-308 exist to say so in the UI.
+>
+> **`protein_kind` now names dairy, eggs and plant protein** (GFP-295), so the
+> `unknown` counts quoted below are wrong: 928 → 383, with 596 foods gaining a
+> real kind. Meat classification did not move. The matcher's answer rate fell
+> from 46.3% to 31.5% — not a regression, but the denominator growing as items
+> that hid as `unknown` became scoreable.
+>
+> **Not re-measured:** every per-source and per-market table below. They need a
+> fresh scrape to be honest, and the shapes are still sound even where the
+> totals have moved.
+
+
 > ## Update — 2026-08-12, later the same day: the quality floor is FIXED
 >
 > Everything below this box was measured **before** GFP-271, GFP-274 and
