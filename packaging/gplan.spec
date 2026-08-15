@@ -8,6 +8,7 @@
 # beside the executable, so replacing the binary never touches your data.
 import os
 import pathlib
+import sys
 
 # GFP-158. PyInstaller runs a spec with exec() and does not define __file__,
 # so the icon path is resolved from SPECPATH -- the one variable PyInstaller
@@ -15,6 +16,12 @@ import pathlib
 # would resolve against the CWD, which differs between a local build (repo
 # root) and the release workflow (packaging/).
 SPEC_DIR = pathlib.Path(SPECPATH)
+
+# GFP-318: the schema collector lives beside this spec, so it is importable
+# only once SPEC_DIR is on the path -- the specs are exec'd, not imported.
+if str(SPEC_DIR) not in sys.path:
+    sys.path.insert(0, str(SPEC_DIR))
+from _schema_datas import schema_datas
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
@@ -30,13 +37,17 @@ hiddenimports = collect_submodules("apscheduler")
 # dropped like any other non-code data would be. Same reasoning applies to
 # grocery_planner/data/*.json (GFP-24's vendored USDA snapshot), which
 # grocery_planner/usda.py reads at runtime instead of calling the network.
+#
+# GFP-318: the schema comes from schema_datas(), NOT collect_data_files. The
+# latter resolves by import and returned nothing under `pip install -e`, which
+# shipped binaries with no schema and only a WARNING to show for it.
 datas = (
     # GFP-158: the window icon, read at run time by gui.app.app_icon().
     # The .ico/.icns above are consumed by PyInstaller itself; this PNG
     # is what the running process loads, so it has to be a data file.
     [(str(SPEC_DIR / "icons" / "icon-256.png"), "icons")]
     + collect_data_files("tzdata")
-    + collect_data_files("db_script")
+    + schema_datas(SPEC_DIR)
     + collect_data_files("grocery_planner", includes=["data/*.json"])
 )
 

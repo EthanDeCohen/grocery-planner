@@ -139,6 +139,10 @@ jobs:
           # spec surfaces here and nowhere earlier.
           ./dist/gplan.exe schedule set foodlion --every 6h
           ./dist/gplan.exe schedule list
+          # GFP-318: the four commands above all passed against a binary that
+          # bundled no schema scripts at all. Exit codes prove they ran, not
+          # that the schema shipped -- so check the database they just made.
+          python scripts/assert_schema.py "$env:GROCERY_PLANNER_DB"
 
       - name: Smoke test the binary (macOS)
         if: runner.os == 'macOS'
@@ -149,6 +153,9 @@ jobs:
           ./dist/gplan stores
           ./dist/gplan schedule set foodlion --every 6h
           ./dist/gplan schedule list
+          # GFP-318, as above: prove the schema shipped, not just that the
+          # commands exited 0.
+          python scripts/assert_schema.py "$GROCERY_PLANNER_DB"
 
       # GFP-81: prove the .app is a real bundle, not just that PyInstaller
       # exited 0. A malformed bundle still produces a directory, so check the

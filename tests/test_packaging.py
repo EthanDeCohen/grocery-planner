@@ -11,6 +11,19 @@ import pytest
 PACKAGING = Path(__file__).resolve().parents[1] / "packaging"
 
 
+def _schema_datas():
+    """Load packaging/_schema_datas.py, which sits beside the specs rather than
+    on the import path -- the specs are exec'd by PyInstaller, not imported."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_schema_datas", PACKAGING / "_schema_datas.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_entry_points_exist():
     assert (PACKAGING / "gplan_entry.py").is_file()
     assert (PACKAGING / "gplan_gui_entry.py").is_file()
@@ -58,14 +71,41 @@ def test_gui_spec_builds_a_mac_bundle_and_hides_the_console():
 
 @pytest.mark.parametrize("spec", ["gplan.spec", "gplan-gui.spec"])
 def test_specs_bundle_db_script_as_data(spec):
-    """GFP-59: db.py resolves db_script/*.ddl via sys._MEIPASS in a frozen
-    build. Without collect_data_files("db_script") here, a build would
-    "succeed" but the frozen binary would fail to build its schema the
-    first time anyone actually ran it -- exactly the kind of packaging
-    mistake this test file exists to catch before it ships.
+    """GFP-318: the specs must actually COLLECT the schema, not merely mention it.
+
+    This test used to assert the string ``collect_data_files("db_script")``
+    appeared in the spec, and it passed for the whole period during which every
+    build shipped a binary containing ZERO .ddl files -- the call was present
+    and returned nothing, because it resolves by import and the editable install
+    does not expose `db_script`. The string was there. The schema was not.
+
+    Worse, a substring assertion cannot tell code from prose: after the call was
+    replaced, the gui spec still "passed" on the mention of the old name inside
+    an explanatory comment.
+
+    So this asserts the relationship (GFP-179): the collector the spec calls
+    returns real migration files for this repo.
     """
     source = (PACKAGING / spec).read_text(encoding="utf-8")
-    assert 'collect_data_files("db_script")' in source
+    assert "schema_datas(SPEC_DIR)" in source
+
+    collected = _schema_datas().schema_datas(PACKAGING)
+    names = [Path(src).name for src, _ in collected]
+    assert any(name.endswith(".ddl") for name in names), names
+    # Destinations must mirror what db.py looks for under sys._MEIPASS.
+    assert all(dest.startswith("db_script") for _, dest in collected)
+
+
+def test_schema_collector_aborts_when_it_finds_nothing(tmp_path):
+    """The guard that was missing: an empty collection must fail the build.
+
+    A WARNING is what shipped the schema-less binary (GFP-318). Pointed at a
+    tree with no scripts, the collector has to stop the build outright rather
+    than hand PyInstaller an empty list.
+    """
+    (tmp_path / "db_script").mkdir()
+    with pytest.raises(SystemExit):
+        _schema_datas().schema_datas(tmp_path / "anything")
 
 
 def test_db_script_ships_as_installed_package_data():

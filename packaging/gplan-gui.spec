@@ -17,6 +17,12 @@ import pathlib
 # root) and the release workflow (packaging/).
 SPEC_DIR = pathlib.Path(SPECPATH)
 
+# GFP-318: the schema collector lives beside this spec, so it is importable
+# only once SPEC_DIR is on the path -- the specs are exec'd, not imported.
+if str(SPEC_DIR) not in sys.path:
+    sys.path.insert(0, str(SPEC_DIR))
+from _schema_datas import schema_datas
+
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hiddenimports = collect_submodules("apscheduler") + [
@@ -31,13 +37,17 @@ hiddenimports = collect_submodules("apscheduler") + [
 # db_script ships the .ddl/.dml schema scripts (GFP-59); see gplan.spec for
 # why this must be explicit rather than assumed to "just come along". Same
 # reasoning covers grocery_planner/data/*.json, GFP-24's vendored USDA snapshot.
+#
+# GFP-318: schema_datas() resolves by path and aborts the build if it finds
+# nothing. collect_data_files("db_script") resolved by import and returned
+# nothing under `pip install -e`, silently shipping a schema-less binary.
 datas = (
     # GFP-158: the window icon, read at run time by gui.app.app_icon().
     # The .ico/.icns above are consumed by PyInstaller itself; this PNG
     # is what the running process loads, so it has to be a data file.
     [(str(SPEC_DIR / "icons" / "icon-256.png"), "icons")]
     + collect_data_files("tzdata")
-    + collect_data_files("db_script")
+    + schema_datas(SPEC_DIR)
     + collect_data_files("grocery_planner", includes=["data/*.json"])
     # GFP-47's default client avatar. GUI-only, so it is not in gplan.spec.
     + collect_data_files("grocery_planner", includes=["assets/*.png"])
