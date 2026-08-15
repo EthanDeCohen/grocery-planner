@@ -69,7 +69,7 @@ def test_gui_spec_builds_a_mac_bundle_and_hides_the_console():
     assert "console=False" in source
 
 
-@pytest.mark.parametrize("spec", ["gplan.spec", "gplan-gui.spec"])
+@pytest.mark.parametrize("spec", ["gplan.spec", "gplan-gui.spec", "gplan-onedir.spec"])
 def test_specs_bundle_db_script_as_data(spec):
     """GFP-318: the specs must actually COLLECT the schema, not merely mention it.
 
@@ -94,6 +94,24 @@ def test_specs_bundle_db_script_as_data(spec):
     assert any(name.endswith(".ddl") for name in names), names
     # Destinations must mirror what db.py looks for under sys._MEIPASS.
     assert all(dest.startswith("db_script") for _, dest in collected)
+
+
+def test_the_onedir_spec_is_actually_a_one_directory_build():
+    """GFP-320: the whole reason this spec exists is the packaging MODE.
+
+    Windows Defender quarantined the one-file CLI as
+    Behavior:Win32/Execution.A!ml -- the bootloader unpacking ~700 files into
+    %TEMP% and running them from there looks exactly like a dropper. Only
+    COLLECT avoids that, so a spec that lost it would be byte-for-byte the
+    thing that was already blocked while still passing every other check here.
+    """
+    source = (PACKAGING / "gplan-onedir.spec").read_text(encoding="utf-8")
+    assert "COLLECT(" in source
+    # EXE must hand its binaries to COLLECT rather than swallow them, which is
+    # what exclude_binaries switches between.
+    assert "exclude_binaries=True" in source
+    # UPX compression sets off the same class of heuristic. Never here.
+    assert "upx=False" in source
 
 
 def test_schema_collector_aborts_when_it_finds_nothing(tmp_path):
