@@ -1,58 +1,36 @@
 # ######### decohen-partners ##########
 # Protein Ledger
-"""Walmart shelf prices, via Parse.bot (GFP-270).
+"""Walmart shelf prices, through Parse.bot (GFP-270).
 
-GFP-197 filed Walmart as technically unreachable: product URLs redirect to a
-challenge page. That verdict was about *our* client, not about the data, and
-:mod:`grocery_planner.scrapers.parsebot` is a client that gets through. Read
-that module first -- it owns the credential, the pacing and the caveats about
-depending on a third party for a whole store.
+In:  a ZIP and a keyword list.
+Out: deal rows with price, package size, and usually a retailer-stated rate.
+     No nutrition -- see below.
 
-WHAT WALMART GIVES, MEASURED 2026-08-12 (27401, "boneless skinless chicken breast")
------------------------------------------------------------------------------------
-53 products on page 1 of 73 results. Every row carried a name, a price and a
-``package_size``; most carried a retailer-stated ``price_per_unit`` ("$2.23/lb").
+Read `parsebot.py` first; it owns the credential, the pacing, and the caveats
+about renting a whole store from a third party. GFP-197 had filed Walmart as
+unreachable, which was true of OUR client, not of the data.
 
-**That per-unit figure is the reason this source is worth having.** Flipp gives
-a size on 0-5% of rows; Walmart gives one on nearly all of them, plus the
-denomination in the retailer's own words rather than inferred from prose.
+WHY IT IS WORTH HAVING: it states a size on nearly every row, and a per-unit
+price in the retailer's own words. Flipp manages a size on 0-5% of rows.
 
-THE ZIP IS REAL, AND WAS CHECKED RATHER THAN ASSUMED
------------------------------------------------------
-``search_grocery_products`` takes a ``zip_code`` and echoes it back, which
-proves nothing on its own -- Trader Joe's echoes a store code while serving a
-national price. So the same query was run at 27401 and at 94110: 43 products
-appeared in both, and **3 were priced differently** (Great Value chicken $9.47
-vs $9.97). Most of Walmart's catalogue is nationally priced with regional
-exceptions, which is how Walmart actually prices, so a small diff is the
-correct result -- a zero diff would have meant the ZIP was decoration.
+THE ZIP IS REAL, AND WAS CHECKED RATHER THAN ASSUMED. An echoed-back ZIP proves
+nothing -- Trader Joe's echoes a store code and serves national prices. So the
+same query ran at 27401 and 94110: 43 products in both, 3 priced differently.
+A small diff is the right answer, because that is how Walmart actually prices.
+A zero diff would have meant the ZIP was decoration.
 
-WHAT IT DOES NOT GIVE: PROTEIN
--------------------------------
-Checked on ``get_product_details``: the only occurrence of "protein" in the
-payload is marketing prose in the description ("each serving offers 25 grams of
-lean protein"), with no serving size, so no density is computable from it. The
-real panel exists solely as an IMAGE (``Nutrition facts label image`` -> a PNG).
-There is no UPC and no GTIN.
+NO PROTEIN HERE. The only "protein" in the payload is marketing prose with no
+serving size. The real panel exists as a PNG. No UPC, no GTIN. So this module
+writes no `foods` rows at all -- its protein comes from name matching like any
+Flipp store, which puts its rows in the low-confidence tier and is exactly why
+bill.py needs a confidence floor before this source faces customers.
 
-So this module writes **no** ``foods``/``food_nutrients`` rows -- it is a price
-and size source, and its protein comes from the same name-matching every Flipp
-store uses. That places its rows in the low-confidence tier, which is exactly
-why `bill.py` needs a confidence floor before this source is switched on for
-customers.
-
-THE DENOMINATION, AND WHY WALMART IS NOT MARKED ‡
---------------------------------------------------
-Walmart quotes a real package price *and* a rate: ``$12.41`` with
-``$4.58/lb`` on a "1.50-4.30 lb Tray". 12.41 / 4.58 = 2.71 lb, inside that
-range -- so the headline figure is a genuine basket price for an assumed
-weight, not a rate. That is the existing PREPACKAGED case (GFP-152's ``**``),
-and ``specifications`` confirms it in the retailer's own words:
-``Sales unit: Weight``, ``Net content statement: Random Weight``.
-
-Publix is the opposite and does get the double dagger -- see ``publix.py``.
-The distinction is the whole point of :data:`weight_basis.RATE`: one is a
-price that may shift a little, the other is not a price yet.
+NOT MARKED WITH THE DOUBLE DAGGER, deliberately. Walmart quotes a package price
+AND a rate: $12.41 with $4.58/lb on a "1.50-4.30 lb Tray". 12.41 / 4.58 = 2.71
+lb, inside that range -- a real basket price for an assumed weight, not a rate.
+Its own `specifications` agree: "Sales unit: Weight", "Random Weight". Publix is
+the opposite and does get the marker. That difference is the whole point of
+weight_basis.RATE: one is a price that may shift, the other is not a price yet.
 """
 from __future__ import annotations
 
