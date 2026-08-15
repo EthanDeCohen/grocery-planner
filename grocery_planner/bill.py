@@ -1,122 +1,34 @@
 # ######### decohen-partners ##########
 # Protein Ledger
-"""Daily protein bill (GFP-48): target grams -> foods -> amortised daily cost.
+"""What a client should buy this week, and what it costs (GFP-33).
 
-This is the headline number the client page exists to show: "hitting your
-protein target costs about $X/day, built from these foods." Every earlier
-ticket in this chain -- GFP-8's size parsing, GFP-25's deal matching, GFP-23's
-protein-per-100g catalog, GFP-26's ``savings.cost_per_gram_protein``, GFP-29's
-``targets.protein_target_for`` -- computed one link. This module is the first
-one that walks all the way from "109 g of protein per day" to "these deals,
-these quantities, this many dollars."
+In:  a client (weight, protein target, preferences) and today's priced deals.
+Out: a shopping list with quantities, plus the weekly money figure.
 
-Amortisation, and why the money field is not "today's shopping total"
------------------------------------------------------------------------
-A weekly-ad price ("$3.99 for 16 oz, this week") is not a daily figure, and a
-protein target ("109 g/day") is not a weekly one. Multiplying a deal's
-$/g-of-protein rate (already computed by ``savings.cost_per_gram_protein``,
-itself store-agnostic and cadence-agnostic -- it is just price divided by the
-grams of protein in the package) by the grams of protein *one day's target*
-needs answers a different, honest question: "if this week's cheapest protein
-were priced by the gram, what would today's share of it cost?" That is an
-AMORTISED cost, not a same-day purchase total -- nobody buys 3.5 grams of
-chicken breast, they buy the whole 16 oz package and eat it across several
-days, or buy several packages across a week. See :data:`AMORTIZATION_NOTE`,
-which a UI should quote (or closely paraphrase) rather than label this figure
-with anything that reads as "what will I spend at checkout today." Every
-money-bearing field in this module (:attr:`BillLine.cost`,
-:attr:`Bill.total_cost`) is named plainly as "cost", never "price" or
-"spend", and is documented at the point of definition as amortised -- the
-same discipline ``targets.ProteinTarget`` uses to pair a bare number with the
-cadence it belongs to (``daily_grams``/``weekly_grams``), applied here to
-money instead of grams.
+THE MONEY FIELD IS NOT A TILL TOTAL. You cannot buy 0.4 of a pork loin, so the
+plan buys whole packages and spreads the cost over the days the food actually
+lasts. The number shown is the amortised weekly cost -- what the week's eating
+costs -- not what one trip rings up. Conflating the two was the bug this design
+exists to avoid.
 
-The allocation rule
---------------------
-Simplest correct thing, per the ticket: fill the target from the cheapest
-$/g-of-protein deal upward (``savings.rank_by_cost_per_gram_protein`` already
-does the sorting and already drops anything unpriceable -- this module reuses
-it rather than re-deriving the ranking).
+Allocation: cheapest cost-per-gram-protein first, until the target is met.
+Ties break toward fewer packages, because a plan with eleven items nobody will
+shop is not a plan.
 
-Two decisions worth being explicit about, since either way is defensible and
-a silent choice would be worse than either:
+Preferences: an empty preference set means UNCONSTRAINED, not "nothing allowed".
+A client who has ticked no boxes gets every protein, which is the only reading
+that produces a usable plan on day one.
 
-1. **A single line is capped at that deal's own package (or, for a GFP-69
-   label-claim deal with no known package weight, that deal's own serving)
-   worth of protein -- never an invented number.** A deal with no natural
-   "how much protein is in one of these" figure does not exist in this
-   pipeline: ``ProteinCost.protein_grams`` is always populated by the time a
-   row survives ``rank_by_cost_per_gram_protein``, whether that number came
-   from a package weight x protein-per-100g or from a manufacturer's own
-   per-serving claim. Using that figure as the per-line cap means the bill
-   naturally spreads across several foods once the cheapest one's own
-   package/serving is used up, without this module inventing a threshold
-   ("no more than 150 g from one source") that has no basis in the data. A
-   client whose cheapest option is a large multi-serving item can still see
-   most of their target covered by one line -- that is real information
-   about the deal, not a bug to cap around.
-2. **A single deal MAY still cover the whole target** if its own
-   package/serving protein figure is large enough. Real clients do not eat
-   only chicken breast, but nothing in this schema models "how much of one
-   food is too much" (no serving-frequency or variety table exists), and
-   inventing one here would be exactly the kind of made-up constant rule 1
-   above rejects. Diet variety is left to the ``categories`` argument, which
-   already exists for a real reason (client protein preferences, GFP-30) --
-   a nutritionist who wants the bill to spread across several proteins can
-   express that by preference, not by an arbitrary per-line percentage cap
-   buried in this engine.
+Two plans get built, deliberately: a baseline over everything, and the
+preference-constrained one (GFP-49). Showing both is what lets a nutritionist
+say "this restriction costs you $6 a week" instead of guessing.
 
-**Shortfall is a normal result, not an error.** Available deals frequently
-cannot cover a client's full target -- too few weekly ads matched, or a
-preference filter narrows the field to nothing this week. ``daily_bill``
-returns a :class:`Bill` either way; :attr:`Bill.is_complete` and
-:attr:`Bill.shortfall_grams` say plainly whether -- and by how much -- the
-available deals fell short, rather than raising or silently returning a
-partial bill that looks whole.
+Rows below `MIN_MATCH_CONFIDENCE` are excluded (GFP-271) -- a 0.3 guess used to
+outrank a 1.0 measurement. That floor costs ~464 rows and GFP-291 is measuring
+whether it still earns them.
 
-Preferences: zero means unconstrained
---------------------------------------
-Per ``preferences.py``'s module docstring, a client with no stored preference
-rows has stated no preference at all -- ranking must consider every category,
-exactly as if the preference table did not exist for them. ``categories=None``
-(the default) looks up the client's stored preferences and passes that list
-straight through unchanged: an empty result stays ``[]``, which this module
-also treats as "don't filter" (see ``_build_bill`` below), never as "match
-nothing." Pass ``categories=[]`` explicitly to force the unconstrained
-behaviour regardless of what is on file (useful for GFP-49's baseline side --
-see below), or a non-empty list to narrow to specific categories for a
-one-off "what if" query without touching the stored preference rows.
-
-Baseline vs preference-constrained (GFP-49)
---------------------------------------------
-:func:`compare_bills` solves the bill twice -- once unconstrained, once inside
-the client's stated preferences -- so a nutritionist can see what a preference
-actually costs per day. The baseline is a genuine unconstrained optimum (the
-same allocation run over every priced deal), not the cheapest single item.
-
-**The delta's sign is not assumed**, per the ticket. It is also not the whole
-story, which is the trap this comparison has to avoid: because a constrained
-pool can fail to *cover* the target, a preference-narrowed bill can come out
-CHEAPER simply by buying less protein. Comparing two totals that stand for
-different numbers of grams is not a price comparison at all. So
-:attr:`BillComparison.is_comparable` reports whether both sides actually
-reached the target, and :attr:`BillComparison.caveat` gives a UI the words for
-the case where they did not -- the figures are still shown, but never as a
-clean "your preference costs $0.88 more" when the truth is "your preference
-could not feed them."
-
-What is explicitly out of scope
----------------------------------
-Any GUI/CLI wiring (GFP-52 owns the panel), and anything about how many
-DISTINCT packages of one item a client would physically need to buy -- this
-module prices grams continuously (see point 1 above and the amortisation
-note), matching the "amortised daily figure" framing rather than a literal
-shopping list.
-
-Like every other module in this codebase, every function here takes an
-optional ``conn`` defaulting to ``db.connect()`` rather than holding a
-connection on an object: SQLite connections cannot cross threads, and the GUI
-scrapes on a background thread.
+Out of scope: recipes, meal timing, anything about *when* food is eaten. This
+answers what to buy.
 """
 from __future__ import annotations
 

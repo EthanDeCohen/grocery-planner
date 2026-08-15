@@ -1,126 +1,33 @@
 # ######### decohen-partners ##########
 # Protein Ledger
-"""ALDI US -- the second tenant of the Instacart Storefront Pro platform client.
+"""ALDI, through the shared Instacart storefront client (GFP-265).
 
-GFP-265. This module is deliberately short. Everything it does lives in
-:mod:`grocery_planner.scrapers.instacart_storefront`; ALDI is a
-:class:`~grocery_planner.scrapers.instacart_storefront.Tenant` record and four
-delegating functions, which is the finding this ticket set out to test.
+In:  a ZIP.
+Out: deal rows with prices and sizes. No nutrition -- see below.
 
-``www.aldi.us`` is not ALDI's code any more than ``shop.sprouts.com`` is
-Sprouts'. It is the same white-label platform: same ``__Host-instacart_sid``
-guest cookie, same ``/store/<slug>/`` URL shape, same ``node-apollo-state``
-blob, same doubly-URL-encoded performance blob carrying persisted-query hashes,
-same ``/graphql`` persisted-query access shape. ``discover_persisted_queries``,
-written for Sprouts and **unmodified**, found 59 operation hashes in ALDI's
-storefront HTML on its first run.
+ALDI IS NUTRITION-BLOCKED, and the pinned hash is not the reason. Measured: the
+nutrition query runs fine and simply returns null for everything, including
+chicken breast and eggs that certainly carry a physical label. Two other places
+it could hide (ItemDetailData, ItemDetailSupplementalFields) have no protein
+either. So this is a tenant that publishes no panels, not a scraper that fails
+to read them.
 
-NO BROWSER. NOT A SLOWER OPTION -- A NON-SHIPPING ONE
-------------------------------------------------------
-A Playwright DOM scraper was proposed for ALDI: launch chromium, scroll the
-category pages, read ``inner_text()``, match product names against a hard-coded
-brand list (``kirkwood``, ``clancy``, ``parkview``...), regex the prices out.
-It was not built. ``https://www.aldi.us/store/aldi/storefront`` returns **200 to
-plain httpx** with no login, no hand-minted cookie and no browser step, so the
-browser buys nothing -- and per GFP-4 the distributed desktop app cannot carry a
-browser binary, so that scraper could never have left a dev machine. The brand
-list would also have silently dropped every product whose brand is not on it: a
-coverage cap that never appears in ``stats``, which is the exact failure mode
-the no-silent-caps rule exists to prevent. No browser is launched by this module
-or by anything it calls; the project's headless-always rule is satisfied
-vacuously.
+That is why CANARY_PRODUCT_ID is None: there is no product to prove the pin
+against, and a hopeful guess would make verify_pinned_hashes report a failure
+that looks like a rotated hash. Reported as blocked rather than worked around --
+no inferred density, no brand guess, no USDA lookup wearing a label's clothes.
 
-THE HEADLINE: ALDI IS NUTRITION-BLOCKED, AND THE PIN IS NOT WHY
-----------------------------------------------------------------
-The pinned ``ProductNutritionalInfo`` hash captured for Sprouts **works on
-ALDI**. Replayed unchanged against ``www.aldi.us/graphql`` it returns HTTP 200,
-no ``PERSISTED_QUERY_NOT_FOUND``, and a well-formed
-``ItemsProductNutritionalInfo`` envelope. That is consistent with
-``SimpleShopCollection``'s hash being byte-identical on both banners: Apollo
-hashes the query *document*, the document ships in the shared platform bundle,
-so a hash is a property of the Instacart deploy rather than of the banner.
+Still worth running for price and size, which sourcelink can lend to the Flipp
+banner. Roughly 9% of ALDI rows end up usable, against 72% for Sprouts.
 
-But the envelope is always empty. ``nutritionalInfo`` came back ``null`` for
-every product tried, across all three shop ids and every id form the platform
-uses (bare ``21171551``, prefixed ``items_124437-21171551``, and
-``124437-21171551``). Measured 2026-08-11 over the **full 15,256-product
-catalogue**: see :data:`COVERAGE`.
+Two more things:
 
-This is an absence of data, not a broken client, and the distinction is load
-bearing. Three things rule out a fault on our side:
-
-1. The same request against Sprouts, same session code, same pinned hash,
-   returns a full panel (protein 13.0 g, ``servingSize`` "8 oz (227g)").
-2. ALDI's product pages *do* ship the nutrition **layout** -- the strings
-   "Nutrition Facts", "Serving Size" and "Servings Per Container" are in the
-   HTML, inside a ``ProductNutritionalInfoLayout`` block. The UI is wired for a
-   panel; the tenant just publishes no data to put in it.
-3. Items that certainly carry a physical label -- chicken breast, ground beef,
-   peanut butter, greek yogurt, eggs -- return ``null`` exactly like everything
-   else. A partial or category-specific gap would not look like this.
-
-The two other places nutrition could plausibly hide were checked and do not
-carry it either: ``ItemDetailData`` and ``ItemDetailSupplementalFields`` (both
-hashes discoverable from ALDI's own product page) contain no protein, no
-serving size and no ingredients.
-
-**Reported as nutrition-blocked rather than worked around.** There is no
-inferred density, no brand-based guess and no USDA lookup pretending to be a
-label. :data:`CANARY_PRODUCT_ID` is therefore ``None``, and
-``verify_pinned_hashes`` returns ``False`` with that reason rather than a
-success it did not earn.
-
-WHAT ALDI IS STILL GOOD FOR: PRICE AND SIZE
---------------------------------------------
-The schema.org JSON-LD on the product page is fully populated -- ``name``,
-``brand``, ``category``, ``size``, ``offers.price``, ``availability``. So ALDI
-is a price source of the same shape as the Flipp-sourced stores: a price with a
-parseable size, whose protein has to come from the USDA matching pass rather
-than from the retailer's own label.
-
-That is why :func:`scrape` calls
-:func:`~grocery_planner.scrapers.instacart_storefront.scrape_prices_only`. The
-ordinary two-pass ``scrape`` prices only what the nutrition pass found protein
-for, which for ALDI is nothing; weakening that rule would remove the guard that
-keeps a Sprouts run off the product-page wall, so ALDI takes the other path
-instead and says so in ``stats['nutrition_pass']``.
-
-THE PRICE BOUND IS REAL AND IS NOT OPTIONAL
---------------------------------------------
-Price comes from product HTML, and that path is the one that hit a hard 403
-after ~2,300 pages on Sprouts. ALDI is assumed to be policed at least as tightly
-until measured otherwise -- assuming the generous direction is the mistake that
-gets an IP blocked -- so :data:`DEFAULT_PRICE_LIMIT` bounds the run well under
-that figure and the bound is reported in ``stats['price_limit']`` next to
-``stats['products_seen']``. A short scrape must read as "we bounded this", never
-as "the store shrank".
-
-ALDI'S ``/graphql`` IS STRICTER THAN SPROUTS'
-----------------------------------------------
-Worth recording because it contradicts the platform module's throttle table,
-which was measured on Sprouts. Sprouts tolerated 37,500 GraphQL requests at
-~36/s with zero 429s. ALDI throttled within the first few hundred at ~12.5/s
-(:data:`~grocery_planner.scrapers.retry.GRAPHQL_BUDGET`'s floor), and ran clean
-at 4/s. The shipped code needs no change -- :class:`retry.Paced` is AIMD and
-converges on a sustainable rate by itself, which is exactly the case it was
-built for -- but anyone reading the table should know the numbers in it are
-per-tenant, not platform-wide.
-
-REGISTRY: ``aldi`` WAS ALREADY TAKEN
--------------------------------------
-``flipp_banners.MODULES`` registers an ``aldi`` weekly-ad banner. This module is
-a **second source for the same physical store**, which is the case
-``scrapers/__init__.py`` documents for Harris Teeter (``harristeeter`` = the
-Flipp weekly ad, ``harristeeter-api`` = Kroger's shelf-price API). So:
-``SCRAPER_KEY`` is distinct, ``STORE_KEY`` is shared, and ``SOURCE`` is what
-stops the two feeds deleting each other in ``service/ingest.run_scrape``, which
-scopes its replace to ``(store, source, postal_code)``. Neither feed may evict
-the other: Flipp carries BOGO and coupon promotions the storefront does not, and
-the storefront carries sizes the weekly ad never has.
-
-This module is **not** registered in ``scrapers/__init__.py`` by GFP-265 -- that
-file was owned by another change in flight. Until it is listed there, ``gplan
-scrape aldi-storefront`` will not find it.
+* The price bound is not optional. ALDI's product HTML throttles harder than
+  Sprouts', so `limit` is a real constraint rather than a convenience.
+* `aldi` was already taken by the Flipp banner, so this registers as
+  `aldi-storefront`. The registry is last-write-wins and the banners load last,
+  so reusing the key would make this module silently unreachable -- which is
+  exactly what happened to sprouts once.
 """
 from __future__ import annotations
 

@@ -1,76 +1,38 @@
 # ######### decohen-partners ##########
 # Protein Ledger
-"""Savings & processing engine (GFP-8): unit normalization, ranking, scoring.
+"""Turn a price and a package size into a comparable number (GFP-8).
 
-The point of the app is not to list deals but to say which ones are *worth
-buying*. That needs a comparable number per deal, which means getting a size
-out of the ad copy and dividing the price by it.
+In:  a deal (price, item name) and, for protein, its matched food.
+Out: cost per unit, and cost per gram of protein -- the number the whole app
+     exists to compute.
 
-Four honesty rules run through this module:
+FOUR HONESTY RULES. Every one is about the DIRECTION of an error: overstating
+protein understates cost-per-gram, which silently promotes an item to the top of
+a ranking, and the top is the only part anyone reads.
 
-1. **A size we cannot read is ``None``, never a guess.** Weekly-ad names are
-   free text ("Eggo Frozen Waffles"); a made-up size would produce a confident
-   and wrong unit price, which is worse than admitting we don't know.
-2. **Only the headline product counts.** Ads bundle alternatives — "11 oz. HT
-   Traders Bag Coffee or 8 - 10 Ct. Green Mountain K-Cup" — under one price.
-   We read the size before the first "or"; the rest belongs to other products.
-3. **Ranges take the low end** ("5.4-5.5 Oz." -> 5.4), so the resulting cost
-   per ounce is never flattering by accident.
-4. **A protein-content claim is not a size** (GFP-69). "Chobani 20G Protein
-   Drinks" states 20 grams of protein per package, not a 20-gram package —
-   a drink does not weigh 20 grams. :func:`parse_size` never lets a gram
-   figure sitting next to the word "protein" become a size; the same "20"
-   next to "oz" elsewhere in the name would still be a real size, because the
-   discriminator is the adjacent word, not the unit. :func:`parse_protein_claim`
-   reads that same figure for what it actually is, so
-   :func:`cost_per_gram_protein` below can use a manufacturer's own printed
-   protein content directly when no weight-based size is available.
+1. A size we cannot read is None, never a guess. Ad copy is free text, and a
+   made-up size gives a confident wrong answer.
+2. Only the headline product counts. "11 oz Coffee or 8-10 Ct K-Cups" is one
+   price for two products; we read the size before the "or".
+3. Ranges take the low end, so cost per ounce is never flattering by accident.
+4. A protein claim is not a size (GFP-69). "Chobani 20G Protein Drinks" means
+   20 g of protein, not a 20 g package. The discriminator is the adjacent word,
+   not the unit.
 
-   **That figure is per SERVING, not per PACKAGE** (GFP-73) -- "20G Protein"
-   is a nutrition-facts-panel number, and nutrition facts are always stated
-   per serving. For a single-serve drink the two coincide; for a
-   multi-serving tub they do not, and treating the claim as the package
-   total silently overstates cost-per-gram-of-protein by the serving count
-   (a real deal, "Chobani 20G Protein **Multiserve** Greek Yogurt" at
-   $10/each, priced as if the tub held 20g total when a 4-serving tub
-   actually holds ~80g -- 4x cheaper than reported). Flipp gives no
-   servings-per-container field for any store (Food Lion, Harris Teeter), so
-   :func:`cost_per_gram_protein` cannot fold it in there -- it can only (a)
-   use it directly when a caller *does* know it (``servings_per_container``,
-   see below -- the same fold-in ``scrapers/wholefoods.py`` already does for
-   its own weight-based-size path) and (b) otherwise flag the resulting
-   number as less certain than a real measurement rather than pretend the
-   ambiguity doesn't exist. The word "Multiserve" (or a spacing/hyphen
-   variant) in the name is treated as a stronger, specific signal of that
-   ambiguity than the generic case and drops confidence further. Deliberately
-   NOT "fixed" by guessing a servings count: guessing upward would make an
-   overpriced multi-serving container look artificially cheap -- the
-   dangerous direction. Keeping the per-serving-as-per-package number (which
-   *overstates* cost, the safe direction: the engine under-recommends rather
-   than pushes something it shouldn't) and only lowering confidence preserves
-   that safe direction on purpose. See ``LABEL_CLAIM_CONFIDENCE``/
-   ``LABEL_CLAIM_MULTISERVE_CONFIDENCE``/``LABEL_CLAIM_KNOWN_SERVINGS_CONFIDENCE``
-   below.
+AND THE ONE THAT COST THE MOST: a protein claim is per SERVING, not per package
+(GFP-73). A 4-serving tub reading "20G Protein" holds ~80 g, so treating the
+claim as the package total overstates cost 4x. Flipp publishes no servings
+count, so this is deliberately NOT fixed by guessing one -- guessing upward
+would make an overpriced tub look cheap, which is the dangerous direction.
+The overstated number is kept (it under-recommends, the safe direction) and
+confidence is lowered instead. "Multiserve" in a name lowers it further.
 
-Note on savings-vs-regular-price: the Flipp scrapers only ever populate
-``sale_price``; ``regular_price`` arrives solely from CSV imports. So
-:func:`savings_vs_regular` returns ``None`` for scraped rows until shelf-price
-capture (GFP-5) lands. Cost-per-unit and ranking below do not depend on it.
+Only a weight-based size converts to grams. A deal priced per `each` or
+`fl oz` has no cost-per-gram-of-protein, and pretending `each` means some
+fixed weight is exactly the confident wrong guess rule 1 forbids.
 
-:func:`cost_per_gram_protein` (GFP-26) is the number the whole app exists to
-compute: it chains a deal's price through its parsed size, its GFP-25 food
-match and that food's GFP-23 protein-per-100g figure into dollars per gram of
-protein. The same four honesty rules apply, plus one more specific to this
-chain: **only a weight-based size carries a gram weight.** A deal priced per
-``each`` or ``fl oz`` (see ``COUNT``/``VOLUME`` above) has nothing to convert
-to grams, so it has no cost-per-gram-of-protein -- pretending ``each`` means
-some fixed weight would be exactly the kind of confident wrong guess rule 1
-forbids. The one exception (GFP-69): when a deal has no weight-based size but
-its name carries a rule-4 protein claim, that claim *is* the numerator this
-function wants, straight from the manufacturer, so it is used directly
-instead of returning ``None`` -- see :func:`parse_protein_claim` and the
-label-claim branch below (folded through ``servings_per_container`` per the
-GFP-73 note above when that count is known).
+`savings_vs_regular` returns None for scraped rows: the Flipp scrapers only
+ever populate sale_price, and regular_price arrives solely from CSV imports.
 """
 from __future__ import annotations
 
