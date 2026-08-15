@@ -1,50 +1,38 @@
 # ######### decohen-partners ##########
 # Protein Ledger
-"""Publix shelf prices, via the Instacart storefront platform (GFP-293).
+"""Publix shelf prices, through the Instacart storefront platform (GFP-293).
 
-Publix does not publish grocery prices on publix.com. Its own site prices only
-what you can *order* online -- deli and bakery -- so a search there for "chicken
-breast" returns subs and platters with menu prices, and the product page for
-Perdue Fresh Ground Chicken Breast shows a title, a size, "Add to list" and no
-price at all. Grocery e-commerce is delegated to Instacart, and the carrot next
-to "Delivery & curbside" in Publix's own navigation is Instacart's logo.
+In:  a ZIP.  Out: deal rows with prices, plus nutrition where Publix publishes it.
 
-So this is a third tenant of the platform already running for Sprouts and ALDI,
-not a new client. Everything below is a tenant record; the behaviour lives in
-:mod:`instacart_storefront`.
+Publix does not put grocery prices on publix.com -- that site prices only what
+you can order online, so searching "chicken breast" there returns subs and
+platters. Grocery e-commerce is handed to Instacart, and the logo next to
+"Delivery & curbside" in Publix's own nav is Instacart's.
 
-GFP-288 chased publix.com's own endpoints and found `productitems`, which does
-answer unauthenticated -- but its ``Id`` parameter identifies a curated CAROUSEL
-rather than a product (one call returns five products sharing the id passed in),
-so the reachable surface there is whatever Publix is merchandising. That ticket
-is superseded by this one, and this module is why.
+So this is a third TENANT of the platform already running Sprouts and ALDI, not
+a new client. Everything here is a tenant record; the behaviour lives in
+instacart_storefront. (GFP-288 chased publix.com's own endpoints first; the one
+that answers keys on a curated carousel, not a product. Superseded by this.)
 
-THE CANDIDATE PROBLEM -- READ BEFORE CHANGING ``scrape``
---------------------------------------------------------
-Publix's catalogue is far larger than the other two tenants', and ``limit``
-does not save you: it bounds the PRICING pass only. The nutrition pass walks
-every slug it is given, one GraphQL call each. Measured 2026-08-14:
+THE CANDIDATE PROBLEM -- READ THIS BEFORE CHANGING scrape(). Publix's catalogue
+dwarfs the other two tenants', and `limit` does not save you: it bounds the
+PRICING pass only. The nutrition pass makes one GraphQL call per slug it is
+handed. Measured 2026-08-14:
 
-    171,249 slugs listed in the sitemap
-    108,978 unique                        <- the sitemap repeats ~36%
-      7,725 plausible protein buys        <- 7.1%, a 14x cut
+    171,249 slugs in the sitemap
+    108,978 unique                  <- the sitemap repeats about 36%
+      7,725 plausible protein buys  <- 7.1%, a 14x cut
 
-Handing the raw catalogue to the platform means ~109k GraphQL calls to find
-protein figures for shampoo and birthday candles, and the first spike slept
-1,558 seconds doing exactly that. :func:`protein_candidate_slugs` is therefore
-the DEFAULT rather than an option, and the filter is free -- it reads the name
-already embedded in the slug and asks ``protein_kind``, with no network at all.
+Unfiltered, that is ~109k calls to learn the protein content of shampoo, and
+the first spike slept 1,558 seconds doing exactly that. So the filter is the
+DEFAULT, not an option, and it is free: it reads the name already sitting in
+the slug and asks protein_kind. No network.
 
-This is GFP-281's finding applied: the coverage is in what we already have, not
-in more volume. Pricing 39,808 items to rank protein spends hours on rice.
-
-The filter is deliberately PERMISSIVE. It keeps "fish oil 1200 mg" and "smokey
-cheese bacon mashed potatoes" because a name-level rule cannot tell those from
-food, and dropping a real protein to avoid a supplement is the worse error --
-the pipeline downstream already rejects an implausible density
-(``density_rejected_implausible``) and GFP-281's harness will measure whatever
-slips through. Tightening belongs in ``protein_kind``, where every source
-benefits, not in a per-tenant list here.
+The filter is deliberately PERMISSIVE -- it keeps "fish oil 1200 mg" because a
+name alone cannot tell that from fish, and dropping a real protein to dodge a
+supplement is the worse error. Downstream already rejects an implausible
+density. Tightening belongs in protein_kind, where every source benefits, not
+in a per-tenant blocklist here.
 """
 from __future__ import annotations
 

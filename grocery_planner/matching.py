@@ -1,60 +1,36 @@
 # ######### decohen-partners ##########
 # Protein Ledger
-"""Deal-to-food matching (GFP-25): the missing link between ``deals.item_name``
-(free-text weekly-ad copy) and the ``foods`` catalog (GFP-23's protein-per-100g
-data). Nothing else in the app connects them, so until this module runs,
-cost-per-gram-of-protein (GFP-26) has nothing to compute.
+"""Tie a deal's ad copy to a food we know the protein of (GFP-25).
 
-Three honesty rules, mirroring ``grocery_planner/savings.py`` (read that
-module first -- this one reuses its thinking, not its code, since matching
-and size-parsing are independent concerns that both happen to need "only the
-headline product counts"):
+In:  a deal row, e.g. "Boneless Pork Loin Roast or Whole Pork Tenderloin".
+Out: a row in `deal_food_match` saying which food it is, how sure we are, and
+     how we decided. Without this, cost-per-gram has nothing to divide by.
 
-1. **Only the headline product counts.** Ads bundle alternatives ("Boneless
-   Pork Loin Roast or Whole Pork Tenderloin") under one row. :func:`headline`
-   reads the text before the first standalone "or", same rule and same
-   reasoning as ``savings.parse_size`` -- reproduced here (not imported)
-   because this module's matching vocabulary is independent of savings'
-   size-unit vocabulary, and duplicating one small regex is cheaper than
-   coupling the two modules over it.
-2. **A weak match is stored anyway, but visibly weak.** Every row carries a
-   ``confidence`` (0-1) and a ``method`` describing how it was decided, so
-   "we think this but aren't sure" is never indistinguishable from "we are
-   sure". A nutritionist reviewing low-confidence rows is the intended use
-   of that field, not a cosmetic detail.
-3. **An item we cannot reasonably tie to anything gets no row at all.**
-   Absence in ``deal_food_match`` means "unmatched", which is information
-   (a gap to fix, e.g. a missing food, a vocabulary miss) -- never a
-   low-confidence guess wearing a number just to have *something* on file.
+THREE HONESTY RULES, the same spirit as savings.py:
 
-Matching is deliberately keyword/rule-based against the 32-item GFP-23
-curated catalog, not a fuzzy/ML match: with only 32 foods and well-known
-meat-cut vocabulary, hand-written rules are auditable (every row's ``method``
-traces back to one branch below) and cheap to extend, which a black-box
-similarity score would not be. See the real-data false-positive traps this
-was built against in the module-level ``_EXCLUDE`` pattern below -- e.g.
-"Nestle Drumstick Cones" is ice cream, not chicken; "Abound ... Wet Dog Food"
-contains "Chicken & Beef" but is not a human protein deal.
+1. Only the headline product counts. Ads bundle alternatives under one price;
+   we read the text before the first standalone "or".
+2. A weak match is stored, but visibly weak. Every row carries a confidence
+   and a method, so "we think" never looks like "we know". A nutritionist
+   reviewing the low-confidence rows is the point of that field.
+3. Something we cannot tie to anything gets NO row. Absence means unmatched,
+   which is a gap someone can fix. A guess wearing a number is worse than
+   nothing, because nothing is honest.
 
-Corrections and rescrape survival
-----------------------------------
-``deal_food_match`` is keyed on ``(store, item_name)``, **not** ``deals.id``.
-``deals.id`` is an AUTOINCREMENT surrogate that does not survive a rescrape:
-``service/ingest.run_scrape()`` DELETEs every row for a store+source+postal
-code and reinserts fresh rows -- with new ids -- every time it runs. A match
-keyed on ``deals.id`` would be silently orphaned by the very next scrape.
-``(store, item_name)`` is what actually identifies "the same product" in
-this schema instead: the real 1,573-row database has e.g. ``foodlion`` /
-``"Pork Chops"`` recurring, byte-for-byte, across an old csv-import row and
-later scrape rows under different ids. :func:`correct_match` and
-:func:`reject_match` write against that natural key, and :func:`match_deals`
-never overwrites a row with ``match_source='manual'`` -- so a nutritionist's
-correction survives every future rescrape and every future re-run of the
-auto-matcher untouched.
+Rules, not fuzzy matching: 32 curated foods and well-known meat-cut words mean
+hand-written branches are auditable -- every row's `method` points at the one
+branch that made it. See `_EXCLUDE` for the real traps this was built against
+("Nestle Drumstick Cones" is ice cream; a dog food listing "Chicken & Beef").
 
-Like ``service/deals.py`` and ``nutrition.py``, every function here takes an
-optional ``conn`` defaulting to ``db.connect()`` rather than holding a
-connection on an object (SQLite connections cannot cross threads).
+WHY MATCHES ARE KEYED ON (store, item_name) AND NOT deals.id. `deals.id` is an
+autoincrement surrogate that does not survive a rescrape -- `run_scrape` deletes
+every row for a store+source+ZIP and reinserts with fresh ids. A match keyed on
+it would be orphaned by the next scrape. (store, item_name) is what actually
+identifies the same product here. That, plus never overwriting a row marked
+`match_source='manual'`, is what makes a nutritionist's correction permanent.
+
+Every function takes an optional `conn` rather than holding one, because SQLite
+connections cannot cross threads.
 """
 from __future__ import annotations
 

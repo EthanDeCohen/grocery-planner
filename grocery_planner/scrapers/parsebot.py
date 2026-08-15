@@ -1,53 +1,34 @@
 # ######### decohen-partners ##########
 # Protein Ledger
-"""Parse.bot — a third party that turns a walled site into a REST API (GFP-270).
+"""Parse.bot -- a paid middleman that turns a walled site into a REST API (GFP-270).
 
-Walmart is a chain GFP-197 filed as *technically
-unreachable*: Walmart's product URLs redirect to a challenge page, Publix's
-price endpoint answers 403 and its store locator returns nothing to an
-automated client. Neither is a robots.txt question — they are bot walls, and
-the survey's verdict was "not worth further effort without a change on their
-side".
+In:  a keyword and a ZIP.  Out: JSON product rows.
 
-Parse.bot is that change on someone else's side. It reverse-engineers a site's
-own internal API and re-exposes it as a typed REST endpoint. Verified live
-2026-08-12 against both chains, and both cleared.
+Walmart and Publix both refuse an ordinary client -- redirects to a challenge
+page, 403s on the price endpoint. Parse.bot reverse-engineers a site's own
+internal API and re-exposes it. Verified live 2026-08-12; both cleared.
 
-WHAT THIS MODULE IS AND IS NOT
-------------------------------
-It is an HTTP client for ONE vendor, holding the things every parse.bot-backed
-scraper needs: the credential, the pinned scraper ids, pacing, and the error
-vocabulary. It is deliberately NOT a scraper -- ``walmart.py`` and
-``publix.py`` are, and they carry their own field mapping, because the two
-chains return different shapes and merging them here would produce a function
-with a chain-shaped branch in it (the thing GFP-32 exists to prevent).
+This is a client for ONE VENDOR, not a scraper. It holds the credential, the
+pinned scraper ids, the pacing and the errors. `walmart.py` does the field
+mapping, because the two chains return different shapes and merging them here
+would give us one function with a chain-shaped branch in it.
 
-THE DEPENDENCY THIS INTRODUCES, STATED PLAINLY
-----------------------------------------------
-Every row from these two stores arrives through infrastructure we do not own,
-on a credential that is metered and can be revoked. That is a real departure
-from every other source in this project, all of which talk to the retailer
-directly. Three consequences the rest of the code must respect:
+THE DEPENDENCY, STATED PLAINLY. These rows arrive through infrastructure we do
+not own, on a metered credential someone else can revoke. Three consequences:
 
-1. **A parse.bot outage is a Walmart AND Publix outage simultaneously.** They
-   are not independent failures. `readiness()` therefore reports the vendor,
-   not the store, so a missing key says so once rather than twice in a way
-   that reads like two broken scrapers.
-2. **The scraper id is a pinned identifier, and it rots.** It names an API
-   generated for OUR account; revising or deleting it in the dashboard breaks
-   the scraper with a 404 that says nothing about why. :func:`verify_pinned_ids`
-   is the canary, same shape as Sprouts' pinned query hash.
-3. **It is metered.** Every call costs the account something, so nothing here
-   walks a catalogue. Both scrapers work from a bounded keyword list and say
-   in ``stats`` exactly how bounded -- the no-silent-caps rule matters more
-   here than anywhere else, because the cap is what keeps the bill finite.
+1. A Parse.bot outage takes both stores down at once -- they are not independent
+   failures. So `readiness()` reports the VENDOR, not the store; a missing key
+   should read as one problem, not two broken scrapers.
+2. The scraper id is pinned and it rots. It names an API generated for our
+   account, and deleting it in the dashboard gives a 404 that explains nothing.
+   `verify_pinned_ids` is the canary, same idea as Sprouts' query hash.
+3. It is metered, so nothing here walks a catalogue. Both scrapers work from a
+   bounded keyword list and report in `stats` exactly how bounded. The
+   no-silent-caps rule matters more here than anywhere else, because the cap is
+   what keeps the bill finite.
 
-THE CREDENTIAL
---------------
-Lives outside the repo, in the user data dir, exactly like ``kroger-env.config``
-(:data:`CREDENTIAL_FILE`). ``GROCERY_PLANNER_PARSEBOT_KEY`` overrides it and
-holds the key ITSELF rather than a path -- the same shape as the licence key
-in ``credentials.py``, and for the same reason: it is one short opaque string,
+The key lives outside the repo in the user data dir, like `kroger-env.config`.
+The env var holds the key ITSELF, not a path -- it is one short opaque string,
 not a document.
 """
 from __future__ import annotations
