@@ -99,7 +99,6 @@ def test_the_rendered_icons_are_not_empty():
     ("gplan-gui.spec", "icon.ico"),
     ("gplan-gui.spec", "icon.icns"),
     ("gplan.spec", "icon.ico"),
-    ("gplan-onedir.spec", "icon.ico"),
 ])
 def test_the_build_specs_reference_the_icons(spec, key):
     text = (ROOT / "packaging" / spec).read_text(encoding="utf-8")
@@ -110,7 +109,7 @@ def test_the_specs_resolve_the_icon_against_the_spec_directory():
     """A relative path would resolve against the working directory, which
     differs between a local build (repo root) and the release workflow.
     SPECPATH is the one variable PyInstaller guarantees."""
-    for spec in ("gplan.spec", "gplan-gui.spec", "gplan-onedir.spec"):
+    for spec in ("gplan.spec", "gplan-gui.spec"):
         text = (ROOT / "packaging" / spec).read_text(encoding="utf-8")
         assert "SPEC_DIR = pathlib.Path(SPECPATH)" in text
         assert 'icon="icons' not in text, "relative icon path in " + spec

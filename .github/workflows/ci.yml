@@ -133,12 +133,14 @@ jobs:
         env:
           GROCERY_PLANNER_DB: ${{ runner.temp }}/ci-binary.sqlite3
         run: |
-          ./dist/gplan.exe version
-          ./dist/gplan.exe stores
+          # GFP-320: one-DIRECTORY build, so the launcher is inside dist/gplan/
+          # rather than being dist/gplan.exe itself.
+          ./dist/gplan/gplan.exe version
+          ./dist/gplan/gplan.exe stores
           # APScheduler resolves triggers by name; a missing hidden import in the
           # spec surfaces here and nowhere earlier.
-          ./dist/gplan.exe schedule set foodlion --every 6h
-          ./dist/gplan.exe schedule list
+          ./dist/gplan/gplan.exe schedule set foodlion --every 6h
+          ./dist/gplan/gplan.exe schedule list
           # GFP-318: the four commands above all passed against a binary that
           # bundled no schema scripts at all. Exit codes prove they ran, not
           # that the schema shipped -- so check the database they just made.
@@ -149,10 +151,10 @@ jobs:
         env:
           GROCERY_PLANNER_DB: ${{ runner.temp }}/ci-binary.sqlite3
         run: |
-          ./dist/gplan version
-          ./dist/gplan stores
-          ./dist/gplan schedule set foodlion --every 6h
-          ./dist/gplan schedule list
+          ./dist/gplan/gplan version
+          ./dist/gplan/gplan stores
+          ./dist/gplan/gplan schedule set foodlion --every 6h
+          ./dist/gplan/gplan schedule list
           # GFP-318, as above: prove the schema shipped, not just that the
           # commands exited 0.
           python scripts/assert_schema.py "$GROCERY_PLANNER_DB"
@@ -180,12 +182,24 @@ jobs:
             || { echo "no executable at Contents/MacOS/$BIN"; exit 1; }
           echo "bundle size: $(du -sh "$APP" | cut -f1)"
 
+      # GFP-320: both binaries are one-directory now, so "the exe exists" is no
+      # longer enough -- a COLLECT that dropped its payload still leaves a
+      # launcher behind, and that launcher fails on first run. Check the
+      # _internal payload too.
       - name: Check the Windows GUI binary exists
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          if (-not (Test-Path dist/gplan-gui.exe)) { throw "gplan-gui.exe was not built" }
-          "gplan-gui.exe: {0:N1} MB" -f ((Get-Item dist/gplan-gui.exe).Length / 1MB)
+          $payloads = @{ "gplan" = "_internal_cli"; "gplan-gui" = "_internal_gui" }
+          foreach ($name in $payloads.Keys) {
+            if (-not (Test-Path "dist/$name/$name.exe")) { throw "$name.exe was not built" }
+            # The payload names must stay distinct: both apps are flattened
+            # into one install root, and two _internal/ folders would merge.
+            $contents = "dist/$name/$($payloads[$name])"
+            if (-not (Test-Path $contents)) { throw "$name has no payload at $contents" }
+            $files = Get-ChildItem "dist/$name" -Recurse -File
+            "{0}: {1:N1} MB across {2} files" -f $name, (($files | Measure-Object Length -Sum).Sum / 1MB), $files.Count
+          }
 
       # GFP-91: assemble what a user actually downloads. The installers and the
       # docs ship INSIDE the ZIP alongside the binaries -- install.ps1 looks
@@ -196,7 +210,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          Copy-Item dist/gplan.exe, dist/gplan-gui.exe release/
+          # GFP-320: folders, not files. install.ps1 accepts either shape and
+          # flattens a folder into the install root.
+          Copy-Item dist/gplan, dist/gplan-gui release/ -Recurse
           Copy-Item packaging/install.ps1, packaging/uninstall.ps1 release/
           Copy-Item packaging/INSTALL.md, packaging/UNINSTALL.md release/
 
@@ -205,7 +221,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          cp dist/gplan release/
+          cp -R dist/gplan release/
           cp -R "dist/gplan-gui.app" "release/Protein Ledger.app"
           cp packaging/install.sh packaging/uninstall.sh release/
           cp packaging/INSTALL.md packaging/UNINSTALL.md release/

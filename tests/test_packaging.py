@@ -4,6 +4,7 @@ These do not build a binary — that takes minutes and needs PyInstaller. They
 check the things that silently rot between builds: an entry point that stops
 importing, or a spec that stops excluding what it must.
 """
+import re
 from pathlib import Path
 
 import pytest
@@ -69,7 +70,7 @@ def test_gui_spec_builds_a_mac_bundle_and_hides_the_console():
     assert "console=False" in source
 
 
-@pytest.mark.parametrize("spec", ["gplan.spec", "gplan-gui.spec", "gplan-onedir.spec"])
+@pytest.mark.parametrize("spec", ["gplan.spec", "gplan-gui.spec"])
 def test_specs_bundle_db_script_as_data(spec):
     """GFP-318: the specs must actually COLLECT the schema, not merely mention it.
 
@@ -96,22 +97,53 @@ def test_specs_bundle_db_script_as_data(spec):
     assert all(dest.startswith("db_script") for _, dest in collected)
 
 
-def test_the_onedir_spec_is_actually_a_one_directory_build():
-    """GFP-320: the whole reason this spec exists is the packaging MODE.
+@pytest.mark.parametrize("spec", ["gplan.spec", "gplan-gui.spec"])
+def test_the_specs_build_one_directory_not_one_file(spec):
+    """GFP-320: the packaging MODE is load-bearing, so it is asserted.
 
     Windows Defender quarantined the one-file CLI as
     Behavior:Win32/Execution.A!ml -- the bootloader unpacking ~700 files into
     %TEMP% and running them from there looks exactly like a dropper. Only
-    COLLECT avoids that, so a spec that lost it would be byte-for-byte the
-    thing that was already blocked while still passing every other check here.
+    COLLECT avoids that. A spec that drifted back to one-file would build and
+    smoke-test perfectly and then be quarantined on a customer's machine,
+    which is the failure this test exists to prevent.
     """
-    source = (PACKAGING / "gplan-onedir.spec").read_text(encoding="utf-8")
+    source = (PACKAGING / spec).read_text(encoding="utf-8")
     assert "COLLECT(" in source
     # EXE must hand its binaries to COLLECT rather than swallow them, which is
     # what exclude_binaries switches between.
     assert "exclude_binaries=True" in source
     # UPX compression sets off the same class of heuristic. Never here.
     assert "upx=False" in source
+
+
+def test_the_two_apps_use_different_payload_directory_names():
+    """GFP-320: both installers flatten into ONE install root, so gplan.exe and
+    gplan-gui.exe stay siblings -- PATH, the Start Menu shortcut and
+    background.py's windowless-launcher lookup all rely on it.
+
+    Two apps both writing PyInstaller's default `_internal/` would merge, and
+    the second would overwrite the first's base_library.zip with one built from
+    a different module set. Nothing would fail at build or install time; the
+    app would break later, on whichever import lost the coin toss.
+    """
+    names = {}
+    for spec in ("gplan.spec", "gplan-gui.spec"):
+        source = (PACKAGING / spec).read_text(encoding="utf-8")
+        match = re.search(r'^CONTENTS_DIR = "([^"]+)"', source, re.MULTILINE)
+        assert match, f"{spec} does not set CONTENTS_DIR"
+        names[spec] = match.group(1)
+        # Both EXE and COLLECT have to be told, or they disagree about where
+        # the launcher should look.
+        assert source.count("contents_directory=CONTENTS_DIR") == 2, spec
+    assert len(set(names.values())) == 2, f"payload directories collide: {names}"
+
+
+def test_the_mac_bundle_wraps_collect_not_the_bare_exe():
+    """GFP-320: BUNDLE(exe) with a one-directory build produces an .app whose
+    executable has no payload beside it. It builds, and it fails on launch."""
+    source = (PACKAGING / "gplan-gui.spec").read_text(encoding="utf-8")
+    assert "BUNDLE(\n        coll," in source
 
 
 def test_schema_collector_aborts_when_it_finds_nothing(tmp_path):

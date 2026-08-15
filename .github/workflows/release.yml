@@ -102,7 +102,9 @@ jobs:
           $ErrorActionPreference = "Stop"
           $name = "protein-ledger-${{ github.ref_name }}-windows"
           New-Item -ItemType Directory -Force -Path $name | Out-Null
-          Copy-Item dist/gplan.exe, dist/gplan-gui.exe $name/
+          # GFP-320: one-directory builds, so these are folders. install.ps1
+          # flattens them into the install root.
+          Copy-Item dist/gplan, dist/gplan-gui $name/ -Recurse
           Copy-Item packaging/install.ps1, packaging/uninstall.ps1 $name/
           # GFP-161: the double-click entry points. A .cmd carries no
           # execution-policy restriction, so a user never meets one.
@@ -123,7 +125,7 @@ jobs:
             Write-Host "::warning::KROGER_CREDENTIAL secret is not set; this release ships without a credential"
           }
           # Prove the binary in the ZIP runs before anyone downloads it.
-          & "$name/gplan.exe" version
+          & "$name/gplan/gplan.exe" version
           Compress-Archive -Path $name -DestinationPath "$name.zip" -Force
           "ASSET=$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
@@ -135,7 +137,7 @@ jobs:
           set -euo pipefail
           NAME="protein-ledger-${{ github.ref_name }}-macos"
           mkdir -p "$NAME"
-          cp dist/gplan "$NAME/"
+          cp -R dist/gplan "$NAME/"
           cp -R "dist/gplan-gui.app" "$NAME/Protein Ledger.app"
           cp packaging/install.sh packaging/uninstall.sh "$NAME/"
           # GFP-161: Finder will not run a .sh on a double-click; it will
@@ -150,9 +152,9 @@ jobs:
           else
             echo "::warning::KROGER_CREDENTIAL secret is not set; this release ships without a credential"
           fi
-          chmod +x "$NAME/install.sh" "$NAME/uninstall.sh" "$NAME/gplan"
+          chmod +x "$NAME/install.sh" "$NAME/uninstall.sh" "$NAME/gplan/gplan"
           chmod +x "$NAME/Install.command" "$NAME/Uninstall.command"
-          "$NAME/gplan" version
+          "$NAME/gplan/gplan" version
           # ditto, not zip: it preserves the .app bundle's symlinks and
           # resource forks. A bundle round-tripped through plain zip can arrive
           # unlaunchable, which nobody discovers until a customer double-clicks.

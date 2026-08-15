@@ -366,16 +366,29 @@ and Numbers without bringing it back.
 
 ## Standalone binary
 
-No Python needed on the target machine — one file, no installer.
+No Python needed on the target machine — one folder per app, no installer.
 
 ```powershell
 .venv\Scripts\python -m pip install -e ".[build]"   # installs PyInstaller
-./scripts/build_binary.ps1                          # dist/gplan.exe  (~15 MB)
-./scripts/build_binary.ps1 -IncludeGui              # + dist/gplan-gui.exe (~53 MB)
+./scripts/build_binary.ps1                          # dist/gplan/  (~27 MB)
+./scripts/build_binary.ps1 -IncludeGui              # + dist/gplan-gui/
 ```
 
 The script smoke-tests whatever it builds against a throwaway database, because
 a binary that builds but cannot run is not a successful build.
+
+**Why a folder and not a single .exe (GFP-320).** Windows Defender quarantined
+the one-file build as `Behavior:Win32/Execution.A!ml`. That detection is
+behavioural, not a signature: the one-file bootloader unpacks ~700 files into
+`%TEMP%` and executes them from there, which is exactly what a dropper does. A
+one-directory build keeps the launcher beside its `_internal_cli/` payload, never
+writes to `%TEMP%`, and is not flagged. It also drops GUI start-up time, since
+that unpack no longer happens on every launch. Both installers accept either
+shape and flatten a folder into the install root, so `gplan` on PATH and the
+Start Menu shortcut are unchanged — which is also why the two apps use
+`_internal_cli/` and `_internal_gui/` rather than PyInstaller's default name.
+Sharing one root means sharing one payload directory, and the second app
+installed would otherwise overwrite the first's `base_library.zip`.
 
 Your data does **not** live next to the executable — it stays in the per-OS
 user-data dir (`gplan db-path`), so replacing the binary never touches it.

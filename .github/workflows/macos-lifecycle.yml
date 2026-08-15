@@ -99,7 +99,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          cp dist/gplan release/
+          cp -R dist/gplan release/
           cp -R "dist/gplan-gui.app" "release/Protein Ledger.app"
           cp packaging/install.sh packaging/uninstall.sh release/
           cp packaging/INSTALL.md packaging/UNINSTALL.md release/

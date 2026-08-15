@@ -1,11 +1,13 @@
 # PyInstaller spec for the gplan CLI (GFP-10).
 #
 # Build:  pyinstaller packaging/gplan.spec --noconfirm
-# Output: dist/gplan.exe (Windows) / dist/gplan (macOS, Linux)
+# Output: dist/gplan/gplan.exe + dist/gplan/_internal_cli/ (Windows)
+#         dist/gplan/gplan     + dist/gplan/_internal_cli/ (macOS, Linux)
 #
-# One file, no installer, no Python required on the target machine. The database
-# still lives in the platformdirs user-data dir (grocery_planner/paths.py), NOT
-# beside the executable, so replacing the binary never touches your data.
+# One directory, no installer, no Python required on the target machine. The
+# database still lives in the platformdirs user-data dir
+# (grocery_planner/paths.py), NOT beside the executable, so replacing the
+# binary never touches your data.
 import os
 import pathlib
 import sys
@@ -67,12 +69,28 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# GFP-320: ONE DIRECTORY, not one file. Windows Defender quarantined the
+# one-file build as Behavior:Win32/Execution.A!ml -- a behavioural detection,
+# not a signature: the bootloader unpacks ~700 files into %TEMP% and runs them
+# from there, which is what a dropper does. COLLECT keeps the launcher beside
+# its dependencies and never writes to TEMP. The trade is that a release ships
+# a folder rather than a single file, which the installers handle.
+#
+# CONTENTS_DIRECTORY IS NOT COSMETIC. Both installers flatten their payload
+# into ONE install root so that gplan.exe and gplan-gui.exe stay siblings --
+# PATH, the Start Menu shortcut and background.py's windowless-launcher lookup
+# all depend on that. Under the default name both apps would write
+# `_internal/`, and the second copy would overwrite the first's
+# base_library.zip with one built from a different module set. Distinct names
+# keep them side by side.
+CONTENTS_DIR = "_internal_cli"
+
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
+    contents_directory=CONTENTS_DIR,
     name="gplan",
     icon=str(SPEC_DIR / "icons" / "icon.ico"),
     debug=False,
@@ -85,4 +103,14 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    contents_directory=CONTENTS_DIR,
+    name="gplan",
 )

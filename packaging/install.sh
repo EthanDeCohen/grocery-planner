@@ -105,18 +105,30 @@ echo
 # --------------------------------------------------------------------------- #
 # 1. Find the payload. The GUI is optional: a CLI-only release is a legitimate
 #    thing to ship, and refusing to install one would be worse.
+#
+#    TWO PACKAGING SHAPES (GFP-320), matching install.ps1. A one-file build is
+#    a single executable; a one-directory build is a folder holding the
+#    launcher and its _internal. The directory form is FLATTENED into the
+#    support directory rather than nested, so the ~/.local/bin symlink and
+#    everything downstream are unchanged.
 # --------------------------------------------------------------------------- #
 CLI_SRC="$SOURCE_DIR/gplan"
+CLI_IS_DIR=0
+[ -d "$CLI_SRC" ] && [ -f "$CLI_SRC/gplan" ] && CLI_IS_DIR=1
 APP_SRC="$SOURCE_DIR/$APP_BUNDLE_NAME"
 [ -d "$APP_SRC" ] || APP_SRC="$SOURCE_DIR/gplan-gui.app"
 
-if [ ! -f "$CLI_SRC" ]; then
+if [ "$CLI_IS_DIR" -eq 0 ] && [ ! -f "$CLI_SRC" ]; then
     echo "No gplan binary found next to this script." >&2
-    echo "Expected: $CLI_SRC" >&2
+    echo "Expected $CLI_SRC, either as a file or as a folder containing one." >&2
     echo "Run install.sh from inside the unzipped release folder." >&2
     exit 1
 fi
-gray "found gplan            $(du -h "$CLI_SRC" | cut -f1)"
+if [ "$CLI_IS_DIR" -eq 1 ]; then
+    gray "found gplan            $(du -sh "$CLI_SRC" | cut -f1)  (folder)"
+else
+    gray "found gplan            $(du -h "$CLI_SRC" | cut -f1)  (one file)"
+fi
 if [ -d "$APP_SRC" ]; then
     gray "found $(basename "$APP_SRC")  $(du -sh "$APP_SRC" | cut -f1)"
 else
@@ -143,9 +155,19 @@ fi
 echo
 echo "Files"
 run "create $SUPPORT_DIR" mkdir -p "$SUPPORT_DIR"
-run "install gplan" cp -f "$CLI_SRC" "$SUPPORT_DIR/gplan"
+if [ "$CLI_IS_DIR" -eq 1 ]; then
+    # Contents, not the folder itself -- see the flattening note above. The
+    # trailing /. is what makes cp -R copy INTO the destination rather than
+    # create a nested gplan/gplan/ on a second install.
+    run "install gplan (folder)" cp -R "$CLI_SRC/." "$SUPPORT_DIR/"
+    for entry in "$CLI_SRC"/*; do
+        INSTALLED_FILES+=("$SUPPORT_DIR/$(basename "$entry")")
+    done
+else
+    run "install gplan" cp -f "$CLI_SRC" "$SUPPORT_DIR/gplan"
+    INSTALLED_FILES+=("$SUPPORT_DIR/gplan")
+fi
 run "make gplan executable" chmod +x "$SUPPORT_DIR/gplan"
-INSTALLED_FILES+=("$SUPPORT_DIR/gplan")
 
 for doc in INSTALL.md UNINSTALL.md uninstall.sh; do
     # The uninstall checklist ships WITH the install, not only in the ZIP:
