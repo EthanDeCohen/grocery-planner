@@ -366,8 +366,9 @@ from grocery_planner import protein_kind as pk           # noqa: E402
 
 
 @pytest.mark.parametrize("name", [
-    # The two rows measured live.
-    "Hanover Brown Sugar & Bacon Baked Beans, 16 oz",
+    # The row measured live. (The other one, "Hanover ... Bacon Baked Beans",
+    # moved to test_plant_protein_never_matches_a_meat_food when GFP-295 gave
+    # legumes a kind instead of a veto -- same guarantee, different mechanism.)
     "beef cooking stock 3G Protein, 32 oz",
     # One per disqualifier family, so a family losing its veto is caught.
     "Swanson Chicken Broth, 48 oz",              # broth
@@ -375,8 +376,6 @@ from grocery_planner import protein_kind as pk           # noqa: E402
     "Campbell's Beef Consomme, 10.5 oz",         # consomme
     "Heinz Turkey Gravy, 12 oz",                 # gravy
     "Montreal Steak Seasoning, 3 oz",            # seasoning
-    "Bush's Best Pork and Beans, 28 oz",         # legume
-    "Beyond Burger Plant-Based Patties, 8 oz",   # analogue
     "Beef Flavored Ramen Noodles, 3 oz",         # form
     "Beefsteak Tomato, 2 lb",                    # produce wearing a beef name
 ])
@@ -389,6 +388,24 @@ def test_the_matcher_honours_every_protein_kind_disqualifier(name):
     the matcher's call to it and every case here fails at once.
     """
     assert pk.is_disqualified(name) is True
+    assert matching.match_item(name) is None
+
+
+@pytest.mark.parametrize("name", [
+    "Hanover Brown Sugar & Bacon Baked Beans, 16 oz",
+    "Bush's Best Pork and Beans, 28 oz",
+    "Beyond Burger Plant-Based Patties, 8 oz",
+])
+def test_plant_protein_never_matches_a_meat_food(name):
+    """Same guarantee as the veto above, reached a different way (GFP-295).
+
+    These used to be DISQUALIFIERS -- the matcher refused them outright. They
+    are real protein, so they now classify as `plant` instead. The protection
+    that mattered is unchanged: `plant` maps only to the tofu matcher, so a tin
+    of beans still resolves to nothing rather than to somebody's cheapest pork.
+    """
+    assert pk.classify(name) == "plant"
+    assert pk.classify(name) not in pk.MEAT_KINDS
     assert matching.match_item(name) is None
 
 

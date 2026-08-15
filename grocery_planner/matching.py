@@ -326,6 +326,16 @@ _CUT_MATCHER_FOR_KIND = {
     # (kind: shellfish), so shellfish is NOT one of the species below. Assuming
     # it was cost one test, which is exactly the guard GFP-285 asks for.
     "shellfish": _match_fish,
+    # GFP-295 gave tofu and whey a kind of their own. They were previously
+    # reached through _NON_ANIMAL_MATCHERS below, which only runs when
+    # kind_from_name returns None -- so without these two lines they stopped
+    # matching entirely the moment they stopped being "not an animal".
+    #
+    # Each matcher is narrower than its kind, and that is correct: `plant` also
+    # covers beans and peanut butter, and there is no curated food for those,
+    # so _match_tofu simply returns None for them. Same for yogurt under dairy.
+    "plant": _match_tofu,
+    "dairy": _match_whey,
 }
 
 #: Kinds protein_kind can name that the CURATED catalog has no food for. There
@@ -336,7 +346,10 @@ _CUT_MATCHER_FOR_KIND = {
 #: Bacon" previously matched `bacon` at 0.9 confidence and was served as PORK.
 #: Unmatched is strictly better than confidently wrong, especially for a client
 #: whose restriction is religious or medical (GFP-135).
-_KINDS_WITHOUT_A_CURATED_FOOD = frozenset({"turkey", "lamb"})
+#: GFP-295 adds `egg` here for the same reason turkey and lamb are: the rules
+#: recognise it and the catalog has nothing to point it at. See GFP-290 -- these
+#: are catalog gaps, not matcher gaps, and every one is a declined match.
+_KINDS_WITHOUT_A_CURATED_FOOD = frozenset({"turkey", "lamb", "egg"})
 
 #: Matchers for things that are not an animal species at all, so
 #: `kind_from_name` returns None for them. They must still get their turn --

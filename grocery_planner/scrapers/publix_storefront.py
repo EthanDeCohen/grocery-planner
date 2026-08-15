@@ -132,31 +132,6 @@ _SLUG_ID_PREFIX = re.compile(r"^[0-9]+-")
 #: protein_kind's two non-answers.
 _NOT_A_PROTEIN = frozenset({"unknown", "other"})
 
-#: Non-meat protein, which ``protein_kind`` cannot name.
-#:
-#: ``protein_kind`` classifies SPECIES -- chicken, pork, beef, fish, turkey,
-#: shellfish, lamb -- so it answers 'unknown' for eggs, Greek yogurt, whey,
-#: cheese, peanut butter, tofu and beans alike. Filtering on it alone would have
-#: made Publix a meat-only source while the GUI offers an "Overall protein" tab,
-#: which is a coverage cap the user cannot see: the tab would simply look
-#: sparse at Publix and nobody would know why.
-#:
-#: This list is a STOPGAP and deliberately lives here rather than in
-#: ``protein_kind``. Widening that module changes what every existing source
-#: classifies, and it feeds ``bill.py``'s eligibility and the optimiser's
-#: rankings -- not a change to make as a side effect of adding a scraper. See
-#: GFP-295: the vocabulary belongs there, and this constant should be deleted
-#: when it moves.
-_NON_MEAT_PROTEIN_TERMS: tuple[str, ...] = (
-    "egg", "eggs", "yogurt", "yoghurt", "greek yogurt", "skyr", "cottage cheese",
-    "cheese", "milk", "kefir", "whey", "casein", "protein powder", "protein shake",
-    "protein bar", "tofu", "tempeh", "seitan", "edamame", "lentil", "lentils",
-    "bean", "beans", "chickpea", "chickpeas", "garbanzo", "hummus", "peanut butter",
-    "almond butter", "peanuts", "almonds", "cashews", "walnuts", "pistachios",
-    "quinoa", "soy", "sardine", "sardines", "anchovy", "anchovies",
-)
-
-
 def name_from_slug(slug: str) -> str:
     """The product name a slug carries, for offline classification.
 
@@ -176,11 +151,14 @@ def protein_candidate_slugs(slugs: Iterable[str]) -> list[str]:
     pass, while the nutrition pass walks every slug it is handed, one call
     each. Measured: 108,978 unique slugs -> 15,669 candidates.
 
-    Order is preserved rather than sorted so successive bounded runs walk the
+    Order is preserved rather than sorted, so successive bounded runs walk the
     catalogue the same way twice.
 
-    De-duplication is NOT done here -- the platform does it for every tenant
-    now (GFP-294).
+    Two things this deliberately does NOT do any more:
+    de-duplication belongs to the platform, which does it for every tenant
+    (GFP-294); and the ~40-term non-meat vocabulary that used to live here is
+    gone, because `protein_kind` names dairy, eggs and plant protein itself
+    (GFP-295). One question, asked once.
     """
     kept: list[str] = []
     for slug in slugs:
@@ -188,21 +166,8 @@ def protein_candidate_slugs(slugs: Iterable[str]) -> list[str]:
         if protein_kind.is_disqualified(name):
             continue
         if protein_kind.classify(name) not in _NOT_A_PROTEIN:
-            kept.append(slug)          # a named species: chicken, beef, ...
-        elif _has_non_meat_protein(name):
-            kept.append(slug)          # eggs, dairy, legumes, nuts, whey
+            kept.append(slug)   # meat, seafood, dairy, egg or plant
     return kept
-
-
-def _has_non_meat_protein(name: str) -> bool:
-    """Whole-word match against :data:`_NON_MEAT_PROTEIN_TERMS`.
-
-    Word-bounded rather than a substring test: ``"bean"`` in a substring test
-    matches "beanie" and, worse, ``"egg"`` matches "eggplant" -- which is how a
-    vegetable ends up in a protein ranking.
-    """
-    padded = f" {name} "
-    return any(f" {term} " in padded for term in _NON_MEAT_PROTEIN_TERMS)
 
 
 def readiness() -> tuple[bool, str]:

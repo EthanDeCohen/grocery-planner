@@ -140,15 +140,15 @@ def test_non_meat_protein_survives_the_filter():
 
 
 def test_the_non_meat_match_is_word_bounded():
-    """'egg' must not match 'eggplant'.
+    """'egg' must not match 'eggplant' -- a vegetable in a protein ranking.
 
-    A substring test puts a vegetable into a protein ranking, and 'bean' would
-    likewise catch 'beanie'. This is the cheapest possible guard against the
-    laziest possible implementation of the term list.
+    The ~40-term stopgap this used to check lived in this module until GFP-295
+    moved the vocabulary into protein_kind. The guarantee is unchanged and is
+    now asserted through the filter, which is the only thing this module still
+    owns.
     """
     assert ps.protein_candidate_slugs(["1-fresh-eggplant-each"]) == []
-    assert ps._has_non_meat_protein("eggland s best large white eggs 12 ct")
-    assert not ps._has_non_meat_protein("fresh eggplant each")
+    assert ps.protein_candidate_slugs(["1-eggland-s-best-large-white-eggs-12-ct"])
 
 
 def test_the_filter_is_permissive_by_design():
@@ -187,8 +187,8 @@ def test_scrape_filters_the_catalogue_before_the_nutrition_pass(monkeypatch):
     monkeypatch.setattr(ps._platform, "scrape", fake_scrape)
     ps.scrape(client=FakeClient())
 
-    # Filtering happens here; de-duplication is the platform's job (GFP-294),
-    # so the repeat survives this call and is dropped downstream.
+    # Filtering is this module's job; de-duplication is the platform's
+    # (GFP-294), so the repeat survives here and is dropped downstream.
     assert seen["slugs"] == [
         "1-perdue-fresh-ground-chicken-breast-1-lb",
         "1-perdue-fresh-ground-chicken-breast-1-lb",
