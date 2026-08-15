@@ -794,3 +794,45 @@ def test_a_tenant_with_no_canary_reports_that_rather_than_a_false_pass():
     ok, message = ist.verify_pinned_hashes(tenant)
     assert ok is False
     assert "no canary" in message
+
+
+# --------------------------------------------------------------------------- #
+# GFP-294 -- the sitemaps repeat, and every repeat used to cost a GraphQL call
+# --------------------------------------------------------------------------- #
+def test_repeated_slugs_are_asked_about_once():
+    """Measured on Publix: 100k listed URLs, 66k distinct slugs -- 34% repeats.
+
+    A repeat is the same product (the slug's prefix IS the product id), so
+    asking twice buys nothing and costs a round trip plus its share of the
+    pacing budget.
+    """
+    seen = []
+
+    class Recording(ist.StorefrontClient):
+        def nutrition(self, product_id, shop_id):
+            seen.append(product_id)
+            return None
+
+    tenant = sprouts.TENANT
+    recorder = Recorder([("515202", "instore")])
+    client = Recording(tenant, client=httpx.Client(
+        base_url=tenant.base_url, transport=httpx.MockTransport(recorder)))
+    rows, _meta, stats = ist.scrape(
+        tenant, postal_code="27401", client=client,
+        slugs=["1-chicken", "1-chicken", "2-beef", "1-chicken"],
+    )
+
+    assert len(seen) == 2, "a repeated slug was asked about more than once"
+    assert stats["duplicate_slugs"] == 2
+    assert stats["products_seen"] == 2, "products_seen counts distinct products"
+
+
+def test_the_dropped_repeats_are_reported_not_silent():
+    """A 34% reduction that nobody sees reads as a shrinking catalogue."""
+    tenant = sprouts.TENANT
+    recorder = Recorder([("515202", "instore")])
+    client = client_for(tenant, recorder)
+    _rows, _meta, stats = ist.scrape(
+        tenant, postal_code="27401", client=client, slugs=["1-a", "1-a", "1-a"],
+    )
+    assert stats["duplicate_slugs"] == 2

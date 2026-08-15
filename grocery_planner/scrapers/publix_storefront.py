@@ -147,12 +147,18 @@ def protein_candidate_slugs(slugs: Iterable[str]) -> list[str]:
     """The subset worth asking the nutrition API about, in the order given.
 
     Publix's catalogue is big enough that this is the difference between a
-    viable scrape and an impossible one: `limit` only bounds the PRICING pass,
-    while the nutrition pass walks every slug it is handed, one call each.
+    viable scrape and an impossible one -- `limit` only bounds the PRICING
+    pass, while the nutrition pass walks every slug it is handed, one call
+    each. Measured: 108,978 unique slugs -> 15,669 candidates.
 
-    Since GFP-295 `protein_kind` names dairy, eggs and plant protein too, so
-    this is a single question again -- the ~40-term stopgap that used to live
-    here is gone.
+    Order is preserved rather than sorted, so successive bounded runs walk the
+    catalogue the same way twice.
+
+    Two things this deliberately does NOT do any more:
+    de-duplication belongs to the platform, which does it for every tenant
+    (GFP-294); and the ~40-term non-meat vocabulary that used to live here is
+    gone, because `protein_kind` names dairy, eggs and plant protein itself
+    (GFP-295). One question, asked once.
     """
     kept: list[str] = []
     for slug in slugs:
@@ -160,7 +166,7 @@ def protein_candidate_slugs(slugs: Iterable[str]) -> list[str]:
         if protein_kind.is_disqualified(name):
             continue
         if protein_kind.classify(name) not in _NOT_A_PROTEIN:
-            kept.append(slug)
+            kept.append(slug)   # meat, seafood, dairy, egg or plant
     return kept
 
 
