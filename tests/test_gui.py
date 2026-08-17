@@ -698,3 +698,89 @@ def test_constructing_the_window_never_checks_for_updates(monkeypatch):
     monkeypatch.setattr(updates, "check", explode)
     monkeypatch.setattr(updates, "check_quietly", explode)
     gui_app.MainWindow()        # must not raise
+
+
+# --------------------------------------------------------------------------- #
+# Reaching the logs and the install from inside the app (GFP-337)
+# --------------------------------------------------------------------------- #
+def test_the_help_menu_offers_both_folders(window):
+    """Retention was never the gap -- reaching the logs was.
+
+    `gplan logs` prints the path, but telling a nutritionist using a desktop
+    app to open a terminal is not an answer, and "send me your log" is not a
+    request they can act on without this.
+    """
+    labels = [a.text() for a in window.menuBar().actions()]
+    assert any("Help" in text for text in labels)
+    assert window.open_logs_action.isEnabled()
+    assert window.open_install_action.isEnabled()
+
+
+def test_opening_the_logs_folder_puts_the_path_on_screen(window, monkeypatch):
+    """The path is shown WHETHER OR NOT the file manager opened.
+
+    A user whose desktop refused the request can still read the path, write it
+    down and navigate there by hand -- which is the whole point of the feature.
+    """
+    from PySide6.QtGui import QDesktopServices
+
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda _url: False)
+    window.open_logs_folder()
+
+    from grocery_planner import logs
+
+    assert str(logs.log_dir()) in window.statusBar().currentMessage()
+
+
+def test_the_logs_menu_item_states_the_retention(window):
+    """So the answer to 'how long do these stick around' is on the control
+    itself, not in a docs page nobody opens."""
+    from grocery_planner import logs
+
+    assert str(logs.retention_days()) in window.open_logs_action.statusTip()
+
+
+# --------------------------------------------------------------------------- #
+# Every control reaches the log (GFP-337)
+# --------------------------------------------------------------------------- #
+def test_a_menu_action_is_logged(window, caplog):
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="grocery_planner.gui.activity"):
+        window.open_logs_action.trigger()
+    assert any("Open logs folder" in r.getMessage() for r in caplog.records)
+
+
+def test_a_toggle_logs_which_way_it_went(window, caplog):
+    """'ticked beef' and 'unticked beef' are different actions, and the
+    difference is the entire reason to log a toggle."""
+    import logging
+
+    panel = window.client_page.selection_panel
+    box = next(iter(panel._boxes.values()), None)
+    if box is None:
+        pytest.skip("no preference checkboxes in this fixture")
+    with caplog.at_level(logging.INFO, logger="grocery_planner.gui.activity"):
+        box.setChecked(True)
+        box.setChecked(False)
+    said = " ".join(r.getMessage() for r in caplog.records)
+    assert "-> on" in said and "-> off" in said
+
+
+def test_a_control_is_never_wired_twice(window):
+    """MainWindow keeps its dialogs rather than rebuilding them, so a reopened
+    dialog must not start logging every click twice."""
+    from grocery_planner.gui import activity
+
+    assert activity.install(window) == 0
+
+
+def test_the_log_names_the_control_not_its_contents(window, caplog):
+    """These files get emailed around when something breaks. The redactor drops
+    secrets; it knows nothing about a client's name."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="grocery_planner.gui.activity"):
+        window.open_install_action.trigger()
+    for record in caplog.records:
+        assert "Fiona" not in record.getMessage()
