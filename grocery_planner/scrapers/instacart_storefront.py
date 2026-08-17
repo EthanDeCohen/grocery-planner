@@ -998,7 +998,22 @@ def listing_to_row(
         refused = rejected_density(nutrition, size_text)
         if refused is not None:
             notes.append(f"protein_per_100g_rejected={refused:.2f}")
-    if listing.availability and listing.availability != "InStock":
+    # Recorded WHENEVER the page states it, including "InStock" -- not only when
+    # it is something else.
+    #
+    # This used to note the exception only, which collapsed two different facts
+    # into one absent note: "the page said InStock" and "the page said nothing"
+    # were indistinguishable afterwards. That is the same two-states-for-three
+    # mistake store_availability was built to avoid (GFP-257), and it made the
+    # field useless for the question actually being asked -- can the client buy
+    # this -- because a row with no note could not be told from a row nobody
+    # asked about.
+    #
+    # It is a claim about ASSORTMENT more than inventory: schema.org values seen
+    # here are InStock / InStoreOnly / OutOfStock / SoldOut, and a retailer
+    # updates them on the timescale of what it carries, not what is on the shelf
+    # this hour. Read it as "this shop sells this", never as "it is there now".
+    if listing.availability:
         notes.append(f"availability={listing.availability}")
     if not has_price:
         notes.append("price_missing=true")

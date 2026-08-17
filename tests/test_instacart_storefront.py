@@ -836,3 +836,34 @@ def test_the_dropped_repeats_are_reported_not_silent():
         tenant, postal_code="27401", client=client, slugs=["1-a", "1-a", "1-a"],
     )
     assert stats["duplicate_slugs"] == 2
+
+
+# --------------------------------------------------------------------------- #
+# Availability is recorded whenever the page states it (GFP-329)
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("stated", ["InStock", "InStoreOnly", "OutOfStock", "SoldOut"])
+def test_availability_is_recorded_whatever_the_page_says(stated):
+    """Including InStock, which the row used to drop.
+
+    Noting only the exception collapsed "the page said InStock" and "the page
+    said nothing" into the same absent note, so afterwards there was no way to
+    tell a shop that stocks an item from one nobody asked about. Three states,
+    the same rule store_availability follows (GFP-257).
+    """
+    listing = ist.Listing(
+        product_id="1", slug="1-x", name="Chicken Drumsticks", brand="B",
+        category="Meat", size="16 oz", price=4.99, availability=stated,
+    )
+    row, _fact = ist.listing_to_row(aldi.TENANT, listing, None, "27401", NOW)
+    assert f"availability={stated}" in row["notes"]
+
+
+def test_an_unstated_availability_writes_no_note():
+    """The third state. Absent must stay absent -- inventing "InStock" for a
+    page that never said so would be the fabrication this guards against."""
+    listing = ist.Listing(
+        product_id="1", slug="1-x", name="Chicken Drumsticks", brand="B",
+        category="Meat", size="16 oz", price=4.99, availability=None,
+    )
+    row, _fact = ist.listing_to_row(aldi.TENANT, listing, None, "27401", NOW)
+    assert "availability=" not in (row["notes"] or "")
