@@ -268,3 +268,41 @@ def test_the_module_never_passes_a_budget_into_the_bill(market, conn):
         for line in source.splitlines():
             if call in line and "budget=" in line:
                 pytest.fail(f"a budget is being passed into the solve: {line.strip()}")
+
+
+# --------------------------------------------------------------------------- #
+# Sharing the pool across relaxations (GFP-335)
+# --------------------------------------------------------------------------- #
+def test_a_shared_pool_gives_the_same_prices_as_solving_each_alone(market, conn):
+    """Equivalence, not speed.
+
+    relaxations() now solves every category against one pre-ranked pool and one
+    resolved-protein cache instead of re-ranking per category. That is only
+    legitimate if the numbers are untouched -- a faster wrong answer is worse
+    than a slow right one, and this is advice a nutritionist acts on.
+    """
+    from grocery_planner import preferences
+
+    customer = _client(conn)
+    preferences.set_preferences(customer.id, ["chicken"], conn=conn)
+    pooled = budget.relaxations(customer, conn=conn)
+    if not pooled:
+        pytest.skip("no relaxations to price in this fixture")
+
+    allowed = list(preferences.list_preferences(customer.id, conn=conn))
+    for entry in pooled:
+        alone = budget.weekly_plan(          # ranked=None, cache=None
+            customer, categories=allowed + [entry.category], conn=conn
+        )
+        assert alone is not None
+        assert alone.weekly_cost == pytest.approx(entry.weekly_cost)
+
+
+def test_a_category_with_nothing_to_buy_is_not_priced(market, conn):
+    """The filter half: a category with no purchasable deal cannot change a
+    plan, so solving a whole week for it is pure cost. Removing it must not
+    remove anything that could have appeared."""
+    customer = _client(conn)
+    priced = {r.category.strip().lower() for r in budget.relaxations(customer, conn=conn)}
+    have_candidates = budget._categories_with_candidates(conn)
+    assert priced <= have_candidates

@@ -635,6 +635,7 @@ def _build_bill(
     categories: Iterable[str] | None,
     conn: sqlite3.Connection,
     selection: "Selection | None" = None,
+    cache: dict | None = None,
 ) -> Bill:
     """Shared engine behind :func:`daily_bill`/:func:`daily_bill_for`, once a
     valid (non-``None``) daily target is already in hand.
@@ -662,8 +663,14 @@ def _build_bill(
     all_deals = service.fetch_deals(hide_expired=True, conn=conn)
     # Cheapest $/g-protein first; anything unpriceable is already dropped --
     # this module never re-derives that chain, only allocates against it.
+    # `cache` is GFP-335's lever. The ranking here does not depend on the
+    # client or the selection -- only on the deals table -- so a caller solving
+    # the SAME week many ways (budget.relaxations solves it once per category)
+    # was re-parsing every size and re-matching every food each time. Passing a
+    # shared cache collapses that to once. None keeps the old behaviour exactly.
     ranked = savings.rank_by_cost_per_gram_protein(
-        all_deals, conn=conn, limit=0, min_confidence=MIN_MATCH_CONFIDENCE
+        all_deals, conn=conn, limit=0, min_confidence=MIN_MATCH_CONFIDENCE,
+        cache=cache,
     )
     excluded_deals = len(all_deals) - len(ranked)
 
@@ -688,6 +695,7 @@ def daily_bill_for(
     categories: Iterable[str] | None = None,
     conn: sqlite3.Connection | None = None,
     selection: Selection | None = None,
+    cache: dict | None = None,
 ) -> Bill | None:
     """Daily protein bill for an already-loaded :class:`Customer`.
 
@@ -704,7 +712,8 @@ def daily_bill_for(
     target = targets.protein_target_for(customer, conn=own)
     if target is None:
         return None
-    return _build_bill(customer.id, target.daily_grams, categories, own, selection)
+    return _build_bill(customer.id, target.daily_grams, categories, own, selection,
+                       cache=cache)
 
 
 def compare_bills_for(
