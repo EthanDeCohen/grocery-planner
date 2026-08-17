@@ -300,13 +300,15 @@ def test_the_amortisation_note_is_still_findable(page):
 def test_a_starving_preference_shows_the_caveat_not_a_saving(page):
     """The GFP-49 trap, on screen: cheaper because it buys less protein."""
     beef_id = _food("Test Beef", "beef", 25.0)
-    tofu_id = _food("Test Tofu", "tofu", 8.0)
+    # GFP-335: the preference list offers the ten protein KINDS, so tofu is
+    # ticked as "plant". The food is still tofu; only the control changed.
+    tofu_id = _food("Test Tofu", "plant", 8.0)
     _deal("foodlion", "Beef Roast 16 oz", 4.00, beef_id)
     _deal("foodlion", "Tofu Block 4 oz", 2.00, tofu_id)
     ana = _client()
     page.show_client(ana.id)
 
-    page.selection_panel._boxes["tofu"].setChecked(True)
+    page.selection_panel._boxes["plant"].setChecked(True)
 
     assert page.bill_panel.comparison.is_comparable is False
     assert page.bill_panel.caveat_label.isVisibleTo(page.bill_panel)

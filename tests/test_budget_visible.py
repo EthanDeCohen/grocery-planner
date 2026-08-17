@@ -310,7 +310,9 @@ def test_over_budget_names_one_relaxation_and_the_alternative(market, conn):
 def test_the_other_options_stay_reachable_without_being_shown(market, conn):
     """Reachable, not deleted -- the nutritionist may want the second-best."""
     _deal(conn, "Cheap Pork", 0.50, "pork", "pork")
-    _deal(conn, "Cheap Tofu", 0.60, "tofu", None)
+    # GFP-335: relaxations offer protein KINDS, so this needs one to be
+    # offerable at all. Tofu is plant.
+    _deal(conn, "Cheap Tofu", 0.60, "plant", "plant")
     selection = bill.Selection(vary_week=True)
     probe = _client(conn)
     preferences.set_preferences(probe.id, ["chicken"], conn=conn)

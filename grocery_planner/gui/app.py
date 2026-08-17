@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import config, install_paths, logs, service
+from . import activity
 from .cheapest import CheapestMeatStrip
 from .client import ClientDetailPage
 from .formulas import FormulaDialog
@@ -73,6 +74,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"{service.count_deals(hide_expired=True)} current deals stored."
         )
+        # GFP-337: every menu action, button and toggle from here down goes to
+        # the log. Last, so the whole tree exists to walk.
+        activity.install(self)
         # NOT called here: see main(). Constructing the window must not touch
         # the network, or every GUI test would scrape.
 
@@ -147,6 +151,30 @@ class MainWindow(QMainWindow):
         )
         self.update_action.triggered.connect(self.open_releases_page)
         help_menu.addAction(self.update_action)
+
+        # GFP-337: a route to the two folders, from inside the app.
+        #
+        # Retention has been right since GFP-86 -- logs prune themselves after
+        # seven days -- but a nutritionist had no way to REACH them. `gplan
+        # logs` prints the path, and telling somebody using a desktop app to
+        # open a terminal is not an answer. Without this, "send me your log"
+        # is a request they cannot act on, which is what made the client-page
+        # crash undiagnosable from the outside.
+        help_menu.addSeparator()
+        self.open_logs_action = QAction("Open lo&gs folder", self)
+        self.open_logs_action.setStatusTip(
+            f"Logs are kept for {logs.retention_days()} days and delete "
+            "themselves after that."
+        )
+        self.open_logs_action.triggered.connect(self.open_logs_folder)
+        help_menu.addAction(self.open_logs_action)
+
+        self.open_install_action = QAction("Open &install folder", self)
+        self.open_install_action.setStatusTip(
+            "Where the application itself is installed."
+        )
+        self.open_install_action.triggered.connect(self.open_install_folder)
+        help_menu.addAction(self.open_install_action)
 
     # ----------------------------------------------------------------- #
     # The ZIP, always on screen (GFP-122)
@@ -358,6 +386,41 @@ class MainWindow(QMainWindow):
         self.update_action.setEnabled(True)
         self._update_url = url
 
+    def _reveal(self, target, what: str) -> bool:
+        """Open a folder in the platform's file manager.
+
+        Creates the directory first when it is missing rather than opening
+        nothing: a fresh install has no log directory until something logs, and
+        a menu item that appears to do nothing is worse than one that opens an
+        empty folder.
+        """
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        path = pathlib.Path(target)
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        if not path.exists():
+            self.statusBar().showMessage(f"No {what} folder yet: {path}", 10000)
+            return False
+        opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        # The path goes in the status bar EITHER WAY, so somebody whose file
+        # manager refused can still read it, write it down, and get there.
+        self.statusBar().showMessage(str(path), 20000)
+        return bool(opened)
+
+    def open_logs_folder(self) -> bool:
+        return self._reveal(logs.log_dir(), "logs")
+
+    def open_install_folder(self) -> bool:
+        return self._reveal(
+            pathlib.Path(sys.executable).parent if getattr(sys, "frozen", False)
+            else install_paths.default_install_root(),
+            "install",
+        )
+
     def maybe_auto_refresh(self) -> bool:
         """Fetch this week's prices on first run, or on a new day.
 
@@ -419,6 +482,9 @@ class MainWindow(QMainWindow):
         dialog = self._dialogs.get(key)
         if dialog is None:
             dialog = self._dialogs[key] = factory(self)
+            # Wired HERE rather than at startup: dialogs are built on first
+            # open, so a tree walk in __init__ would miss every one of them.
+            activity.install(dialog)
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()

@@ -48,7 +48,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from . import bill as bill_module
-from . import db, nutrition, preferences
+from . import db, nutrition, preferences, protein_kind
 from .customers import Customer, CustomerRepository
 
 #: Seven, and it is a definition rather than a setting -- see GFP-89. A "week"
@@ -154,16 +154,24 @@ def weekly_plan(
     categories: Iterable[str] | None = None,
     conn: sqlite3.Connection | None = None,
     selection: "bill_module.Selection | None" = None,
+    ranked: "tuple[list[dict], int] | None" = None,
+    cache: dict | None = None,
 ) -> WeeklyPlan | None:
     """This client's plan over seven days. ``None`` with no protein target.
 
     ``categories`` overrides the client's stored preferences without saving
     them, mirroring :func:`bill.compare_bills_for` -- a checkbox is a filter,
     and pricing a hypothetical should not require a write.
+
+    ``ranked``/``cache``: the candidate pool and the resolved protein chain,
+    when the caller is solving the SAME week many ways and has already paid for
+    them once (GFP-335). Both default to None, which reproduces the old
+    behaviour exactly -- each is a reuse of work, never a change of answer.
     """
     own = conn or db.connect()
     daily = bill_module.daily_bill_for(
-        customer, categories=categories, conn=own, selection=selection
+        customer, categories=categories, conn=own, selection=selection,
+        cache=cache,
     )
     if daily is None:
         return None
@@ -172,7 +180,8 @@ def weekly_plan(
         # The real seven days, so the budget is measured against the plan the
         # client is shown rather than against a multiplication of day one.
         week = bill_module.week_plan(
-            customer.id, categories=categories, selection=selection, conn=own
+            customer.id, categories=categories, selection=selection, conn=own,
+            ranked=ranked,
         )
     return WeeklyPlan(daily=daily, budget=customer.weekly_budget, week=week)
 
@@ -187,6 +196,29 @@ def weekly_plan_for_id(
     if customer is None:
         return None
     return weekly_plan(customer, categories=categories, conn=own)
+
+
+def _categories_with_candidates(conn: sqlite3.Connection) -> set[str]:
+    """Categories that have at least one priced, unexpired, matched deal.
+
+    Folded to lowercase because `foods.category` and the preference strings are
+    not reliably cased the same way, and a case mismatch here would silently
+    drop a real relaxation rather than a useless one.
+
+    One query, not one per category: the point of this is to replace hundreds
+    of week-plan solves, so it must not itself become a loop over categories.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT LOWER(TRIM(f.category)) "
+        "FROM deals d "
+        "JOIN deal_food_match m ON m.store = d.store AND m.item_name = d.item_name "
+        "JOIN foods f ON f.id = m.food_id "
+        "WHERE COALESCE(d.dollar_price, d.sale_price, d.regular_price) > 0 "
+        "  AND NOT (d.valid_to IS NOT NULL AND d.valid_to <> '' "
+        "           AND d.valid_to < DATE('now')) "
+        "  AND f.category IS NOT NULL AND TRIM(f.category) <> ''"
+    ).fetchall()
+    return {row[0] for row in rows if row[0]}
 
 
 def relaxations(
@@ -214,17 +246,51 @@ def relaxations(
         # the optimiser can do. There is nothing to give back.
         return []
 
-    # GFP-156: only categories the nutritionist can actually TICK. GFP-139
-    # removed the broad buckets ("Meat", "Seafood") from the preference
-    # checkboxes because they overlap the specific kinds beneath them -- so
-    # advising "allow Meat" would name a control that does not exist, and the
-    # saving it quotes could not be acted on.
-    buckets = set(nutrition.CATEGORY_MEMBERS)
-    known = [
-        c for c in nutrition.list_categories(own)
-        if c and c.strip().lower() not in buckets
-    ]
+    # GFP-156: only categories the nutritionist can actually TICK -- advising
+    # "allow X" must name a control that exists, or the saving it quotes cannot
+    # be acted on.
+    #
+    # GFP-335: THAT IS THE TEN PROTEIN KINDS, not the retailer taxonomy.
+    #
+    # This read `nutrition.list_categories()`, which is SELECT DISTINCT category
+    # FROM foods -- whatever string each scraper happened to write. On a real
+    # database that is 245 values including "Bread Flour", "Baby Food Purees"
+    # and "Blended and Fruit on the Bottom". Every one of them was a complete
+    # week-plan solve before a client page could be drawn, so a beef-only client
+    # waited 249 seconds while the optimiser priced her week on baby food.
+    #
+    # `protein_kind.KINDS` (GFP-106) is the curated vocabulary that already
+    # exists for exactly this: ten kinds a person would actually choose between.
+    # Nothing needed migrating -- stored preferences were already kinds
+    # ('beef', 'chicken', 'Dairy', 'fish') -- and `nutrition.food_ids_in`
+    # already matches a preference against `foods.protein_kind` as well as
+    # `foods.category`, so this narrows what is OFFERED without changing what
+    # any preference MEANS.
+    known = sorted({k for k in protein_kind.KINDS if k})
     excluded = [c for c in known if c not in allowed]
+    if not excluded:
+        return []
+
+    # GFP-335: A CATEGORY WITH NOTHING TO BUY CANNOT CHANGE THE ANSWER.
+    #
+    # Each entry below is a COMPLETE week-plan solve. `known` comes from
+    # `SELECT DISTINCT category FROM foods`, which is the retailer taxonomy
+    # verbatim -- 245 of them on a real database, including "Bread Flour" and
+    # "Baby Food Purees". A client allowing one category therefore priced 244
+    # hypothetical weeks before their page could be drawn: measured at 249
+    # SECONDS for a beef-only client, 4.7M cost_per_gram_protein calls and 6M
+    # sqlite executes for a single click.
+    #
+    # Almost all of that was spent solving weeks that could not differ from the
+    # current one, because the category has no purchasable protein behind it.
+    # Relaxing to a category with no candidate deals returns the same plan at
+    # the same cost and a saving of zero, which is not advice.
+    #
+    # So this is a filter, not a heuristic: it removes only categories that
+    # provably cannot appear in a plan, and every relaxation that survives is
+    # solved exactly as before. The answers are unchanged; the count is not.
+    priced = _categories_with_candidates(own)
+    excluded = [c for c in excluded if c.strip().lower() in priced]
     if not excluded:
         return []
 
@@ -232,14 +298,31 @@ def relaxations(
     # on screen. Advice priced under different constraints from the plan it is
     # advising about would be the GFP-144 defect again -- two numbers that look
     # comparable and are not.
-    current = weekly_plan(customer, categories=allowed, conn=own, selection=selection)
+    # PAY FOR THE POOL ONCE (GFP-335).
+    #
+    # Every plan below is solved against the same deals -- the ranking depends
+    # on neither the client nor the selection, which is what
+    # `bill.rank_current_deals` was split out to exploit ("so a caller solving
+    # the same week several ways pays the ranking once"). That intent existed
+    # one level too low: it was honoured inside a single solve and ignored
+    # across the hundreds of solves this loop performs.
+    #
+    # Measured before: 206 categories x (1 daily + 7 daily) rankings of ~11,700
+    # deals each -- 4.7M cost_per_gram_protein calls, 6M sqlite executes, and a
+    # client page that took 249 seconds to open.
+    pool = bill_module.rank_current_deals(own)
+    resolved: dict = {}
+
+    current = weekly_plan(customer, categories=allowed, conn=own, selection=selection,
+                          ranked=pool, cache=resolved)
     if current is None:
         return []
 
     found: list[Relaxation] = []
     for category in excluded:
         plan = weekly_plan(
-            customer, categories=allowed + [category], conn=own, selection=selection
+            customer, categories=allowed + [category], conn=own, selection=selection,
+            ranked=pool, cache=resolved,
         )
         if plan is None:
             continue

@@ -635,6 +635,7 @@ def _build_bill(
     categories: Iterable[str] | None,
     conn: sqlite3.Connection,
     selection: "Selection | None" = None,
+    cache: dict | None = None,
 ) -> Bill:
     """Shared engine behind :func:`daily_bill`/:func:`daily_bill_for`, once a
     valid (non-``None``) daily target is already in hand.
@@ -662,8 +663,14 @@ def _build_bill(
     all_deals = service.fetch_deals(hide_expired=True, conn=conn)
     # Cheapest $/g-protein first; anything unpriceable is already dropped --
     # this module never re-derives that chain, only allocates against it.
+    # `cache` is GFP-335's lever. The ranking here does not depend on the
+    # client or the selection -- only on the deals table -- so a caller solving
+    # the SAME week many ways (budget.relaxations solves it once per category)
+    # was re-parsing every size and re-matching every food each time. Passing a
+    # shared cache collapses that to once. None keeps the old behaviour exactly.
     ranked = savings.rank_by_cost_per_gram_protein(
-        all_deals, conn=conn, limit=0, min_confidence=MIN_MATCH_CONFIDENCE
+        all_deals, conn=conn, limit=0, min_confidence=MIN_MATCH_CONFIDENCE,
+        cache=cache,
     )
     excluded_deals = len(all_deals) - len(ranked)
 
@@ -688,6 +695,7 @@ def daily_bill_for(
     categories: Iterable[str] | None = None,
     conn: sqlite3.Connection | None = None,
     selection: Selection | None = None,
+    cache: dict | None = None,
 ) -> Bill | None:
     """Daily protein bill for an already-loaded :class:`Customer`.
 
@@ -704,7 +712,8 @@ def daily_bill_for(
     target = targets.protein_target_for(customer, conn=own)
     if target is None:
         return None
-    return _build_bill(customer.id, target.daily_grams, categories, own, selection)
+    return _build_bill(customer.id, target.daily_grams, categories, own, selection,
+                       cache=cache)
 
 
 def compare_bills_for(
@@ -836,9 +845,22 @@ def rank_history_by_day(
             "dollar_price": row["dollar_price"],
         })
 
+    # ONE cache across every day, which is the whole point (GFP-336).
+    #
+    # Each day was resolving the same items from scratch: parse the size, match
+    # the food, look up the nutrient, per item per day. An item's protein
+    # density does not change between Tuesday and Wednesday -- only its price
+    # does -- so the work was repeated once per day in the window for nothing.
+    # Measured on 24,903 price_history rows, this call was 1,106 ms of which
+    # 21 ms was SQL; the rest was that repetition.
+    #
+    # Scoped to this call rather than the module: a scrape rewrites
+    # deal_food_match, and a longer-lived cache would have no way to know.
+    resolved: dict[tuple, "savings.ProteinCost | None"] = {}
     return {
         day: savings.rank_by_cost_per_gram_protein(
-            deals, conn=conn, limit=0, min_confidence=MIN_MATCH_CONFIDENCE
+            deals, conn=conn, limit=0, min_confidence=MIN_MATCH_CONFIDENCE,
+            cache=resolved,
         )
         for day, deals in by_day.items()
     }
