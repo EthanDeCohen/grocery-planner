@@ -36,12 +36,12 @@ def _food(conn, name: str, slug: str, category: str, protein=25.0) -> int:
 
 
 def _deal(conn, store, item, food_id, price, *, valid_to=FUTURE,
-          sold_by=None, uom=None, postal_code="27401") -> None:
+          sold_by=None, uom=None, postal_code="27401", confidence=0.9) -> None:
     if food_id is not None:
         conn.execute(
             "INSERT OR IGNORE INTO deal_food_match"
-            "(store, item_name, food_id, confidence, method) VALUES (?, ?, ?, 0.9, 'test')",
-            (store, item, food_id),
+            "(store, item_name, food_id, confidence, method) VALUES (?, ?, ?, ?, 'test')",
+            (store, item, food_id, confidence),
         )
     conn.execute(
         "INSERT INTO deals(store, item_name, deal_type, dollar_price, valid_to, "
@@ -196,3 +196,50 @@ def test_the_cli_can_include_non_meat(env_db):
     included = runner.invoke(app, ["cheapest", "--all-protein"])
     assert "Pancake" in included.stdout
     assert "all protein" in included.stdout
+
+
+# --------------------------------------------------------------------------- #
+# The confidence floor (GFP-274 follow-up)
+#
+# This panel and the bill were disagreeing about what counts as a match. The
+# bill required 0.9; this required nothing. So the main window's headline offer
+# could be a row the planner itself refused -- and was: "Tyson Lightly Breaded
+# Hot Honey Chicken Bites" matched "Whole chicken, raw" at 0.3 and was priced
+# with raw chicken's protein density.
+# --------------------------------------------------------------------------- #
+def test_a_weak_match_may_not_price_a_deal(conn):
+    """The breaded-bites case, in miniature."""
+    chicken = _food(conn, "Chicken", "floor-chicken", "Meat")
+    _deal(conn, "aldi", "Breaded Chicken Bites 16 oz", chicken, 1.00, confidence=0.3)
+    _deal(conn, "aldi", "Chicken Breast 16 oz", chicken, 9.00, confidence=0.9)
+
+    rows = {r.store: r for r in service.cheapest_protein_by_store(conn=conn)}
+    assert "Breaded" not in rows["aldi"].item_name
+    assert rows["aldi"].item_name == "Chicken Breast 16 oz"
+
+
+def test_the_floor_refuses_the_match_not_the_deal(conn):
+    """A row is rejected for matching BADLY, never for the price itself.
+
+    Same deal, same price, twice: once matched at 0.9 and once at 0.3. Only the
+    confidence differs, so only the confidence can explain the difference.
+    """
+    chicken = _food(conn, "Chicken", "floor-two", "Meat")
+    _deal(conn, "aldi", "Chicken Thighs 16 oz", chicken, 2.00, confidence=0.9)
+    assert "aldi" in {r.store for r in service.cheapest_protein_by_store(conn=conn)}
+
+    conn.execute("UPDATE deal_food_match SET confidence = 0.3 WHERE store = 'aldi'")
+    conn.commit()
+    assert "aldi" not in {r.store for r in service.cheapest_protein_by_store(conn=conn)}
+
+
+def test_the_strip_and_the_bill_use_the_same_floor():
+    """Asserted as a relationship, not a repeated literal.
+
+    The defect was the two disagreeing. A test that pinned 0.9 in both places
+    would pass just as happily while they drifted apart again.
+    """
+    from grocery_planner import bill
+    from grocery_planner.service import cheapest
+
+    assert cheapest.MIN_MATCH_CONFIDENCE == bill.MIN_MATCH_CONFIDENCE

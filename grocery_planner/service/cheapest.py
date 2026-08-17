@@ -32,9 +32,25 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from .. import db, savings
+from .. import db, matching, savings
 from ..stores import BY_KEY
 from .deals import today_iso
+
+#: The floor a match must clear before this strip will price a deal by the food
+#: it matched (GFP-274 follow-up).
+#:
+#: Deliberately the SAME number as ``bill.MIN_MATCH_CONFIDENCE``. This panel and
+#: the bill were disagreeing about what counts as a match: the bill required 0.9
+#: and this required nothing, so the main window's headline offer could be a row
+#: the planner itself refused. Measured 2026-08-16 -- "Tyson Lightly Breaded Hot
+#: Honey Chicken Bites" matched "Whole chicken, raw" at 0.3 via
+#: ``category_fallback``, was priced with raw chicken's protein density, and
+#: sorted straight to the top as ALDI's cheapest protein.
+#:
+#: Not imported from ``bill``: that module imports ``service``, so the reference
+#: would be circular. ``matching.CONFIDENCE_HIGH`` is the shared origin of both
+#: numbers, and a test asserts the two stay equal rather than trusting a comment.
+MIN_MATCH_CONFIDENCE = matching.CONFIDENCE_HIGH
 
 
 @dataclass(frozen=True)
@@ -105,8 +121,20 @@ def cheapest_protein_by_store(
         "COALESCE(d.dollar_price, d.sale_price, d.regular_price) > 0",
         # Expired offers are excluded outright -- see the module docstring.
         "(d.valid_to IS NULL OR d.valid_to = '' OR d.valid_to >= ?)",
+        # A weak match may not price a deal. Only rows that DID match, and
+        # matched badly, are refused -- the NULL arm keeps unmatched rows,
+        # matching the LEFT JOIN's intent that they still reach the protein
+        # chain via GFP-69's on-pack label claim.
+        #
+        # That arm is DEFENSIVE, not load-bearing: measured 2026-08-16, no
+        # unmatched row currently resolves here anyway, because a bare claim
+        # ("30g Protein, 11 oz") has no servings-per-container and
+        # cost_per_gram_protein correctly refuses to invent one (GFP-73). It
+        # stays because the floor has no business being the thing that closes
+        # that path if the claim parser ever learns to.
+        "(m.food_id IS NULL OR m.confidence >= ?)",
     ]
-    params: list[object] = [anchor]
+    params: list[object] = [anchor, MIN_MATCH_CONFIDENCE]
     if postal_code:
         where.append("d.postal_code = ?")
         params.append(postal_code)
@@ -157,6 +185,14 @@ def cheapest_protein_by_store(
         # not GFP-271's and not any plausible one -- would ever have caught it.
         # The only evidence that the row is not meat is its own name, which
         # `protein_kind` already reads correctly; nothing was asking it.
+        #
+        # That argument still holds, and it is why this check stays even though
+        # the query above now applies MIN_MATCH_CONFIDENCE. The two catch
+        # different failures and neither subsumes the other: a floor cannot see
+        # a confident match to the wrong food, and this cannot see a vague match
+        # to the right one. The Tyson breaded-bites row that prompted the floor
+        # matched at 0.3 and is not disqualified by name, so it needed the floor;
+        # the tin of beans matched at 0.9 and needed this.
         #
         # Skipped before `cost_per_gram_protein` rather than after, because that
         # call is the expensive half of this function.
