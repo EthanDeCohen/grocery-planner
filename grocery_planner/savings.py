@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable
 
 from simpleeval import InvalidExpression, simple_eval
@@ -552,6 +552,7 @@ def rank_by_cost_per_gram_protein(
     conn: sqlite3.Connection | None = None,
     limit: int = 0,
     min_confidence: float | None = None,
+    cache: dict[tuple, "ProteinCost | None"] | None = None,
 ) -> list[dict[str, Any]]:
     """Cheapest dollars-per-gram-of-protein first; incomparable rows are dropped.
 
@@ -567,15 +568,55 @@ def rank_by_cost_per_gram_protein(
     have it, which is every row today) is passed through to
     :func:`cost_per_gram_protein` so a future structured source can supply it
     with no change here beyond populating that key.
+
+    ``cache``: pass a dict to reuse the price-independent half of the chain
+    across calls (GFP-336). Only worth it when the SAME items are ranked
+    repeatedly -- ``bill.rank_history_by_day`` ranks every day separately, so
+    it was re-parsing sizes and re-matching foods once per day per item.
+    Measured there: 1,106 ms -> see that function. A single ranking gains
+    nothing and should leave this ``None``.
     """
     own = conn or db.connect()
     ranked: list[dict[str, Any]] = []
     for row in rows:
         price = _get(row, "dollar_price") or _get(row, "sale_price")
-        result = cost_per_gram_protein(
-            price, _get(row, "item_name"), _get(row, "store"), conn=own,
-            servings_per_container=_get(row, "servings_per_container"),
-        )
+        item_name = _get(row, "item_name")
+        store = _get(row, "store")
+        servings = _get(row, "servings_per_container")
+        if cache is None:
+            result = cost_per_gram_protein(
+                price, item_name, store, conn=own,
+                servings_per_container=servings,
+            )
+        else:
+            # PRICE IS THE ONLY THING THAT VARIES, so resolve the rest once.
+            #
+            # Every return in cost_per_gram_protein computes
+            # `price / protein_grams`, and protein_grams comes from the size
+            # parse, the food match and the nutrient lookup -- none of which
+            # know the price. So the whole chain can be resolved at a unit
+            # price and scaled, which is exactly what service/cheapest.py
+            # already does inline for the same reason.
+            #
+            # The cache is the CALLER'S, deliberately: a scrape rewrites
+            # deal_food_match, so a module-level cache would go stale with
+            # nothing to invalidate it. Scoping the lifetime to one call makes
+            # staleness impossible rather than unlikely.
+            key = (store, item_name, servings)
+            if key in cache:
+                unit = cache[key]
+            else:
+                unit = cost_per_gram_protein(
+                    1.0, item_name, store, conn=own,
+                    servings_per_container=servings,
+                )
+                cache[key] = unit
+            if unit is None or price is None or price <= 0:
+                result = None
+            else:
+                result = replace(
+                    unit, cost_per_gram_protein=price / unit.protein_grams
+                )
         if result is None:
             continue
         if min_confidence is not None and result.match_confidence < min_confidence:

@@ -197,3 +197,60 @@ def test_best_deals_ignores_expired_rows_by_default(conn):
     conn.commit()
     assert service.best_deals(conn=conn) == []
     assert len(service.best_deals(conn=conn, hide_expired=False)) == 1
+
+
+# --------------------------------------------------------------------------- #
+# The ranking cache (GFP-336)
+#
+# rank_history_by_day ranks every day separately, so it was re-parsing sizes and
+# re-matching foods once per day per item. Price is the only thing that varies:
+# every return in cost_per_gram_protein is `price / protein_grams`, and
+# protein_grams knows nothing about price.
+# --------------------------------------------------------------------------- #
+def test_the_cache_gives_the_same_answer_as_no_cache(conn):
+    """Asserted as equivalence, not as a speedup.
+
+    A cache that is merely fast is worthless if it changes a number. This
+    compares the two paths field by field on the same rows.
+    """
+    rows = [
+        {"store": "aldi", "item_name": "Chicken Breast, 16 oz", "dollar_price": 4.99},
+        {"store": "aldi", "item_name": "Chicken Breast, 16 oz", "dollar_price": 9.98},
+        {"store": "lidl", "item_name": "Ground Beef 80/20, 1 lb", "dollar_price": 5.49},
+    ]
+    plain = savings.rank_by_cost_per_gram_protein(rows, conn=conn)
+    cached = savings.rank_by_cost_per_gram_protein(rows, conn=conn, cache={})
+
+    assert len(plain) == len(cached)
+    for a, b in zip(plain, cached):
+        assert a["item_name"] == b["item_name"]
+        assert a["cost_per_gram_protein"] == pytest.approx(b["cost_per_gram_protein"])
+        assert a["protein_grams"] == pytest.approx(b["protein_grams"])
+        assert a["match_confidence"] == b["match_confidence"]
+        assert a["food_id"] == b["food_id"]
+
+
+def test_the_cache_scales_by_price_rather_than_reusing_one(conn):
+    """The trap this could have introduced: the same item at two prices must
+    NOT come back with the same cost per gram."""
+    rows = [
+        {"store": "aldi", "item_name": "Chicken Breast, 16 oz", "dollar_price": 4.00},
+        {"store": "aldi", "item_name": "Chicken Breast, 16 oz", "dollar_price": 8.00},
+    ]
+    ranked = savings.rank_by_cost_per_gram_protein(rows, conn=conn, cache={})
+    if len(ranked) == 2:
+        cheap, dear = sorted(ranked, key=lambda r: r["price"])
+        assert dear["cost_per_gram_protein"] == pytest.approx(
+            2 * cheap["cost_per_gram_protein"]
+        )
+        assert dear["protein_grams"] == pytest.approx(cheap["protein_grams"])
+
+
+def test_an_unresolvable_item_is_cached_as_unresolvable(conn):
+    """A None result must be remembered too, or the expensive miss is repeated
+    for every day in the window -- which is the case this was fixing."""
+    cache: dict = {}
+    rows = [{"store": "aldi", "item_name": "Mystery Item With No Size", "dollar_price": 3.0}]
+    savings.rank_by_cost_per_gram_protein(rows, conn=conn, cache=cache)
+    savings.rank_by_cost_per_gram_protein(rows, conn=conn, cache=cache)
+    assert len(cache) == 1

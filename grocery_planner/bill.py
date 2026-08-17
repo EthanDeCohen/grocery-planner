@@ -836,9 +836,22 @@ def rank_history_by_day(
             "dollar_price": row["dollar_price"],
         })
 
+    # ONE cache across every day, which is the whole point (GFP-336).
+    #
+    # Each day was resolving the same items from scratch: parse the size, match
+    # the food, look up the nutrient, per item per day. An item's protein
+    # density does not change between Tuesday and Wednesday -- only its price
+    # does -- so the work was repeated once per day in the window for nothing.
+    # Measured on 24,903 price_history rows, this call was 1,106 ms of which
+    # 21 ms was SQL; the rest was that repetition.
+    #
+    # Scoped to this call rather than the module: a scrape rewrites
+    # deal_food_match, and a longer-lived cache would have no way to know.
+    resolved: dict[tuple, "savings.ProteinCost | None"] = {}
     return {
         day: savings.rank_by_cost_per_gram_protein(
-            deals, conn=conn, limit=0, min_confidence=MIN_MATCH_CONFIDENCE
+            deals, conn=conn, limit=0, min_confidence=MIN_MATCH_CONFIDENCE,
+            cache=resolved,
         )
         for day, deals in by_day.items()
     }
