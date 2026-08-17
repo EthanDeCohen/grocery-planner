@@ -146,7 +146,12 @@ def test_the_page_has_four_panes_in_order(page):
     """
     assert page.columns.count() == 4
     assert page.columns.widget(0) is page.biometrics_drawer
-    assert page.columns.widget(1) is page.selection_panel
+    # GFP-316: the selection column is the panel INSIDE a scroll area, so this
+    # asks which panel that column carries rather than which widget it is.
+    # Pinning the widget identity would fail on any future wrapper while the
+    # order -- the thing this test is about -- was still correct.
+    assert page.columns.widget(1) is page.selection_scroll
+    assert page.selection_scroll.widget() is page.selection_panel
     assert page.columns.widget(2) is page.bill_panel
     # GFP-153: the fourth column now stacks the chart over the cost grid.
     # The grid answers a question ABOUT the two lines above it -- what the gap

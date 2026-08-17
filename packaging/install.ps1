@@ -140,20 +140,41 @@ Write-Host ""
 #
 # The GUI is optional on purpose: a CLI-only release is a legitimate thing to
 # ship, and refusing to install one would be worse than installing it.
+#
+# TWO PACKAGING SHAPES (GFP-320). A one-file build is a single .exe; a
+# one-directory build is a folder holding the launcher and its _internal. Both
+# are accepted, because they are what PyInstaller produces from the two specs
+# and a release should not fail on which one it was cut from. The directory
+# form is FLATTENED into the install root rather than nested, so the PATH entry
+# and the Start Menu shortcut stay exactly as they were.
 # --------------------------------------------------------------------------- #
 $payload = @()
-foreach ($name in @("gplan.exe", "gplan-gui.exe")) {
-    $candidate = Join-Path $sourceDir $name
-    if (Test-Path $candidate) { $payload += $candidate }
+foreach ($name in @("gplan", "gplan-gui")) {
+    $asDirectory = Join-Path $sourceDir $name
+    $asFile = Join-Path $sourceDir "$name.exe"
+    if ((Test-Path $asDirectory -PathType Container) -and
+        (Test-Path (Join-Path $asDirectory "$name.exe") -PathType Leaf)) {
+        $payload += @{ Name = $name; Path = $asDirectory; IsDirectory = $true }
+    } elseif (Test-Path $asFile -PathType Leaf) {
+        $payload += @{ Name = $name; Path = $asFile; IsDirectory = $false }
+    }
 }
 if (-not $payload) {
     Write-Host "No binaries found next to this script." -ForegroundColor Red
-    Write-Host "Expected gplan.exe (and optionally gplan-gui.exe) in: $sourceDir" -ForegroundColor Yellow
+    Write-Host "Expected gplan.exe or a gplan\ folder (and optionally the same for" -ForegroundColor Yellow
+    Write-Host "gplan-gui) in: $sourceDir" -ForegroundColor Yellow
     Write-Host "Run install.ps1 from inside the unzipped release folder." -ForegroundColor Yellow
     exit 1
 }
-foreach ($file in $payload) {
-    Write-Step ("found {0,-16} {1,7:N1} MB" -f (Split-Path $file -Leaf), ((Get-Item $file).Length / 1MB))
+foreach ($item in $payload) {
+    if ($item.IsDirectory) {
+        $bytes = (Get-ChildItem $item.Path -Recurse -File | Measure-Object Length -Sum).Sum
+        $shape = "folder"
+    } else {
+        $bytes = (Get-Item $item.Path).Length
+        $shape = "one file"
+    }
+    Write-Step ("found {0,-16} {1,7:N1} MB  ({2})" -f $item.Name, ($bytes / 1MB), $shape)
 }
 
 # --------------------------------------------------------------------------- #
@@ -179,12 +200,27 @@ Write-Host "Files" -ForegroundColor Cyan
 Invoke-Action "create $installRoot" { New-Item -ItemType Directory -Force -Path $installRoot | Out-Null }
 
 $installed = @()
-foreach ($file in $payload) {
-    $leaf = Split-Path $file -Leaf
-    $target = Join-Path $installRoot $leaf
-    $installed += $target
-    # Copy-Item overwrites, so a second run replaces rather than duplicating.
-    Invoke-Action "install $leaf" { Copy-Item -LiteralPath $file -Destination $target -Force }.GetNewClosure()
+foreach ($item in $payload) {
+    $name = $item.Name
+    $source = $item.Path
+    if ($item.IsDirectory) {
+        # Contents, not the folder itself -- see the flattening note above.
+        # -Recurse -Force overwrites in place, so a reinstall replaces rather
+        # than nesting a second copy inside the first.
+        foreach ($entry in Get-ChildItem -LiteralPath $source -Force) {
+            $installed += Join-Path $installRoot $entry.Name
+        }
+        Invoke-Action "install $name (folder)" {
+            Copy-Item -Path (Join-Path $source "*") -Destination $installRoot -Recurse -Force
+        }.GetNewClosure()
+    } else {
+        $target = Join-Path $installRoot "$name.exe"
+        $installed += $target
+        # Copy-Item overwrites, so a second run replaces rather than duplicating.
+        Invoke-Action "install $name.exe" {
+            Copy-Item -LiteralPath $source -Destination $target -Force
+        }.GetNewClosure()
+    }
 }
 
 # The uninstall checklist and the install notes ship WITH the install, not just

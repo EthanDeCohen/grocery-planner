@@ -4,11 +4,25 @@ These do not build a binary — that takes minutes and needs PyInstaller. They
 check the things that silently rot between builds: an entry point that stops
 importing, or a spec that stops excluding what it must.
 """
+import re
 from pathlib import Path
 
 import pytest
 
 PACKAGING = Path(__file__).resolve().parents[1] / "packaging"
+
+
+def _schema_datas():
+    """Load packaging/_schema_datas.py, which sits beside the specs rather than
+    on the import path -- the specs are exec'd by PyInstaller, not imported."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_schema_datas", PACKAGING / "_schema_datas.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_entry_points_exist():
@@ -58,14 +72,90 @@ def test_gui_spec_builds_a_mac_bundle_and_hides_the_console():
 
 @pytest.mark.parametrize("spec", ["gplan.spec", "gplan-gui.spec"])
 def test_specs_bundle_db_script_as_data(spec):
-    """GFP-59: db.py resolves db_script/*.ddl via sys._MEIPASS in a frozen
-    build. Without collect_data_files("db_script") here, a build would
-    "succeed" but the frozen binary would fail to build its schema the
-    first time anyone actually ran it -- exactly the kind of packaging
-    mistake this test file exists to catch before it ships.
+    """GFP-318: the specs must actually COLLECT the schema, not merely mention it.
+
+    This test used to assert the string ``collect_data_files("db_script")``
+    appeared in the spec, and it passed for the whole period during which every
+    build shipped a binary containing ZERO .ddl files -- the call was present
+    and returned nothing, because it resolves by import and the editable install
+    does not expose `db_script`. The string was there. The schema was not.
+
+    Worse, a substring assertion cannot tell code from prose: after the call was
+    replaced, the gui spec still "passed" on the mention of the old name inside
+    an explanatory comment.
+
+    So this asserts the relationship (GFP-179): the collector the spec calls
+    returns real migration files for this repo.
     """
     source = (PACKAGING / spec).read_text(encoding="utf-8")
-    assert 'collect_data_files("db_script")' in source
+    assert "schema_datas(SPEC_DIR)" in source
+
+    collected = _schema_datas().schema_datas(PACKAGING)
+    names = [Path(src).name for src, _ in collected]
+    assert any(name.endswith(".ddl") for name in names), names
+    # Destinations must mirror what db.py looks for under sys._MEIPASS.
+    assert all(dest.startswith("db_script") for _, dest in collected)
+
+
+@pytest.mark.parametrize("spec", ["gplan.spec", "gplan-gui.spec"])
+def test_the_specs_build_one_directory_not_one_file(spec):
+    """GFP-320: the packaging MODE is load-bearing, so it is asserted.
+
+    Windows Defender quarantined the one-file CLI as
+    Behavior:Win32/Execution.A!ml -- the bootloader unpacking ~700 files into
+    %TEMP% and running them from there looks exactly like a dropper. Only
+    COLLECT avoids that. A spec that drifted back to one-file would build and
+    smoke-test perfectly and then be quarantined on a customer's machine,
+    which is the failure this test exists to prevent.
+    """
+    source = (PACKAGING / spec).read_text(encoding="utf-8")
+    assert "COLLECT(" in source
+    # EXE must hand its binaries to COLLECT rather than swallow them, which is
+    # what exclude_binaries switches between.
+    assert "exclude_binaries=True" in source
+    # UPX compression sets off the same class of heuristic. Never here.
+    assert "upx=False" in source
+
+
+def test_the_two_apps_use_different_payload_directory_names():
+    """GFP-320: both installers flatten into ONE install root, so gplan.exe and
+    gplan-gui.exe stay siblings -- PATH, the Start Menu shortcut and
+    background.py's windowless-launcher lookup all rely on it.
+
+    Two apps both writing PyInstaller's default `_internal/` would merge, and
+    the second would overwrite the first's base_library.zip with one built from
+    a different module set. Nothing would fail at build or install time; the
+    app would break later, on whichever import lost the coin toss.
+    """
+    names = {}
+    for spec in ("gplan.spec", "gplan-gui.spec"):
+        source = (PACKAGING / spec).read_text(encoding="utf-8")
+        match = re.search(r'^CONTENTS_DIR = "([^"]+)"', source, re.MULTILINE)
+        assert match, f"{spec} does not set CONTENTS_DIR"
+        names[spec] = match.group(1)
+        # Both EXE and COLLECT have to be told, or they disagree about where
+        # the launcher should look.
+        assert source.count("contents_directory=CONTENTS_DIR") == 2, spec
+    assert len(set(names.values())) == 2, f"payload directories collide: {names}"
+
+
+def test_the_mac_bundle_wraps_collect_not_the_bare_exe():
+    """GFP-320: BUNDLE(exe) with a one-directory build produces an .app whose
+    executable has no payload beside it. It builds, and it fails on launch."""
+    source = (PACKAGING / "gplan-gui.spec").read_text(encoding="utf-8")
+    assert "BUNDLE(\n        coll," in source
+
+
+def test_schema_collector_aborts_when_it_finds_nothing(tmp_path):
+    """The guard that was missing: an empty collection must fail the build.
+
+    A WARNING is what shipped the schema-less binary (GFP-318). Pointed at a
+    tree with no scripts, the collector has to stop the build outright rather
+    than hand PyInstaller an empty list.
+    """
+    (tmp_path / "db_script").mkdir()
+    with pytest.raises(SystemExit):
+        _schema_datas().schema_datas(tmp_path / "anything")
 
 
 def test_db_script_ships_as_installed_package_data():

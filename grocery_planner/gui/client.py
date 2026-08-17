@@ -30,9 +30,11 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QToolButton,
     QVBoxLayout,
@@ -71,6 +73,13 @@ def _format_for(path: str, selected_filter: str) -> str:
 
 #: Column widths. The bill is the widest because it is what the page is for.
 COLUMN_SIZES = (300, 420, 260)
+
+#: GFP-316. The two scrolled columns need their widths asserting by hand: a
+#: QScrollArea reports a tiny hint in BOTH directions, and the splitter divides
+#: width by what each pane asks for. Freeing the height is the fix; letting the
+#: width go with it collapses the column into a stub with two scrollbars.
+BIOMETRICS_MIN_WIDTH = 240
+SELECTION_MIN_WIDTH = 300
 
 
 class ClientDetailPage(QWidget):
@@ -136,14 +145,42 @@ class ClientDetailPage(QWidget):
         self.biometrics_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.biometrics_toggle.toggled.connect(self._toggle_biometrics)
         drawer_layout.addWidget(self.biometrics_toggle)
-        drawer_layout.addWidget(self.biometrics, 1)
+        # GFP-316: the form scrolls rather than setting the page's floor. It is
+        # 480 px of fields, and since this page shares a QStackedWidget with the
+        # roster -- whose minimum is the max over ALL pages -- that floor was
+        # the main window's floor too, on the roster view as much as here. On a
+        # 1536x816 screen the window could not be made small enough to fit,
+        # which is what "only looks right maximised" actually was.
+        self.biometrics_scroll = QScrollArea()
+        self.biometrics_scroll.setWidgetResizable(True)
+        self.biometrics_scroll.setFrameShape(QFrame.NoFrame)
+        self.biometrics_scroll.setMinimumWidth(BIOMETRICS_MIN_WIDTH)
+        self.biometrics_scroll.setWidget(self.biometrics)
+        drawer_layout.addWidget(self.biometrics_scroll, 1)
 
         self.selection_panel = SelectionPanel()
         self.selection_panel.changed.connect(self._on_selection_changed)
+        # GFP-316, same reasoning as the drawer above. The panel bounds its own
+        # preference list already; this bounds the REST of it -- the objective,
+        # week and constraint boxes are ~330 px of controls that otherwise set
+        # the column's floor, and the column with the tallest floor sets the
+        # window's. It engages only on a short window, so on a normal one there
+        # is no second scrollbar to notice.
+        #
+        # The minimum WIDTH is set back by hand, and it has to be. A scroll
+        # area reports a tiny size hint in both directions, which is the point
+        # vertically and a bug horizontally: the splitter shares width out by
+        # what each pane asks for, so wrapping this column silently starved it
+        # to a stub with two scrollbars. Only the height needed freeing.
+        self.selection_scroll = QScrollArea()
+        self.selection_scroll.setWidgetResizable(True)
+        self.selection_scroll.setFrameShape(QFrame.NoFrame)
+        self.selection_scroll.setMinimumWidth(SELECTION_MIN_WIDTH)
+        self.selection_scroll.setWidget(self.selection_panel)
 
         self.columns = QSplitter()
         self.columns.addWidget(self.biometrics_drawer)
-        self.columns.addWidget(self.selection_panel)
+        self.columns.addWidget(self.selection_scroll)
         self.columns.addWidget(self.bill_panel)
         # GFP-123: where-to-buy is no longer a column. It was a second panel
         # listing the SAME items as the bill in different words, and two
@@ -253,7 +290,9 @@ class ClientDetailPage(QWidget):
 
     def _toggle_biometrics(self, open_: bool) -> None:
         """Open or close the details drawer, and say which state it is in."""
-        self.biometrics.setVisible(open_)
+        # The SCROLL AREA is what closes, not the panel inside it. Hiding the
+        # panel alone would leave an empty scroll area holding the drawer open.
+        self.biometrics_scroll.setVisible(open_)
         self.biometrics_toggle.setArrowType(Qt.DownArrow if open_ else Qt.RightArrow)
 
     @staticmethod

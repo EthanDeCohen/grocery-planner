@@ -28,10 +28,12 @@ from __future__ import annotations
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QLabel,
     QRadioButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -41,6 +43,11 @@ from .. import bill, db, nutrition, preferences
 #: Checkbox columns. Enough to keep a dozen categories from becoming one tall
 #: list, few enough that the labels stay readable in a narrow column.
 COLUMNS = 2
+
+#: How tall the preference list is allowed to get before it scrolls (GFP-316).
+#: Enough rows to read as a list you scroll rather than a box that got cut off,
+#: and small enough that the panel still fits a 1536x816 screen unmaximised.
+CATEGORIES_MIN_HEIGHT = 120
 
 
 class SelectionPanel(QWidget):
@@ -110,19 +117,40 @@ class SelectionPanel(QWidget):
         layout.addWidget(constraint_box)
 
         # --- the preferences --------------------------------------------- #
+        #
+        # GFP-316: THE GRID MUST SCROLL, and this is not a cosmetic preference.
+        # There is one checkbox per distinct sub-category in the deals table,
+        # so the list is a function of how many sources are loaded -- it grew
+        # 9 -> 201 as stores were added, with nothing in the code to notice.
+        # Un-scrolled, that made this panel 3,129 px tall, and because
+        # ClientDetailPage shares a QStackedWidget with the roster (a stack's
+        # minimum is the max over ALL its pages, shown or not) the whole main
+        # window inherited a minimum of 1950 x 3461. Taller than any screen, so
+        # the window could not be resized down and only looked right maximised.
+        #
+        # A QScrollArea fixes it structurally rather than by hoping the list
+        # stays short: its own minimum is the frame plus scrollbars, so nothing
+        # the grid does propagates outward, at 9 categories or at 900.
         layout.addWidget(QLabel("Protein preferences:"))
         self.categories_widget = QWidget()
         self.categories_layout = QGridLayout(self.categories_widget)
         self.categories_layout.setContentsMargins(0, 0, 0, 0)
         self._boxes: dict[str, QCheckBox] = {}
         self._build_checkboxes()
-        layout.addWidget(self.categories_widget)
+
+        self.categories_scroll = QScrollArea()
+        self.categories_scroll.setWidgetResizable(True)
+        self.categories_scroll.setFrameShape(QFrame.NoFrame)
+        self.categories_scroll.setMinimumHeight(CATEGORIES_MIN_HEIGHT)
+        self.categories_scroll.setWidget(self.categories_widget)
+        # Takes the panel's spare vertical space, which is why there is no
+        # trailing addStretch: the list is the thing that should grow.
+        layout.addWidget(self.categories_scroll, 1)
 
         self.note = QLabel("")
         self.note.setWordWrap(True)
         self.note.setStyleSheet("color: #666;")
         layout.addWidget(self.note)
-        layout.addStretch(1)
 
         for widget in (self.lowest_cost, self.within_budget,
                        self.mix_it_up, self.repeat_cheapest):

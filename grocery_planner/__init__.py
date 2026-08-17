@@ -7,4 +7,4 @@ compare prices/deals across stores from the CLI. Excel is an optional export
 target, not the runtime.
 """
 
-__version__ = "1.1.3"
+__version__ = "1.1.4"

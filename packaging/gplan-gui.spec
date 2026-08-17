@@ -1,7 +1,8 @@
 # PyInstaller spec for the gplan-gui desktop app (GFP-10).
 #
 # Build:  pyinstaller packaging/gplan-gui.spec --noconfirm
-# Output: dist/gplan-gui.exe (Windows) / dist/gplan-gui.app (macOS bundle)
+# Output: dist/gplan-gui/gplan-gui.exe + dist/gplan-gui/_internal_gui/ (Windows)
+#         dist/gplan-gui.app                                           (macOS)
 #
 # Needs the `gui` extra installed (PySide6). This binary is an order of
 # magnitude larger than the CLI because it carries Qt; that is expected.
@@ -17,6 +18,12 @@ import pathlib
 # root) and the release workflow (packaging/).
 SPEC_DIR = pathlib.Path(SPECPATH)
 
+# GFP-318: the schema collector lives beside this spec, so it is importable
+# only once SPEC_DIR is on the path -- the specs are exec'd, not imported.
+if str(SPEC_DIR) not in sys.path:
+    sys.path.insert(0, str(SPEC_DIR))
+from _schema_datas import schema_datas
+
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hiddenimports = collect_submodules("apscheduler") + [
@@ -31,13 +38,17 @@ hiddenimports = collect_submodules("apscheduler") + [
 # db_script ships the .ddl/.dml schema scripts (GFP-59); see gplan.spec for
 # why this must be explicit rather than assumed to "just come along". Same
 # reasoning covers grocery_planner/data/*.json, GFP-24's vendored USDA snapshot.
+#
+# GFP-318: schema_datas() resolves by path and aborts the build if it finds
+# nothing. collect_data_files("db_script") resolved by import and returned
+# nothing under `pip install -e`, silently shipping a schema-less binary.
 datas = (
     # GFP-158: the window icon, read at run time by gui.app.app_icon().
     # The .ico/.icns above are consumed by PyInstaller itself; this PNG
     # is what the running process loads, so it has to be a data file.
     [(str(SPEC_DIR / "icons" / "icon-256.png"), "icons")]
     + collect_data_files("tzdata")
-    + collect_data_files("db_script")
+    + schema_datas(SPEC_DIR)
     + collect_data_files("grocery_planner", includes=["data/*.json"])
     # GFP-47's default client avatar. GUI-only, so it is not in gplan.spec.
     + collect_data_files("grocery_planner", includes=["assets/*.png"])
@@ -76,12 +87,25 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# GFP-320: ONE DIRECTORY, not one file. The one-file bootloader unpacks the
+# whole bundle into %TEMP% and executes from there, which is what Windows
+# Defender quarantined the CLI for (Behavior:Win32/Execution.A!ml). This app
+# carries Qt, so it is the same behaviour at 700+ files -- it had simply not
+# been picked yet. It also removes that unpack from every single launch, which
+# is what made the window take seconds to appear.
+#
+# The payload directory is named apart from the CLI's on purpose: the
+# installers flatten both apps into one install root so the two executables
+# stay siblings, and two `_internal/` folders would silently overwrite each
+# other. See gplan.spec for the full reasoning.
+CONTENTS_DIR = "_internal_gui"
+
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
+    contents_directory=CONTENTS_DIR,
     name="gplan-gui",
     # GFP-158. Windows reads the icon out of the EXE itself, which is what
     # puts it on the taskbar and in Explorer. Built from packaging/icon.svg by
@@ -101,10 +125,22 @@ exe = EXE(
     entitlements_file=None,
 )
 
-# macOS wants a real .app bundle, not a bare executable.
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    contents_directory=CONTENTS_DIR,
+    name="gplan-gui",
+)
+
+# macOS wants a real .app bundle, not a bare executable. It wraps COLLECT, not
+# EXE -- an .app is already a directory, so the one-directory layout is the
+# shape it wanted all along.
 if sys.platform == "darwin":
     app = BUNDLE(
-        exe,
+        coll,
         name="gplan-gui.app",
         icon=str(SPEC_DIR / "icons" / "icon.icns"),
         bundle_identifier="com.proteinledger.gui",

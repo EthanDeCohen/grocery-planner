@@ -63,16 +63,25 @@ foreach ($spec in $specs) {
     }
 }
 
-Get-ChildItem $dist -File | ForEach-Object {
-    Write-Host ("  {0,-18} {1,8:N1} MB" -f $_.Name, ($_.Length / 1MB)) -ForegroundColor Green
+# GFP-320: one-directory builds, so report the folder totals rather than a
+# single file size. An empty-looking folder here is a real failure mode -- a
+# COLLECT that dropped its payload leaves a launcher that fails on first run.
+Get-ChildItem $dist -Directory | ForEach-Object {
+    $files = Get-ChildItem $_.FullName -Recurse -File
+    Write-Host ("  {0,-18} {1,8:N1} MB across {2} files" -f `
+        $_.Name, (($files | Measure-Object Length -Sum).Sum / 1MB), $files.Count) -ForegroundColor Green
 }
 
 if ($SkipTest) { Write-Host "`nSkipping smoke test (-SkipTest)."; exit 0 }
 
 # --- Smoke test the CLI binary against a throwaway DB ---------------------- #
-Write-Host "`n=== Smoke testing dist/gplan.exe ===" -ForegroundColor Cyan
-$exe = Join-Path $dist "gplan.exe"
-if (-not (Test-Path $exe)) { $exe = Join-Path $dist "gplan" }
+Write-Host "`n=== Smoke testing dist/gplan ===" -ForegroundColor Cyan
+$exe = Join-Path $dist "gplan\gplan.exe"
+if (-not (Test-Path $exe)) { $exe = Join-Path $dist "gplan\gplan" }
+if (-not (Test-Path $exe)) {
+    Write-Host "No launcher at $exe -- the build produced no runnable binary." -ForegroundColor Red
+    exit 1
+}
 
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("gplan_bin_" + [Guid]::NewGuid().ToString("N").Substring(0, 8))
 New-Item -ItemType Directory -Force -Path $work | Out-Null
