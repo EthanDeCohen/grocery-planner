@@ -306,3 +306,21 @@ def test_a_category_with_nothing_to_buy_is_not_priced(market, conn):
     priced = {r.category.strip().lower() for r in budget.relaxations(customer, conn=conn)}
     have_candidates = budget._categories_with_candidates(conn)
     assert priced <= have_candidates
+
+
+def test_only_the_ten_protein_kinds_are_ever_offered(market, conn):
+    """GFP-335. The list used to be SELECT DISTINCT category FROM foods -- 245
+    retailer strings including "Bread Flour" and "Baby Food Purees" -- and each
+    one cost a complete week-plan solve before a client page could be drawn.
+
+    Asserted as a subset of the curated vocabulary rather than as a count: the
+    number may legitimately change when a kind is added, but a raw retailer
+    category appearing here is always the bug coming back.
+    """
+    from grocery_planner import preferences, protein_kind
+
+    customer = _client(conn)
+    preferences.set_preferences(customer.id, ["chicken"], conn=conn)
+    offered = {r.category for r in budget.relaxations(customer, conn=conn)}
+    assert offered <= set(protein_kind.KINDS)
+    assert "chicken" not in offered, "a ticked preference is not a relaxation"

@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import bill, db, nutrition, preferences
+from .. import bill, db, nutrition, preferences, protein_kind
 
 #: Checkbox columns. Enough to keep a dozen categories from becoming one tall
 #: list, few enough that the labels stay readable in a narrow column.
@@ -178,12 +178,23 @@ class SelectionPanel(QWidget):
         only under the bucket (GFP-134), so ticking "chicken" still finds the
         208 rows categorised merely as "Meat" that ARE chicken.
         """
-        buckets = set(nutrition.CATEGORY_MEMBERS)
-        offered = [
-            c for c in nutrition.list_categories(db.connect())
-            if c and c.strip().lower() not in buckets
-        ]
-        for index, category in enumerate(sorted(offered, key=str.lower)):
+        # GFP-335: THE TEN PROTEIN KINDS, not the retailer taxonomy.
+        #
+        # This read `nutrition.list_categories()` -- SELECT DISTINCT category
+        # FROM foods, i.e. whatever string each scraper wrote. It had grown to
+        # 245 checkboxes including "Bread Flour" and "Baby Food Purees", which
+        # is what GFP-316 fixed the SIZE of without fixing the CONTENT.
+        #
+        # It was also a performance bug, which is what forced the decision:
+        # budget.relaxations() prices one whole week per unticked category, so
+        # 245 boxes meant a beef-only client waited 249 seconds for her page.
+        #
+        # `protein_kind.KINDS` (GFP-106) is the curated list, and no data had to
+        # move: stored preferences were already kinds, and
+        # `nutrition.food_ids_in` already matches a preference against
+        # `foods.protein_kind` as well as `foods.category`.
+        offered = sorted({k for k in protein_kind.KINDS if k})
+        for index, category in enumerate(offered):
             box = QCheckBox(category)
             box.stateChanged.connect(self._on_preference_toggled)
             self._boxes[category] = box

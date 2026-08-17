@@ -48,7 +48,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from . import bill as bill_module
-from . import db, nutrition, preferences
+from . import db, nutrition, preferences, protein_kind
 from .customers import Customer, CustomerRepository
 
 #: Seven, and it is a definition rather than a setting -- see GFP-89. A "week"
@@ -246,16 +246,27 @@ def relaxations(
         # the optimiser can do. There is nothing to give back.
         return []
 
-    # GFP-156: only categories the nutritionist can actually TICK. GFP-139
-    # removed the broad buckets ("Meat", "Seafood") from the preference
-    # checkboxes because they overlap the specific kinds beneath them -- so
-    # advising "allow Meat" would name a control that does not exist, and the
-    # saving it quotes could not be acted on.
-    buckets = set(nutrition.CATEGORY_MEMBERS)
-    known = [
-        c for c in nutrition.list_categories(own)
-        if c and c.strip().lower() not in buckets
-    ]
+    # GFP-156: only categories the nutritionist can actually TICK -- advising
+    # "allow X" must name a control that exists, or the saving it quotes cannot
+    # be acted on.
+    #
+    # GFP-335: THAT IS THE TEN PROTEIN KINDS, not the retailer taxonomy.
+    #
+    # This read `nutrition.list_categories()`, which is SELECT DISTINCT category
+    # FROM foods -- whatever string each scraper happened to write. On a real
+    # database that is 245 values including "Bread Flour", "Baby Food Purees"
+    # and "Blended and Fruit on the Bottom". Every one of them was a complete
+    # week-plan solve before a client page could be drawn, so a beef-only client
+    # waited 249 seconds while the optimiser priced her week on baby food.
+    #
+    # `protein_kind.KINDS` (GFP-106) is the curated vocabulary that already
+    # exists for exactly this: ten kinds a person would actually choose between.
+    # Nothing needed migrating -- stored preferences were already kinds
+    # ('beef', 'chicken', 'Dairy', 'fish') -- and `nutrition.food_ids_in`
+    # already matches a preference against `foods.protein_kind` as well as
+    # `foods.category`, so this narrows what is OFFERED without changing what
+    # any preference MEANS.
+    known = sorted({k for k in protein_kind.KINDS if k})
     excluded = [c for c in known if c not in allowed]
     if not excluded:
         return []
