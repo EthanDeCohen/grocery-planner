@@ -17,7 +17,8 @@ mostly about:
 from __future__ import annotations
 
 import json
-from datetime import date
+import re
+from datetime import date, datetime
 
 import pytest
 from typer.testing import CliRunner
@@ -305,3 +306,80 @@ def test_the_release_workflow_guards_the_tag_against_the_version():
         "a draft release is skipped by /releases/latest, so installs would "
         "never be told about it"
     )
+
+
+# --------------------------------------------------------------------------- #
+# When the check ran
+#
+# The state file used to hold a bare date. "Checked today" cannot answer "is
+# this stale?" for somebody looking at the app in the morning after a check
+# that ran the previous evening, so the time is recorded too. The CADENCE is
+# unchanged -- see the last test here, which is the one that would catch a
+# change of granularity turning into a change of frequency.
+# --------------------------------------------------------------------------- #
+def _stamp(directory):
+    return json.loads(
+        (directory / "update-check.json").read_text(encoding="utf-8")
+    )["last_checked"]
+
+
+def test_the_check_time_is_recorded_to_the_second(isolated, monkeypatch):
+    _tag(monkeypatch, "v99.0.0")
+    updates.check()
+    stamp = _stamp(isolated)
+    assert "T" in stamp, f"{stamp!r} is a date, not a timestamp"
+    clock = stamp.partition("T")[2]
+    assert re.fullmatch(r"\d{2}:\d{2}:\d{2}", clock), (
+        f"expected hours, minutes and seconds, got {clock!r}"
+    )
+
+
+def test_never_checked_reads_as_never(isolated):
+    assert updates.last_checked_at() is None
+    assert updates.last_checked_text() == "never"
+
+
+def test_a_date_only_state_file_is_still_understood(isolated):
+    """Anything written by 1.1.5 or earlier.
+
+    An upgrade must not make the app decide it has never checked -- that would
+    make it check again on the first launch after every single upgrade.
+    """
+    (isolated / "update-check.json").write_text(
+        '{"last_checked": "2026-08-03"}', encoding="utf-8"
+    )
+    assert updates.checked_today(date(2026, 8, 3))
+    assert updates.last_checked_at() == datetime(2026, 8, 3, 0, 0)
+
+
+def test_an_unreadable_stamp_reads_as_never_rather_than_raising(isolated):
+    (isolated / "update-check.json").write_text(
+        '{"last_checked": "the other day"}', encoding="utf-8"
+    )
+    assert updates.last_checked_at() is None
+    assert updates.checked_today(date(2026, 8, 3)) is False
+
+
+def test_the_message_says_when_it_was_checked(isolated, monkeypatch):
+    _tag(monkeypatch, "v99.0.0")
+    message = updates.check().message
+    assert updates.last_checked_text() in message
+    assert "!" not in message, "still a passive notice"
+
+
+def test_recording_the_time_did_not_make_it_check_more_often(isolated, monkeypatch):
+    """The gate is still a whole day.
+
+    The point of the timestamp is being able to TELL somebody when the check
+    ran, not asking GitHub more often. A change that turned the day-granular
+    gate into a second-granular one would check on every single launch, and
+    nothing else here would notice.
+    """
+    calls = []
+    monkeypatch.setattr(
+        updates, "_fetch_latest_tag", lambda: (calls.append(1), "v99.0.0")[1]
+    )
+    today = date(2026, 8, 3)
+    for _ in range(5):
+        updates.check(today=today)
+    assert len(calls) == 1

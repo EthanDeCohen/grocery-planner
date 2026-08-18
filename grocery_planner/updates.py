@@ -40,7 +40,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from . import __version__, config, logs
@@ -57,6 +57,11 @@ LATEST_RELEASE_URL = (
 RELEASES_PAGE = "https://github.com/EthanDeCohen/grocery-planner/releases/latest"
 
 STATE_FILENAME = "update-check.json"
+
+#: How a check time is shown to a person. Date, hour, minute and second, in
+#: local time -- "checked today" is not enough to answer "is this stale?" when
+#: someone is looking at the app in the morning and the check ran last night.
+STAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 #: Short. This runs on app startup, and a slow check must not become a slow
 #: launch -- the whole thing is optional and the user is waiting.
@@ -77,11 +82,17 @@ class Update:
     current: str
     latest: str
     url: str
+    #: When this was established. Optional so an Update can still be built by
+    #: hand in a test without inventing a clock.
+    checked_at: datetime | None = None
 
     @property
     def message(self) -> str:
         """One line, for a status bar. No exclamation marks, no urgency."""
-        return f"Version {self.latest} is available (you have {self.current})."
+        line = f"Version {self.latest} is available (you have {self.current})."
+        if self.checked_at is not None:
+            line += f" Checked {self.checked_at.strftime(STAMP_FORMAT)}."
+        return line
 
 
 def state_path() -> Path:
@@ -154,19 +165,57 @@ def _write_state(state: dict) -> None:
         log.debug("could not write %s: %s", STATE_FILENAME, exc)
 
 
-def checked_today(today: date | None = None) -> bool:
-    stamp = _read_state().get("last_checked")
+def _parse_stamp(stamp: str | None) -> datetime | None:
+    """Read ``last_checked``, in either of the two shapes it has had.
+
+    Up to 1.1.5 this was a bare date. Anything already on disk stays readable
+    -- an upgrade must not make the app think it has never checked, because
+    that would make it check again on the first launch after every upgrade.
+    """
     if not stamp:
-        return False
+        return None
     try:
-        return date.fromisoformat(stamp) == (today or date.today())
+        return datetime.fromisoformat(stamp)
     except ValueError:
+        pass
+    try:
+        return datetime.combine(date.fromisoformat(stamp), datetime.min.time())
+    except ValueError:
+        return None
+
+
+def last_checked_at() -> datetime | None:
+    """When the last check ran, or ``None`` if there has never been one."""
+    return _parse_stamp(_read_state().get("last_checked"))
+
+
+def last_checked_text() -> str:
+    """The same thing, ready to put in front of a person."""
+    stamp = last_checked_at()
+    return stamp.strftime(STAMP_FORMAT) if stamp else "never"
+
+
+def checked_today(today: date | None = None) -> bool:
+    """Has a check run today?
+
+    The GATE is still a whole day, deliberately: recording the time to the
+    second is about being able to tell someone when it last ran, not about
+    asking GitHub more often.
+    """
+    stamp = _parse_stamp(_read_state().get("last_checked"))
+    if stamp is None:
         return False
+    return stamp.date() == (today or date.today())
 
 
 def mark_checked(latest: str | None, today: date | None = None) -> None:
+    when = datetime.now()
+    if today is not None:
+        # Injected day, real clock. Tests pin the date so the once-a-day gate
+        # is deterministic; the time of day is not what they are pinning.
+        when = datetime.combine(today, when.time())
     state = _read_state()
-    state["last_checked"] = (today or date.today()).isoformat()
+    state["last_checked"] = when.isoformat(timespec="seconds")
     if latest:
         state["last_seen_version"] = latest
     _write_state(state)
@@ -231,7 +280,12 @@ def check(force: bool = False, today: date | None = None) -> Update | None:
         return None
 
     log.info("update available: %s (running %s)", tag, __version__)
-    return Update(current=__version__, latest=tag.lstrip("vV"), url=RELEASES_PAGE)
+    return Update(
+        current=__version__,
+        latest=tag.lstrip("vV"),
+        url=RELEASES_PAGE,
+        checked_at=last_checked_at(),
+    )
 
 
 def check_quietly(today: date | None = None) -> Update | None:

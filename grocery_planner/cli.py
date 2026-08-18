@@ -1083,6 +1083,7 @@ def update_cmd(
         # someone who asked a question about versions, and the ticket is
         # explicit that a check must fail silently.
         typer.secho("No newer version found.", fg=typer.colors.GREEN)
+        typer.echo(f"Last checked: {updates.last_checked_text()}")
         typer.echo(f"Releases: {updates.RELEASES_PAGE}")
         raise typer.Exit(0)
 
