@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (
     QComboBox,
@@ -134,6 +134,15 @@ _MARGIN_TOP, _MARGIN_BOTTOM = 14, 26
 #: for them when the widget is too narrow to fit them honestly.
 _LABEL_GAP, _MIN_PLOT_WIDTH = 10, 120
 
+#: What the chart's minimum width budgets for a store label (GFP-353).
+#:
+#: A FIXED string, deliberately, not the longest name actually on the chart.
+#: A minimum size computed from data is what GFP-316 was: the preference list
+#: grew with the number of sources until the window no longer fitted any
+#: screen. A store called something enormous must make its own label elide --
+#: which paintEvent already does -- rather than make the window wider.
+_LABEL_REFERENCE = "Harris Teeter"
+
 
 def _spread(positions: list[float], gap: float, top: float, bottom: float) -> list[float]:
     """Nudge endpoint labels apart so near-equal series stay readable.
@@ -197,8 +206,36 @@ class TrendChart(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setMinimumHeight(220)
+        # GFP-353: a floor on the WIDTH too. Without one this was the only pane
+        # on the client page that could be starved -- its two siblings both
+        # enforce minimums -- so it was squeezed to 288px at every laptop size
+        # and the labels saying which line is which store were elided away.
+        self._apply_minimum_width()
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._trend = service.PriceTrend(days=service.DEFAULT_WINDOW_DAYS)
+
+    def _apply_minimum_width(self) -> None:
+        """The narrowest this chart can be and still say what it is showing.
+
+        Derived rather than hardcoded, so that a user who has turned up their
+        system font size gets a wider chart instead of a clipped one -- the
+        same reason the rest of the app sizes text off the widget font.
+        """
+        metrics = QFontMetrics(self.font())
+        self.setMinimumWidth(
+            _MARGIN_LEFT
+            + _MIN_PLOT_WIDTH
+            + _LABEL_GAP * 2
+            + metrics.horizontalAdvance(_LABEL_REFERENCE)
+        )
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        # A font change alters what the labels need, and the floor is expressed
+        # in font terms, so it has to be recomputed rather than left at
+        # whatever the font was at construction.
+        super().changeEvent(event)
+        if event.type() == QEvent.FontChange:
+            self._apply_minimum_width()
 
     def set_trend(self, trend: service.PriceTrend) -> None:
         self._trend = trend

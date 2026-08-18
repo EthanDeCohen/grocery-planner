@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QToolButton,
     QVBoxLayout,
@@ -212,10 +213,29 @@ class ClientDetailPage(QWidget):
         self.choices_cost = ChoicesCostPane()
         right_layout.addWidget(self.choices_cost)
         self.columns.addWidget(right)
+        # GFP-353: WHO GETS THE EXTRA SPACE when the window grows.
+        #
+        # This used to give all four columns the same stretch, which
+        # contradicted the note above -- the chart needs width most, and a
+        # squeezed time series is unreadable in a way a squeezed form is not.
+        # Measured, equal stretch was not merely suboptimal: widening the
+        # window from 920 to 1366 gave the chart NOTHING. All 446 px went to
+        # the two forms, and the chart sat at 288 px at every laptop size with
+        # its store labels elided away.
+        #
+        # Stretch alone does not fix it. A QScrollArea is Expanding
+        # horizontally and takes the space regardless of stretch factor, so
+        # both wrapped columns have to stop asking for it first. This is the
+        # GFP-316 trap from the other side: there, wrapping a column starved it
+        # horizontally and the fix was to put its minimum width back; here, the
+        # same Expanding hint makes it greedy once there is spare room.
+        for scroll in (self.biometrics_scroll, self.selection_scroll):
+            scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        # Forms keep their width, the bill grows, the chart grows fastest.
+        for index, stretch in enumerate((0, 0, 1, 2)):
+            self.columns.setStretchFactor(index, stretch)
         # Every pane can shrink; none of them may vanish entirely, which is
         # what made the chart unreadable at a normal window size.
-        for index in range(self.columns.count()):
-            self.columns.setStretchFactor(index, 1)
         self.columns.setChildrenCollapsible(False)
         layout.addWidget(self.columns, 1)
 
