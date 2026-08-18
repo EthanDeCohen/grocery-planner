@@ -1,25 +1,36 @@
 # Installing Protein Ledger
 
-You need the ZIP for your operating system, unzipped somewhere you can find it
-— your Downloads folder is fine. Everything below runs as **you**, not as an
-administrator, and installs only for your user account.
+Everything below runs as **you**, not as an administrator, and installs only
+for your user account.
 
 ---
 
 ## Windows
 
+### One file, one click
+
+1. Download **ProteinLedger-Setup.exe**.
+2. Double-click it.
+
+That is the whole thing. It unpacks itself into your Downloads folder, installs,
+and clears the unpacked copy away afterwards. If Protein Ledger happens to be
+open, it closes it first rather than making you do it.
+
+Windows will show a blue **"Windows protected your PC"** box saying the
+publisher is unknown. That is because the installer is not signed yet — click
+**More info**, then **Run anyway**.
+
+### Or from the ZIP
+
+Still supported, and unchanged:
+
 1. Unzip the download.
-2. Right-click **install.ps1** → **Run with PowerShell**.
+2. Double-click **Install.cmd**.
 
-If Windows refuses to run the script, open PowerShell in the unzipped folder
-and run:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
-
-That restriction is Windows' default protection against scripts downloaded from
-the internet. You can read `install.ps1` first — it is plain text, and it is
+`Install.cmd` runs `install.ps1` for you. Windows refuses to run a PowerShell
+script that came from the internet, so double-clicking `install.ps1` itself
+fails with "cannot be loaded" — but nothing needs changing on your machine to
+get past that, and you should never be asked to. Both files are plain text and
 meant to be read.
 
 **Where things go**

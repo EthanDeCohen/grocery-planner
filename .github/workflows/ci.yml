@@ -216,6 +216,44 @@ jobs:
           Copy-Item packaging/install.ps1, packaging/uninstall.ps1 release/
           Copy-Item packaging/INSTALL.md, packaging/UNINSTALL.md release/
 
+      # GFP-340: build the one-click installer the way release.yml does, then
+      # actually run it. -Prefix and -NoIntegrate keep it clear of the real
+      # install below, which owns the machine-wide steps -- what is proved here
+      # is that the stub finds its own payload, unpacks it and hands over to
+      # the same install.ps1, which is the only thing the stub does.
+      - name: Build and run the one-click installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Compress-Archive -Path release -DestinationPath one-click-payload.zip -Force
+          ./scripts/build_setup_exe.ps1 -Payload one-click-payload.zip -Output ProteinLedger-Setup-ci.exe
+          Remove-Item one-click-payload.zip -Force
+
+          $prefix = Join-Path $env:RUNNER_TEMP "one-click"
+          & ./ProteinLedger-Setup-ci.exe --no-pause -Prefix $prefix -NoIntegrate
+          if ($LASTEXITCODE -ne 0) { throw "the one-click installer exited $LASTEXITCODE" }
+
+          foreach ($f in @("gplan.exe", "gplan-gui.exe", "install-manifest.json")) {
+            if (-not (Test-Path (Join-Path $prefix $f))) {
+              throw "the one-click install is missing $f"
+            }
+          }
+          # The manifest is written by install.ps1 and by nothing else, so its
+          # presence is the evidence that the stub delegated rather than
+          # reimplementing the install.
+          $manifest = Get-Content (Join-Path $prefix "install-manifest.json") -Raw | ConvertFrom-Json
+          if ($manifest.app -ne "Protein Ledger") { throw "unexpected app in manifest: $($manifest.app)" }
+
+          # It unpacks into Downloads and tidies up after a successful install.
+          # Leaving hundreds of megabytes behind is a bug a customer notices
+          # long before we do.
+          $staging = Join-Path (Join-Path $env:USERPROFILE "Downloads") "release"
+          if (Test-Path $staging) { throw "the unpacked payload was left in $staging" }
+
+          Remove-Item $prefix -Recurse -Force
+          Remove-Item ProteinLedger-Setup-ci.exe -Force
+
       - name: Assemble the release folder (macOS)
         if: runner.os == 'macOS'
         run: |

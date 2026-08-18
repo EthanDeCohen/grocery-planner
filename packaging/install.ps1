@@ -67,6 +67,25 @@
     It does NOT make an unsigned binary signed -- it suppresses the warnings
     that come from "downloaded", not the absence of a signature.
 
+.PARAMETER StopRunning
+    Close a running copy of the app instead of refusing to install over it
+    (GFP-340).
+
+    Without this, a running gplan.exe or gplan-gui.exe stops the install dead:
+    Windows locks a running executable, so the copy would fail partway. That
+    refusal is the right answer for somebody who typed ./install.ps1 in a
+    terminal -- they can read it, close the app, and try again.
+
+    It is the WRONG answer for the one-click setup (GFP-340), which has nobody
+    reading a console. There, an upgrade over an app the user happens to have
+    open must simply work. So the setup passes this, and it is off everywhere
+    else.
+
+    Closes gracefully first and only then ends the process, and it stops the
+    background refresh task before either -- the task launches the app, so
+    ending the app without ending the task leaves it free to start a new one
+    in the middle of the file copy.
+
 .PARAMETER DryRun
     Print every action without performing any of it. Same spirit as
     `gplan scrape --dry-run` (GFP-87): an operation that changes a machine
@@ -83,6 +102,7 @@ param(
     [switch]$NoIntegrate,
     [switch]$NoTimer,
     [switch]$Unblock,
+    [switch]$StopRunning,
     [switch]$DryRun
 )
 
@@ -178,18 +198,115 @@ foreach ($item in $payload) {
 }
 
 # --------------------------------------------------------------------------- #
-# 2. Refuse to overwrite a running binary.
+# 2. Deal with a running copy of the app.
 #
 # Windows locks a running executable, so the copy would fail partway and leave
 # a half-installed directory. Failing FIRST with an instruction is much better
 # than failing at file three with an access-denied trace.
+#
+# WHICH PROCESSES COUNT (GFP-340). Only the ones running out of the directory
+# we are about to overwrite. A gplan.exe running from a development checkout
+# locks nothing we are going to touch, so neither refusing to install nor
+# killing it would be the installer's business. A process whose path cannot be
+# read counts anyway: an unreadable path is not evidence that it is somebody
+# else's, and a locked file is the failure being prevented.
+#
+# WHAT HAPPENS THEN depends on -StopRunning, and the default stays "refuse".
+# See the parameter's own note for why the one-click setup needs the other
+# answer and a terminal user does not.
 # --------------------------------------------------------------------------- #
-$running = @(Get-Process -Name "gplan", "gplan-gui" -ErrorAction SilentlyContinue)
+$StopTimeoutSeconds = 15
+
+function Get-BlockingProcess {
+    <#  gplan / gplan-gui processes running out of $installRoot. #>
+    $root = $installRoot.TrimEnd("\") + "\"
+    $candidates = @(Get-Process -Name "gplan", "gplan-gui" -ErrorAction SilentlyContinue)
+    return @($candidates | Where-Object {
+        $path = $null
+        try { $path = $_.Path } catch { $path = $null }
+        (-not $path) -or $path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)
+    })
+}
+
+function Stop-RefreshTask {
+    <#  End a running background refresh (GFP-102), quietly.
+
+        Cmdlets rather than schtasks.exe on purpose: schtasks writes "cannot
+        find the file specified" to stderr when the task is absent, which is
+        the normal case on a first install and reads as a failure to anyone
+        watching. -ErrorAction handles it without printing anything. #>
+    try {
+        $task = Get-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName -ErrorAction SilentlyContinue
+        if ($task -and $task.State -eq "Running") {
+            Stop-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName -ErrorAction SilentlyContinue
+        }
+    } catch {
+        # Never fatal. Not being able to ask about a task is not a reason to
+        # refuse an install.
+    }
+}
+
+$running = @(Get-BlockingProcess)
 if ($running.Count -gt 0 -and -not $DryRun) {
+    if (-not $StopRunning) {
+        Write-Host ""
+        Write-Host "Protein Ledger is currently running. Close it and run this again." -ForegroundColor Red
+        $running | ForEach-Object { Write-Host "  running: $($_.ProcessName) (pid $($_.Id))" -ForegroundColor Yellow }
+        Write-Host "  (or pass -StopRunning to have the installer close it for you)" -ForegroundColor DarkGray
+        exit 1
+    }
+
     Write-Host ""
-    Write-Host "Protein Ledger is currently running. Close it and run this again." -ForegroundColor Red
-    $running | ForEach-Object { Write-Host "  running: $($_.ProcessName) (pid $($_.Id))" -ForegroundColor Yellow }
-    exit 1
+    Write-Host "Closing the running copy" -ForegroundColor Cyan
+    Stop-RefreshTask
+
+    # ASK FIRST, and only wait for the ones that can answer. CloseMainWindow
+    # returns false when there is no main window to post the message to --
+    # which is every run of the CLI. Waiting the full timeout for a window
+    # that does not exist would make the commonest case the slowest one, and
+    # it would look like the installer had hung.
+    foreach ($proc in $running) {
+        $closable = $false
+        try { $closable = [bool]$proc.CloseMainWindow() } catch { $closable = $false }
+        if ($closable) {
+            Write-Step "asked $($proc.ProcessName) (pid $($proc.Id)) to close"
+        } else {
+            Write-Step "ending $($proc.ProcessName) (pid $($proc.Id))"
+            try { $proc.Kill() } catch { }
+        }
+    }
+
+    # One shared deadline, not one per process: fifteen seconds is the budget
+    # for the whole step, not fifteen times however many copies are up. A GUI
+    # is free to ignore the request, so the kill is unconditional at the end.
+    $deadline = (Get-Date).AddSeconds($StopTimeoutSeconds)
+    foreach ($proc in $running) {
+        try {
+            $remaining = [int]($deadline - (Get-Date)).TotalMilliseconds
+            if ($remaining -gt 0) { $proc.WaitForExit($remaining) | Out-Null }
+            if (-not $proc.HasExited) {
+                Write-Step "$($proc.ProcessName) (pid $($proc.Id)) ignored the request -- ending it"
+                $proc.Kill()
+                $proc.WaitForExit(5000) | Out-Null
+            }
+        } catch {
+            # An already-exited process throws on most of these. That is the
+            # outcome we wanted, so it is not an error.
+        }
+    }
+
+    # Ask again rather than trusting the loop. A copy relaunched by the timer,
+    # or started by the user while this ran, locks the files just as well as
+    # the one we set out to close.
+    $stubborn = @(Get-BlockingProcess)
+    if ($stubborn.Count -gt 0) {
+        Write-Host ""
+        Write-Host "Could not close Protein Ledger. Install aborted." -ForegroundColor Red
+        $stubborn | ForEach-Object { Write-Host "  still running: $($_.ProcessName) (pid $($_.Id))" -ForegroundColor Yellow }
+        Write-Host "Close it by hand and run this again." -ForegroundColor Yellow
+        exit 1
+    }
+    Write-Did "closed the running copy"
 }
 
 # --------------------------------------------------------------------------- #
