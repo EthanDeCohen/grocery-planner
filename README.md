@@ -58,23 +58,27 @@ refuses to open it, and the only way through is
 
 ### On Windows
 
-1. Unzip the file (right-click → **Extract All**).
-2. Double-click **Install.cmd**.
+1. Double-click **ProteinLedger-Setup.exe**.
 
-That is all. A window opens, shows what it is doing, and stays open so you can
-read the result.
+That is all — there is nothing to unzip. A window opens, shows what it is doing,
+and stays open so you can read the result. The installer unpacks itself into
+your Downloads folder, installs, and clears the unpacked copy away afterwards.
+If the app is open at the time, it closes it first.
 
-`Install.cmd` also tells Windows the files are safe to run, so you should not
-see the blue *"Windows protected your PC"* box. If it appears anyway, click
-**More info** then **Run anyway** — the app is not signed by Microsoft, which
-costs money we have not spent yet.
+You will see the blue *"Windows protected your PC"* box saying the publisher is
+unknown. Click **More info** then **Run anyway** — the app is not signed by
+Microsoft, which costs money we have not spent yet.
 
 <details>
-<summary>Why not install.ps1 directly?</summary>
+<summary>If you were sent the ZIP instead</summary>
 
-Windows refuses to run PowerShell scripts that came from the internet, so
-double-clicking `install.ps1` fails with "cannot be loaded". `Install.cmd` is a
-two-line file that runs it properly. Both are plain text and meant to be read.
+Unzip it (right-click → **Extract All**) and double-click **Install.cmd**. This
+still works and installs exactly the same thing in exactly the same places —
+`ProteinLedger-Setup.exe` is that ZIP with an unpacker attached to the front.
+
+`Install.cmd` exists because Windows refuses to run PowerShell scripts that came
+from the internet, so double-clicking `install.ps1` fails with "cannot be
+loaded". Both are plain text and meant to be read.
 
 </details>
 

@@ -525,3 +525,167 @@ def test_neither_installer_claims_unblocking_makes_it_signed():
     mark-of-the-web suppresses warnings about being DOWNLOADED; it does
     nothing about the absence of a signature."""
     assert "does NOT make an unsigned binary signed" in _text(WINDOWS_INSTALLER)
+
+
+# --------------------------------------------------------------------------- #
+# The one-click installer (GFP-340)
+#
+# ONE INSTALL PATH, NOT TWO. The whole design of the setup stub is that it
+# unpacks a ZIP and then runs the install.ps1 out of it, so that the installed
+# footprint is whatever install.ps1 lays down and cannot drift from it. Most of
+# what follows checks that the stub has not quietly grown an install of its own
+# -- because a second one would pass every functional test right up until it
+# put something in a different place and orphaned an existing install.
+# --------------------------------------------------------------------------- #
+SETUP_STUB = PACKAGING / "setup" / "Setup.cs"
+SETUP_BUILD = ROOT / "scripts" / "build_setup_exe.ps1"
+
+
+def test_the_one_click_installer_ships():
+    for path in (SETUP_STUB, SETUP_BUILD):
+        assert path.exists(), f"{path.name} is missing"
+        assert path.stat().st_size > 0
+
+
+def test_the_stub_runs_the_real_installer():
+    """It must invoke install.ps1, and pass the two switches that make a
+    double-click enough: -Unblock for the mark-of-the-web, -StopRunning
+    because nobody is there to read "close the app and try again"."""
+    text = _text(SETUP_STUB)
+    assert "install.ps1" in text, "the stub does not run install.ps1"
+    assert "-Unblock" in text
+    assert "-StopRunning" in text
+
+
+def test_the_stub_knows_none_of_the_pinned_names():
+    """The evidence that it delegates rather than installing anything itself.
+
+    GFP-102 pinned the install root, the Start Menu folder, the registry key
+    and the task path, and GFP-340 requires the one-click install to leave a
+    footprint identical to the ZIP's. The cheapest way to be sure of that is
+    for the stub not to know any of those names -- if it cannot say where the
+    app goes, it cannot put it somewhere else.
+    """
+    # CODE ONLY. The stub's header explains which names GFP-102 pinned, so a
+    # check that read the comments would fail on the paragraph saying it must
+    # not do this.
+    text = chr(10).join(
+        line.split("//")[0] for line in _text(SETUP_STUB).splitlines()
+    )
+    # Deliberately NOT the display name or the install DIRECTORY name: the
+    # stub says "Protein Ledger" on screen and names its single-instance mutex
+    # after the app, both of which are fine. What it must never contain is
+    # anything that decides WHERE something lands.
+    forbidden = {
+        "registry key": ip.WINDOWS_REGISTRY_KEY,
+        "scheduled task path": ip.WINDOWS_TASK_PATH,
+        "manifest filename": ip.MANIFEST_FILENAME,
+        "the install root's parent": "LOCALAPPDATA",
+        "the Start Menu": "Start Menu",
+    }
+    offenders = [
+        f"{what} ({value!r})" for what, value in forbidden.items() if value in text
+    ]
+    assert offenders == [], (
+        "the setup stub decides things only install.ps1 should decide:\n  "
+        + "\n  ".join(offenders)
+        + "\nA stub that installs anything itself is a second installer, and the "
+        "two can drift apart."
+    )
+
+
+def test_the_stub_and_its_build_script_agree_on_the_trailer():
+    """The stub finds its payload by a magic string the build script writes.
+
+    Asserted as a RELATIONSHIP rather than as a spelling: the same byte values
+    have to appear on both sides. A rename on one side alone produces an
+    installer that builds cleanly and then tells the customer it has no
+    payload.
+    """
+    stub_bytes = re.search(
+        r"Magic\s*=\s*\{([^}]*)\}", _text(SETUP_STUB)
+    )
+    assert stub_bytes, "could not find the magic bytes in Setup.cs"
+    build_bytes = re.search(
+        r"\$magic\s*=\s*\[byte\[\]\]\(([^)]*)\)", _text(SETUP_BUILD)
+    )
+    assert build_bytes, "could not find the magic bytes in build_setup_exe.ps1"
+
+    def values(text):
+        return [int(v, 16) for v in re.findall(r"0x[0-9A-Fa-f]{2}", text)]
+
+    assert values(stub_bytes.group(1)) == values(build_bytes.group(1)), (
+        "Setup.cs and build_setup_exe.ps1 disagree about the payload marker"
+    )
+
+
+def test_stopping_a_running_app_is_opt_in():
+    """install.ps1 must still REFUSE by default.
+
+    Someone who typed ./install.ps1 in a terminal gets told to close the app;
+    only the one-click path, which has no one reading a console, has its
+    windows shut for it.
+    """
+    text = _text(WINDOWS_INSTALLER)
+    assert "[switch]$StopRunning" in text, "install.ps1 has no -StopRunning switch"
+    assert "if (-not $StopRunning) {" in text, (
+        "install.ps1 no longer refuses by default when the app is running"
+    )
+
+
+def test_the_running_check_is_scoped_to_the_install_root():
+    """A gplan.exe running from a development checkout locks nothing we are
+    about to overwrite, so it is neither a reason to refuse nor something to
+    kill."""
+    text = _text(WINDOWS_INSTALLER)
+    assert "function Get-BlockingProcess" in text
+    assert "$installRoot.TrimEnd" in text, (
+        "the running-process check no longer compares against the install root"
+    )
+
+
+def test_the_one_click_installer_needs_no_third_party_toolchain():
+    """GFP-340 overturns GFP-91's "no installer toolchain" only as far as it
+    has to. csc.exe is in the .NET Framework directory of every Windows machine
+    and every runner, so there is still nothing to install to build a release.
+    """
+    text = _text(SETUP_BUILD)
+    assert "csc.exe" in text, "the build script does not use the in-box compiler"
+    assert "Microsoft.NET" in text, (
+        "the compiler is no longer taken from the .NET Framework directory, "
+        "which is the thing that makes it in-box"
+    )
+
+    # Checked as INSTALLATION, not as mention. install.ps1 names Inno Setup,
+    # NSIS and WiX in prose -- it is where the decision not to use them is
+    # written down -- so grepping for the names would fail on the very file
+    # that records the rule. A toolchain can only reach a runner by being
+    # installed, so that is what is looked for.
+    offenders = []
+    for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        for number, line in enumerate(_text(workflow).splitlines(), 1):
+            lowered = line.lower()
+            if "choco install" in lowered or "winget install" in lowered:
+                offenders.append(f"{workflow.name}:{number}: {line.strip()}")
+    assert offenders == [], (
+        "a build machine now needs something installed on it:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_the_release_builds_and_publishes_the_one_click_installer():
+    text = _text(ROOT / ".github" / "workflows" / "release.yml")
+    assert "build_setup_exe.ps1" in text, "release.yml does not build the installer"
+    assert "assets/*.exe" in text, "release.yml does not publish the installer"
+    assert "assets/*.zip" in text, (
+        "release.yml stopped publishing the ZIP -- GFP-340 requires it to keep "
+        "working so nothing breaks for anyone mid-transition"
+    )
+
+
+def test_ci_actually_runs_the_one_click_installer():
+    """Building it proves it compiles. Only running it proves the stub can
+    find its own payload and hand over."""
+    text = _text(ROOT / ".github" / "workflows" / "ci.yml")
+    assert "build_setup_exe.ps1" in text
+    assert "ProteinLedger-Setup-ci.exe" in text

@@ -143,6 +143,19 @@ class MainWindow(QMainWindow):
         # menu never offers an action that would do nothing -- and so the app
         # has somewhere to put the news other than a modal.
         help_menu = bar.addMenu("&Help")
+
+        # Ask on demand. The automatic check still runs once a day and stays
+        # silent unless there is something to say, which is right for a passive
+        # notice -- but it leaves no way to answer "am I on the latest?" at the
+        # moment somebody actually wants to know.
+        self.check_update_action = QAction("Check for &update", self)
+        self.check_update_action.setStatusTip(
+            "Ask now whether a newer version exists. Nothing is downloaded "
+            "or installed."
+        )
+        self.check_update_action.triggered.connect(self.check_for_update_now)
+        help_menu.addAction(self.check_update_action)
+
         self.update_action = QAction("No updates available", self)
         self.update_action.setEnabled(False)
         self.update_action.setStatusTip(
@@ -299,6 +312,31 @@ class MainWindow(QMainWindow):
         from .. import updates
 
         QDesktopServices.openUrl(QUrl(getattr(self, "_update_url", updates.RELEASES_PAGE)))
+
+    def check_for_update_now(self) -> None:
+        """Check now, because the user asked.
+
+        Off the UI thread for the same reason the startup check is: five
+        seconds of a frozen window is not an acceptable answer to a question
+        somebody asked out of idle curiosity.
+
+        The thread is held on the window so Python does not collect it
+        mid-flight -- the same trap the startup check already had.
+        """
+        self.statusBar().showMessage("Checking for updates…")
+        self._manual_update_check = _UpdateCheck(self, force=True)
+        self._manual_update_check.found.connect(self.mention_update)
+        self._manual_update_check.checked.connect(self._report_update_check)
+        self._manual_update_check.start()
+
+    def _report_update_check(self, text: str) -> None:
+        """Say what a requested check found, and let it expire.
+
+        Unlike :meth:`mention_update` this message DOES time out: it is about
+        something the user just did, so it goes stale the moment they do
+        anything else.
+        """
+        self.statusBar().showMessage(text, 10000)
 
     def _build_central(self) -> QWidget:
         """Roster + trends, the client page stacked behind them, and the strip.
@@ -550,12 +588,46 @@ class _UpdateCheck(QThread):
     """
 
     found = Signal(str, str)        # message, url
+    #: Emitted only for a check the user ASKED for, and only when there is no
+    #: update -- somebody who pressed a button is owed an answer either way,
+    #: while the automatic check stays silent.
+    checked = Signal(str)
+
+    def __init__(self, parent=None, force: bool = False) -> None:
+        super().__init__(parent)
+        self._force = force
 
     def run(self) -> None:          # pragma: no cover -- exercised by hand
+        from .. import config
         from .. import updates
-        result = updates.check_quietly()
+
+        if not self._force:
+            result = updates.check_quietly()
+            if result is not None:
+                self.found.emit(result.message, result.url)
+            return
+
+        if not config.get("update_check"):
+            # check() would return None here, which would otherwise be
+            # reported as "no newer version" -- an answer to a question that
+            # was never asked, for a user who switched this off.
+            self.checked.emit("Update checks are turned off.")
+            return
+
+        try:
+            result = updates.check(force=True)
+        except Exception:           # noqa: BLE001 -- a check must never crash the app
+            result = None
+
         if result is not None:
             self.found.emit(result.message, result.url)
+        else:
+            # One message for "up to date" and for "could not reach GitHub",
+            # matching `gplan update`. Reporting a network error to somebody
+            # who asked a question about versions is not an improvement.
+            self.checked.emit(
+                f"No newer version found. Last checked {updates.last_checked_text()}."
+            )
 
 
 def app_icon() -> "QIcon":

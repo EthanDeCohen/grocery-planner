@@ -20,7 +20,10 @@ dependencies = [
 # run in the one place they matter.
 dev = ["pytest>=8.0", "PyYAML>=6.0"]
 gui = ["PySide6>=6.6"]
-build = ["pyinstaller>=6.0"]
+# GFP-344: cyclonedx-bom generates the release SBOM. In the BUILD extra
+# rather than dev, because the SBOM has to describe the environment that is
+# about to be frozen -- generating it anywhere else describes the wrong thing.
+build = ["pyinstaller>=6.0", "cyclonedx-bom>=7.0"]
 
 [project.scripts]
 gplan = "grocery_planner.cli:app"

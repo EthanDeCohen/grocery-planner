@@ -784,3 +784,88 @@ def test_the_log_names_the_control_not_its_contents(window, caplog):
         window.open_install_action.trigger()
     for record in caplog.records:
         assert "Fiona" not in record.getMessage()
+
+
+# --------------------------------------------------------------------------- #
+# Checking for an update on demand
+#
+# The automatic check is passive and silent by design. That leaves no way to
+# answer "am I on the latest version?" at the moment somebody wants to know,
+# which is what the Help menu item is for. A check somebody ASKED for owes
+# them an answer either way -- silence is only the right response to a check
+# they did not ask for.
+# --------------------------------------------------------------------------- #
+def test_the_help_menu_offers_a_check_for_update(window):
+    assert "check for" in window.check_update_action.text().lower()
+    assert window.check_update_action.isEnabled(), (
+        "unlike the 'update available' item, this one is always available"
+    )
+
+
+def test_a_requested_check_answers_even_when_there_is_nothing_to_report(monkeypatch):
+    from grocery_planner import config, updates
+
+    monkeypatch.setattr(config, "get", lambda name: True)
+    monkeypatch.setattr(updates, "check", lambda force=False: None)
+    monkeypatch.setattr(updates, "last_checked_text", lambda: "2026-08-17 21:30:00")
+
+    said = []
+    checker = gui_app._UpdateCheck(force=True)
+    checker.checked.connect(said.append)
+    checker.run()
+
+    assert said == ["No newer version found. Last checked 2026-08-17 21:30:00."]
+
+
+def test_a_requested_check_says_so_when_checks_are_turned_off(monkeypatch):
+    """Otherwise a user who switched this off is told "no newer version",
+    which is an answer to a question nobody asked and may not be true."""
+    from grocery_planner import config, updates
+
+    monkeypatch.setattr(config, "get", lambda name: False)
+
+    def explode(*args, **kwargs):
+        raise AssertionError("a disabled check still called out")
+
+    monkeypatch.setattr(updates, "check", explode)
+
+    said = []
+    checker = gui_app._UpdateCheck(force=True)
+    checker.checked.connect(said.append)
+    checker.run()
+
+    assert said == ["Update checks are turned off."]
+
+
+def test_a_failing_requested_check_still_answers(monkeypatch):
+    """A check that raises must not leave the user watching a spinner."""
+    from grocery_planner import config, updates
+
+    monkeypatch.setattr(config, "get", lambda name: True)
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("no network")
+
+    monkeypatch.setattr(updates, "check", explode)
+    monkeypatch.setattr(updates, "last_checked_text", lambda: "never")
+
+    said = []
+    checker = gui_app._UpdateCheck(force=True)
+    checker.checked.connect(said.append)
+    checker.run()
+
+    assert said and said[0].startswith("No newer version found.")
+
+
+def test_the_automatic_check_still_says_nothing_when_there_is_no_update(monkeypatch):
+    from grocery_planner import updates
+
+    monkeypatch.setattr(updates, "check_quietly", lambda: None)
+
+    said = []
+    checker = gui_app._UpdateCheck()
+    checker.checked.connect(said.append)
+    checker.found.connect(lambda *args: said.append(args))
+    checker.run()
+
+    assert said == [], "the passive check must stay silent"

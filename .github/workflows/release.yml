@@ -81,6 +81,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[build,gui]"
 
+      # GFP-344: what is actually inside the 238 MB a customer downloads.
+      #
+      # Generated from the environment that is about to be frozen, not from
+      # pyproject.toml -- an SBOM built from the manifest describes what should
+      # have been installed, which is the one thing you cannot trust in the
+      # situation an SBOM exists for.
+      #
+      # The script FAILS the release if the document is empty or missing a
+      # declared dependency. A silently absent SBOM is the same failure shape
+      # as a silently unsigned release.
+      - name: Generate the SBOM
+        run: python scripts/build_sbom.py --output sbom.cdx.json
+
       - name: Build
         working-directory: packaging
         run: |
@@ -110,6 +123,13 @@ jobs:
           # execution-policy restriction, so a user never meets one.
           Copy-Item packaging/Install.cmd, packaging/Uninstall.cmd $name/
           Copy-Item packaging/INSTALL.md, packaging/UNINSTALL.md $name/
+          # GFP-344: inside the ZIP, so it travels with what the customer
+          # holds -- and so it lands in the one-click installer's payload
+          # without the installer needing to know about it.
+          Copy-Item sbom.cdx.json $name/
+          # And on its own, so it can be read without a 238 MB download.
+          Copy-Item sbom.cdx.json "$name.sbom.cdx.json"
+          "SBOM=$name.sbom.cdx.json" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           # GFP-146: the Kroger credential, written from a repository secret
           # and never from a file in the repo. If the secret is unset the
           # release still builds -- a credential-free build is legitimate, and
@@ -144,6 +164,10 @@ jobs:
           # run a .command.
           cp packaging/Install.command packaging/Uninstall.command "$NAME/"
           cp packaging/INSTALL.md packaging/UNINSTALL.md "$NAME/"
+          # GFP-344, as for Windows.
+          cp sbom.cdx.json "$NAME/"
+          cp sbom.cdx.json "$NAME.sbom.cdx.json"
+          echo "SBOM=$NAME.sbom.cdx.json" >> "$GITHUB_ENV"
           # GFP-146, as for Windows. `set -u` is on, so the unset case needs
           # the :- default rather than a bare test.
           if [ -n "${KROGER_CREDENTIAL:-}" ]; then
@@ -161,10 +185,41 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$NAME" "$NAME.zip"
           echo "ASSET=$NAME.zip" >> "$GITHUB_ENV"
 
+      # GFP-340: the one-click installer. Built FROM the ZIP that was just
+      # packaged, so the two artifacts are the same bits and the ZIP keeps
+      # working for anyone mid-transition. The stub only unpacks and hands over
+      # to the install.ps1 inside, which is what keeps the installed footprint
+      # identical to the ZIP's -- GFP-102 pinned those names, and a second
+      # installer that laid them down differently would be a second app.
+      #
+      # It is NOT signed yet. GFP-341 adds that and makes the release fail when
+      # it is missing; until then SmartScreen still says "unknown publisher".
+      - name: Build the one-click installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $setup = "ProteinLedger-Setup-${{ github.ref_name }}.exe"
+          ./scripts/build_setup_exe.ps1 -Payload $env:ASSET -Output $setup
+          "SETUP=$setup" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.os }}
-          path: ${{ env.ASSET }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.SBOM }}
+          if-no-files-found: error
+
+      # Uploaded on its own because only Windows produces one -- folding it
+      # into the step above would need an empty path on the macOS leg, and
+      # if-no-files-found: error is worth more than one fewer step.
+      - name: Upload the one-click installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-windows
+          path: ${{ env.SETUP }}
           if-no-files-found: error
 
   publish:
@@ -184,7 +239,10 @@ jobs:
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
-          files: assets/*.zip
+          files: |
+            assets/*.zip
+            assets/*.exe
+            assets/*.sbom.cdx.json
           generate_release_notes: true
           # Not a draft and not a prerelease: the update check reads
           # /releases/latest, which SKIPS both. A draft release would publish
@@ -194,11 +252,29 @@ jobs:
           body: |
             ## Install
 
-            Download the ZIP for your operating system, unzip it, and run the
-            installer inside — `install.ps1` on Windows, `./install.sh` on
-            macOS. Full instructions are in `INSTALL.md` in the ZIP.
+            **Windows — one file, one click.** Download
+            `ProteinLedger-Setup-*.exe` and double-click it. It unpacks into
+            your Downloads folder and installs, closing the app first if you
+            happen to have it open. Nothing to unzip.
+
+            Windows will warn that the publisher is unknown, because the
+            installer is not signed yet — choose **More info** then **Run
+            anyway**. Signing is tracked in GFP-341.
+
+            **macOS — and Windows the old way.** Download the ZIP for your
+            operating system, unzip it, and run the installer inside —
+            `install.ps1` on Windows, `./install.sh` on macOS. Full
+            instructions are in `INSTALL.md` in the ZIP.
 
             Installing again over an existing copy is safe and keeps your data.
+
+            ## What is inside it
+
+            Each build publishes a CycloneDX SBOM (`*.sbom.cdx.json`) listing
+            every third-party package frozen into the binaries, and the same
+            file ships inside the ZIP. It is generated from the environment
+            that was built, so it records what was actually included rather
+            than what a manifest said should be.
 
             **macOS:** this build is not signed by Apple, so the first launch is
             refused. Right-click the app and choose Open, once — or run

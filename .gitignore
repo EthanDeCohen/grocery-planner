@@ -70,3 +70,7 @@ secrets.*
 # in history is not.
 *_sample_rows.json
 *_sample.json
+
+# GFP-344: the SBOM is a build artifact, regenerated per release.
+sbom.cdx.json
+*.sbom.cdx.json
